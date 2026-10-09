@@ -33,3 +33,23 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# --- STT_OnDevice 추가 (change(add)-hyungchul-2026-10-09-12:55) ---
+# 기존 템플릿 항목
+.DS_Store
+/captures
+# Python 변환/골든 도구 가상환경과 산출물
+.venv/
+tools/**/.venv*/
+tools/export/out/
+tools/golden/out/
+__pycache__/
+# 외부에서 받는 네이티브 의존성(tools/fetch_native_deps.sh 로 재생성)
+app/libs/*.aar
+app/src/main/jniLibs/
+app/src/main/cpp/third_party/ten-vad/
+# 모델 파일은 저장소에 넣지 않음
+models/
+*.onnx
+*.tflite
+*.bin
