@@ -148,9 +148,9 @@ app/src/test/resources/golden/  골든 JSON + 짧은 테스트 WAV
 ```kotlin
 interface VadEngine : AutoCloseable {
     val vadId: String                       // "SILERO", "PYANNOTE", ...
-    fun detect(audio: FloatArray, sampleRate: Int, preset: VadPreset): VadOutput
+    fun detect(audio: FloatArray, preset: VadPreset): VadOutput   // 입력은 항상 16 kHz mono
 }
-data class SpeechSegment(val startSec: Double, val endSec: Double, val meanScore: Float?)
+data class SpeechSegment(val startSec: Double, val endSec: Double)
 data class VadOutput(val segments: List<SpeechSegment>, val frameHopSec: Double, val frameScores: FloatArray?)
 ```
 
@@ -315,7 +315,7 @@ interface AsrEngine : AutoCloseable {
 
 - `RunConfig`: run_id(`yyyyMMdd_HHmmss`), 언어 목록, 입력 파일 목록, 엔진/모델 선택 순서, VAD 프리셋 목록, chunk 모드, maxChunkSec 덮어쓰기, threads(기본 4).
 - 순서: 모델(선택 순) → VAD 프리셋 → 파일. VAD는 캐시 우선.
-- foreground service(`dataSync` 타입)에서 실행, 화면 꺼짐/회전에도 지속. 취소 시 현재 chunk 후 중단, 모델 close 보장.
+- foreground service(`specialUse` 타입 — `dataSync`는 Android 15+에서 24시간당 6시간 제한이 있어 장시간 배치에 부적합)에서 실행, 화면 꺼짐/회전에도 지속. 취소 시 현재 chunk 후 중단, 모델 close 보장.
 - 측정: `preprocess_sec`(WAV 로드·변환), `vad_sec`(detail JSON), `load_sec`(모델 로드, manifest), `transcribe_sec`(엔진 순수 chunk 합),
   `elapsed_sec`(파일 전체), `rtf = transcribe_sec / audio_sec`, `rss_peak_mb` = PSS peak(200 ms 샘플링, 방법 명시),
   `cpu_time_sec`(Process CPU time), 열 상태/headroom·배터리·충전 여부는 파일 시작/끝 기록.
