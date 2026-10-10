@@ -136,7 +136,7 @@ data class DetailJson(
     val startedAt: String?, // 파일 처리 시작 시각(ISO8601), 미기록 null
     val audioSec: Double?, // 음원 길이(초), WAV 를 읽기 전에 실패했으면 null // change(add)-hyungchul-2026-10-11-01:47: nullable 로 변경
     val preprocessSec: Double?, // WAV 로드·변환 시간
-    val vadSec: Double?, // VAD 시간(캐시 재사용이면 최초 계산 시간이 아니라 이번에 쓴 시간)
+    val vadSec: Double?, // VAD 계산 시간(초). 캐시 재사용(vadReused=true)이면 이번에 걸린 시간이 아니라 최초 계산 때 저장된 시간이므로 vadReused 와 함께 해석 // change(add)-hyungchul-2026-10-11-02:14: 주석을 실제 값과 일치
     val loadSec: Double?, // 모델 로드 시간
     val transcribeSec: Double?, // 엔진 순수 chunk 추론 시간 합
     val elapsedSec: Double?, // 파일 전체 처리 시간

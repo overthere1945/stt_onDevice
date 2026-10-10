@@ -16,6 +16,7 @@ import com.cowork.stt_ondevice.vad.NemoParams // NeMo 파라미터
 import com.cowork.stt_ondevice.vad.NoneParams // 없음 파라미터
 import com.cowork.stt_ondevice.vad.PyannoteParams // pyannote 파라미터
 import com.cowork.stt_ondevice.vad.SileroParams // Silero 파라미터
+import com.cowork.stt_ondevice.vad.VadFamily // VAD 계열
 import com.cowork.stt_ondevice.vad.VadParams // 파라미터 상위 타입
 import com.cowork.stt_ondevice.vad.VadPreset // VAD 프리셋
 import com.cowork.stt_ondevice.vad.VadPresets // 프리셋 목록(상업 판정)
@@ -223,7 +224,12 @@ data class RunManifest(
     val resume: Boolean, // 이어하기 실행 여부
     val inputRoot: String, // 입력 폴더 루트 경로
     val unsupported: List<String>, // 미지원 조합 "combo|lang"
-    val inFlight: String? = null, // 진행 중 항목 키 "combo|lang|relDir|stem", 없으면 null
+    // change(add)-hyungchul-2026-10-11-02:14: 진행 단계 표시 3종(R33)
+    //   ① 항목 처리 중      "combo|lang|relDir|stem"  (inFlightKey)
+    //   ② 모델 로드 중      "<modelId>|MODEL_LOAD"    (modelLoadKey) — engineFactory+prepare 직전 기록, 성공/처리된 실패 후 해제
+    //   ③ VAD 엔진 생성 중  "<VadFamily 이름>|VAD_INIT" (vadInitKey)  — 계열 엔진 생성 직전 기록, 생성 후 해제
+    //   재개 시 남아 있으면 그 단계에서 프로세스가 죽은 것으로 보고 ResumeReconciler 가 CRASH_OR_KILLED 로 정리한다.
+    val inFlight: String? = null, // 진행 단계 표시(위 3종), 없으면 null
     val finishedAt: String? = null, // 실행 종료 시각, 끝나지 않았으면 null
 ) {
     /**
@@ -274,5 +280,30 @@ data class RunManifest(
          * 리턴: 키 문자열
          */
         fun inFlightKey(combo: String, item: InputItem): String = "$combo|${item.lang}|${item.relDir}|${item.stem}" // 파이프 연결
+
+        // change(add)-hyungchul-2026-10-11-02:14
+        const val MODEL_LOAD_MARK = "MODEL_LOAD" // 모델 로드 단계 표시 접미사
+        // change(add)-hyungchul-2026-10-11-02:14
+        const val VAD_INIT_MARK = "VAD_INIT" // VAD 엔진 생성 단계 표시 접미사
+
+        // change(add)-hyungchul-2026-10-11-02:14
+        /**
+         * 목적: 모델 로드 단계 키 생성
+         * 기능: "<modelId>|MODEL_LOAD"
+         * 입력: modelId(모델 id)
+         * 출력: 없음
+         * 리턴: 키 문자열
+         */
+        fun modelLoadKey(modelId: String): String = "$modelId|$MODEL_LOAD_MARK" // 모델 id + 표시
+
+        // change(add)-hyungchul-2026-10-11-02:14
+        /**
+         * 목적: VAD 엔진 생성 단계 키 생성
+         * 기능: "<VadFamily 이름>|VAD_INIT"
+         * 입력: family(VAD 계열)
+         * 출력: 없음
+         * 리턴: 키 문자열
+         */
+        fun vadInitKey(family: VadFamily): String = "${family.name}|$VAD_INIT_MARK" // 계열 이름 + 표시
     }
 }

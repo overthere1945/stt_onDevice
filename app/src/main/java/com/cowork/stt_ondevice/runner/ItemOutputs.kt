@@ -59,11 +59,13 @@ internal class ItemOutputs(
      * 목적: 항목 결과 전체 쓰기
      * 기능: status 가 ERROR 면 남아 있을 수 있는 txt 를 지우고 ERROR.txt 를, 아니면 txt 를 원자적으로 쓴 뒤 detail JSON(원자적) → CSV 행 2개 순으로 쓴다.
      *       txt 형식: 엔진 "algo model", VAD 프리셋 id, 조각 수, 전체 텍스트, chunk 별 원본 시작~끝 offset 과 텍스트.
-     * 입력: combo(조합), item(입력 항목), detail(상세 JSON)
+     *       replaceRows=true 면 CSV 행을 붙이기 전에 두 CSV 의 찢긴 마지막 줄을 잘라내고 이 항목의 기존 행을 지운다(재시도·크래시 정리 시 중복/상충 행 방지).
+     * 입력: combo(조합), item(입력 항목), detail(상세 JSON), replaceRows(기존 행 교체 여부, 기본 false)
      * 출력: 파일 생성, 쓰기 실패 시 IOException
      * 리턴: 없음
      */
-    fun write(combo: Combo, item: InputItem, detail: DetailJson) {
+    // change(add)-hyungchul-2026-10-11-02:14: replaceRows 추가
+    fun write(combo: Combo, item: InputItem, detail: DetailJson, replaceRows: Boolean = false) {
         val txt = OutputLayout.transcript(runDir, item, combo.name) // txt 경로
         val err = OutputLayout.errorFile(runDir, item, combo.name) // ERROR.txt 경로
         val error = detail.error // 오류 정보
@@ -78,8 +80,26 @@ internal class ItemOutputs(
             TranscriptWriter.write(txt, body) // txt(원자적)
         }
         AtomicFile.write(OutputLayout.detail(runDir, item, combo.name), AppJson.encodeToString(DetailJson.serializer(), detail).toByteArray(Charsets.UTF_8)) // detail(원자적)
+        if (replaceRows) { // 기존 행 교체 모드 // change(add)-hyungchul-2026-10-11-02:14
+            val comboFile = OutputLayout.resultCsv(runDir, item.lang, combo.name) // 조합 CSV
+            CsvFiles.truncatePartialLastLine(comboFile) // 찢긴 줄 제거
+            CsvFiles.truncatePartialLastLine(summary.file) // 찢긴 줄 제거
+            CsvFiles.removeRows(comboFile, comboMatch(item)) // 이 항목의 기존 행 제거
+            CsvFiles.removeRows(summary.file, summaryMatch(combo, item)) // 요약의 기존 행 제거
+        }
         appendCsvRows(combo, item, detail, comboRow = true, summaryRow = true) // CSV 행
     }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 조합 CSV 에서 이 항목 행을 찾는 열 조건. 기능: rel_dir·file. 입력: item. 출력: 없음. 리턴: 열 → 값 */
+    private fun comboMatch(item: InputItem): Map<String, String> = mapOf("rel_dir" to item.relDir, "file" to item.file.name) // 조합·언어별 파일이라 이 둘로 충분
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 요약 CSV 에서 이 항목 행을 찾는 열 조건. 기능: algo·model·vad·req_lang·rel_dir·file. 입력: combo, item. 출력: 없음. 리턴: 열 → 값 */
+    private fun summaryMatch(combo: Combo, item: InputItem): Map<String, String> = mapOf(
+        "algo" to combo.spec.algo, "model" to combo.spec.model, "vad" to combo.preset.id, // 조합
+        "req_lang" to item.engineLang, "rel_dir" to item.relDir, "file" to item.file.name, // 항목
+    )
 
     /**
      * 목적: CSV 행 추가
@@ -102,7 +122,7 @@ internal class ItemOutputs(
      * 리턴: 있으면 true
      */
     fun hasCsvRow(combo: Combo, item: InputItem): Boolean =
-        CsvFiles.containsRow(OutputLayout.resultCsv(runDir, item.lang, combo.name), mapOf("rel_dir" to item.relDir, "file" to item.file.name)) // 열 일치
+        CsvFiles.containsRow(OutputLayout.resultCsv(runDir, item.lang, combo.name), comboMatch(item)) // 열 일치
 
     /**
      * 목적: 요약 CSV 에 이 항목 행이 있는지
@@ -111,13 +131,7 @@ internal class ItemOutputs(
      * 출력: 없음
      * 리턴: 있으면 true
      */
-    fun hasSummaryRow(combo: Combo, item: InputItem): Boolean = CsvFiles.containsRow(
-        summary.file, // 요약 CSV
-        mapOf(
-            "algo" to combo.spec.algo, "model" to combo.spec.model, "vad" to combo.preset.id, // 조합
-            "req_lang" to item.engineLang, "rel_dir" to item.relDir, "file" to item.file.name, // 항목
-        ),
-    )
+    fun hasSummaryRow(combo: Combo, item: InputItem): Boolean = CsvFiles.containsRow(summary.file, summaryMatch(combo, item)) // 열 일치
 
     /**
      * 목적: detail JSON 읽기

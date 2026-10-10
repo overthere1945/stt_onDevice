@@ -11,11 +11,25 @@ import com.cowork.stt_ondevice.vad.VadFamily // VAD 계열
 /**
  * 목적: 계열별 VAD 엔진 보관소
  * 기능: get(family) 로 엔진 또는 생성 실패 예외를 돌려주고, close() 로 만든 엔진을 모두 닫는다.
- * 입력: factory(계열 → 엔진, 실패 시 예외)
+ * 입력: factory(계열 → 엔진, 실패 시 예외), onCloseError(닫기 실패 보고 — 삼키되 기록하기 위함)
  */
-internal class VadPool(private val factory: (VadFamily) -> VadEngine) : AutoCloseable {
+// change(add)-hyungchul-2026-10-11-02:14: has()·onCloseError 추가
+internal class VadPool(
+    private val factory: (VadFamily) -> VadEngine, // 엔진 생성
+    private val onCloseError: (VadFamily, Exception) -> Unit = { _, _ -> }, // 닫기 실패 보고
+) : AutoCloseable {
 
     private val entries = LinkedHashMap<VadFamily, Result<VadEngine>>() // 계열 → 생성 결과
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /**
+     * 목적: 생성 시도 여부
+     * 기능: 이 계열을 이미 get 했는지(성공·실패 무관) 알려준다. 러너가 생성 직전 VAD_INIT 표시를 남길지 정할 때 쓴다.
+     * 입력: family(VAD 계열)
+     * 출력: 없음
+     * 리턴: 시도했으면 true
+     */
+    fun has(family: VadFamily): Boolean = entries.containsKey(family) // 기록 여부
 
     /**
      * 목적: 계열 엔진 얻기
@@ -37,15 +51,15 @@ internal class VadPool(private val factory: (VadFamily) -> VadEngine) : AutoClos
 
     /**
      * 목적: 모든 엔진 해제
-     * 기능: 만든 엔진을 하나씩 닫는다. 하나가 실패해도 나머지는 닫는다.
+     * 기능: 만든 엔진을 하나씩 닫는다. 하나가 실패해도 나머지는 닫고, 실패는 onCloseError 로 알린다.
      * 입력: 없음
-     * 출력: 없음(닫기 실패는 무시 — 실행 결과에 영향 없음)
+     * 출력: 없음(닫기 실패는 onCloseError 로 기록)
      * 리턴: 없음
      */
     override fun close() {
-        for (r in entries.values) { // 생성 결과마다
+        for ((family, r) in entries) { // 생성 결과마다
             val engine = r.getOrNull() ?: continue // 실패 항목은 건너뜀
-            try { engine.close() } catch (e: Exception) { /* 닫기 실패는 결과에 영향 없음 */ } // 해제
+            try { engine.close() } catch (e: Exception) { onCloseError(family, e) } // 해제, 실패는 기록 // change(add)-hyungchul-2026-10-11-02:14
         }
         entries.clear() // 비우기
     }

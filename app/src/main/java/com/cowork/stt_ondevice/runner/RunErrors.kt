@@ -22,6 +22,7 @@ internal object RunErrors {
      * 목적: 항목 격리용 오류 변환
      * 기능: EngineException 은 엔진이 보고한 stage/code, VadUnavailableException 은 VAD/VAD_UNAVAILABLE, WavFormatException 은 INPUT/WAV_FORMAT,
      *       IOException 은 (stage, IO_ERROR), OutOfMemoryError 는 (stage, OOM), UnsatisfiedLinkError 는 (stage, NATIVE_LIB_MISSING),
+     *       그 밖의 LinkageError(NoClassDefFoundError 등)는 (stage, LINKAGE_ERROR),
      *       그 밖의 Exception 은 (stage, defaultCode). 메시지 앞에는 예외 클래스 이름을 붙인다.
      * 입력: t(잡은 예외), stage(현재 단계: INPUT|VAD|MODEL_LOAD|TRANSCRIBE|OUTPUT), defaultCode(분류되지 않은 예외의 code)
      * 출력: 없음
@@ -35,6 +36,7 @@ internal object RunErrors {
         is IOException -> ErrorJson(stage, "IO_ERROR", describe(t)) // 파일 입출력 실패
         is OutOfMemoryError -> ErrorJson(stage, "OOM", describe(t)) // 메모리 부족
         is UnsatisfiedLinkError -> ErrorJson(stage, "NATIVE_LIB_MISSING", describe(t)) // .so 누락
+        is LinkageError -> ErrorJson(stage, "LINKAGE_ERROR", describe(t)) // 클래스 누락·불일치(NoClassDefFoundError 등)도 항목 오류로 격리 // change(add)-hyungchul-2026-10-11-02:14
         is Exception -> ErrorJson(stage, defaultCode, describe(t)) // 그 밖의 예외
         else -> null // 그 밖의 Error 는 전파(항목 오류로 삼키지 않음)
     }

@@ -68,7 +68,8 @@ import java.util.concurrent.atomic.AtomicInteger // 스레드 안전 카운터
  * 기능: transcribe 호출을 "모델id|시작-끝" 으로 공유 목록에 기록하고 chunk spans 를 보관한다.
  *       prepareError 가 있으면 prepare 에서 던지고, failWhen 이 참인 chunk 에서 EngineException 을 던진다.
  *       blockOnCall 번째(0부터) 호출은 cancel() 이 올 때까지(최대 10초) IO 스레드에서 막혀 있다가 ABORTED 로 끝난다.
- * 입력: spec(모델), calls(공유 호출 기록), prepareError(준비 예외), failWhen(오류 chunk 판정), blockOnCall(막을 호출 순번)
+ * 입력: spec(모델), calls(공유 호출 기록), prepareError(준비 예외), failWhen(오류 chunk 판정), blockOnCall(막을 호출 순번),
+ *       failError(failWhen 일 때 던질 예외, null 이면 EngineException), closeError(close 에서 던질 예외, null 이면 정상)
  */
 private class FakeEngine(
     override val spec: ModelSpec, // 모델 메타
@@ -76,6 +77,8 @@ private class FakeEngine(
     private val prepareError: EngineException? = null, // 준비 실패 예외
     private val failWhen: (AudioChunk) -> Boolean = { false }, // 오류를 낼 chunk 판정
     private val blockOnCall: Int? = null, // 취소까지 막을 호출 순번
+    private val failError: Throwable? = null, // 오류 chunk 에서 던질 예외 // change(add)-hyungchul-2026-10-11-02:14
+    private val closeError: Exception? = null, // close 에서 던질 예외 // change(add)-hyungchul-2026-10-11-02:14
 ) : AsrEngine {
     @Volatile var closed = false // close 호출 여부
     val cancelCount = AtomicInteger(0) // cancel 호출 수
@@ -102,7 +105,7 @@ private class FakeEngine(
             }
             throw EngineException("TRANSCRIBE", "ABORTED", "전사 중단됨") // 중단 결과
         }
-        if (failWhen(chunk)) throw EngineException("TRANSCRIBE", "NATIVE_ERROR", "가짜 네이티브 오류") // 오류 흉내
+        if (failWhen(chunk)) throw failError ?: EngineException("TRANSCRIBE", "NATIVE_ERROR", "가짜 네이티브 오류") // 오류 흉내
         return ChunkText("안녕 세계", "<|ko|>안녕 세계", null, 0.1) // 고정 텍스트
     }
 
@@ -112,16 +115,19 @@ private class FakeEngine(
         cancelLatch.countDown() // 막힌 전사 해제
     }
 
-    /** 목적: 가짜 해제. 기능: closed 표시. 입력: 없음. 출력: 없음. 리턴: 없음 */
-    override fun close() { closed = true } // 해제 표시
+    /** 목적: 가짜 해제. 기능: closed 표시 후 closeError 가 있으면 던진다. 입력: 없음. 출력: closeError. 리턴: 없음 */
+    override fun close() {
+        closed = true // 해제 표시
+        closeError?.let { throw it } // 닫기 실패 흉내
+    }
 }
 
 /**
  * 목적: 테스트용 가짜 VAD
  * 기능: 무음(전부 0)이면 구간 0개, 아니면 [시작, 길이-0.1] 한 구간. 시작은 SILERO_SAFE 0.2, 그 외 0.1(프리셋 구분용). 점수 없음.
- * 입력: family(계열), count(detect 호출 수 카운터)
+ * 입력: family(계열), count(detect 호출 수 카운터), closeError(close 에서 던질 예외, null 이면 정상)
  */
-private class FakeVad(override val family: VadFamily, private val count: AtomicInteger) : VadEngine {
+private class FakeVad(override val family: VadFamily, private val count: AtomicInteger, private val closeError: Exception? = null) : VadEngine { // change(add)-hyungchul-2026-10-11-02:14: closeError
     /** 목적: 가짜 검출. 기능: 위 규칙대로 구간 생성. 입력: audio, preset. 출력: 없음. 리턴: VadOutput */
     override fun detect(audio: FloatArray, preset: VadPreset): VadOutput {
         count.incrementAndGet() // 호출 수 증가
@@ -131,8 +137,9 @@ private class FakeVad(override val family: VadFamily, private val count: AtomicI
         return VadOutput(listOf(SpeechSegment(start, dur - 0.1)), null, null) // 한 구간
     }
 
-    /** 목적: 가짜 해제. 기능: 없음. 입력: 없음. 출력: 없음. 리턴: 없음 */
-    override fun close() {} // 자원 없음
+    /** 목적: 가짜 해제. 기능: closeError 가 있으면 던진다. 입력: 없음. 출력: closeError. 리턴: 없음 */
+    override fun close() { closeError?.let { throw it } } // 닫기 실패 흉내
+
 }
 
 /**
@@ -174,7 +181,7 @@ class BatchRunnerTest {
     private val created: MutableList<FakeEngine> = Collections.synchronizedList(mutableListOf()) // 만들어진 엔진
     private var engineOf: (ModelSpec) -> FakeEngine = { FakeEngine(it, calls) } // 엔진 생성 규칙(테스트별 교체)
     private var vadOf: (VadFamily) -> VadEngine = { FakeVad(it, detects) } // VAD 생성 규칙(테스트별 교체)
-    private val device = DeviceInfo("samsung", "SM-S938N", "SM8750", "16", 36, "arm64-v8a", 11800L, "1.0 (1)") // 고정 기기
+    private var device = DeviceInfo("samsung", "SM-S938N", "SM8750", "16", 36, "arm64-v8a", 11800L, "1.0 (1)") // 고정 기기
 
     /** 목적: 앱 폴더. 기능: 임시 폴더 루트의 AppDirs. 입력: 없음. 출력: 없음. 리턴: AppDirs */
     private val dirs by lazy { AppDirs(tmp.root) } // 임시 루트
@@ -318,6 +325,9 @@ class BatchRunnerTest {
         assertEquals("NO_MATCH", row["status"]) // 상태
         assertEquals("0", row["utterances"]) // 발화 0
         assertEquals("", row["text"]) // 빈 텍스트
+        assertEquals("0.000", row["transcribe_sec"]) // 엔진 미호출 → 전사 시간 0(측정값) // change(add)-hyungchul-2026-10-11-02:14
+        assertEquals("0.0000", row["rtf"]) // rtf 0
+        assertEquals("0.000", row["cloud_total_sec"]) // transcribe 와 같음
     }
 
     /** 목적: 오류 격리 확인. 기능: 두 번째 파일 엔진 예외 → 02.ERROR.txt, 세 번째 파일은 정상. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
@@ -361,6 +371,15 @@ class BatchRunnerTest {
         assertTrue(m.models[0].loadError!!.contains("OOM")) // 실패 사유 기록
         assertEquals(0.5, m.models[1].loadSec!!, 0.0) // 정상 모델 로드 시간
         assertEquals(4, rows(File(runDir, "kr/${combo("m1", "SILERO")}/result.csv")).size + rows(File(runDir, "kr/${combo("m1", "SILERO_SAFE")}/result.csv")).size) // m1 오류 행 4개
+        val r1 = rows(File(runDir, "kr/${combo("m1", "SILERO")}/result.csv"))[0] // m1 오류 행 // change(add)-hyungchul-2026-10-11-02:14
+        assertEquals("0.3", r1["engine_version"]) // prepare 전 실패 → 카탈로그 런타임 버전
+        assertEquals("", r1["compute_type"]) // 실제 정밀도 모름 → 빈 칸
+        assertEquals("4", r1["workers"]) // 설정 스레드 수
+        assertEquals("", r1["audio_sec"]) // 미측정 → 빈 칸
+        assertTrue(r1["note"]!!.endsWith(";stage=MODEL_LOAD;code=OOM")) // note
+        val r2 = rows(File(runDir, "kr/${combo("m2", "SILERO")}/result.csv"))[0] // m2 정상 행
+        assertEquals("fake-1.0", r2["engine_version"]) // prepare 보고 버전
+        assertEquals("int8", r2["compute_type"]) // prepare 보고 정밀도
     }
 
     /** 목적: 언어 미지원 조합 처리. 기능: ko 전용 모델 × en 파일 → en 폴더 없음, manifest.unsupported 기록, Finished.unsupported 집계. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
@@ -513,12 +532,13 @@ class BatchRunnerTest {
     }
 
     /** 목적: 취소 시나리오 공통 실행. 기능: 첫 transcribe 에서 막히는 엔진으로 실행 → 진입 확인 후 Job 취소 → 종료 대기(10초 제한). 입력: 없음. 출력: 시간 초과 시 예외. 리턴: 사용한 FakeEngine */
-    private suspend fun cancelDuringTranscribe(): FakeEngine {
+    private suspend fun cancelDuringTranscribe(afterEntered: () -> Unit = {}): FakeEngine {
         val eng = FakeEngine(spec("m1"), calls, blockOnCall = 0) // 첫 호출에서 막힘
         engineOf = { eng } // 이 엔진 사용
         val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
         val job = CoroutineScope(Dispatchers.Default).launch { runner().run(config(listOf(spec("m1")), listOf("SILERO"), files)).toList() } // 별도 코루틴
         withTimeout(10_000) { eng.entered.await() } // 전사 진입 대기
+        afterEntered() // 테스트별 추가 동작(취소 직전)
         job.cancel() // 취소
         withTimeout(5_000) { job.join() } // 종료 대기(cancel 이 전달되지 않으면 10초 막혀 시간 초과)
         return eng // 엔진 반환
@@ -551,5 +571,166 @@ class BatchRunnerTest {
         assertEquals(true, d2.vadReused) // 디스크 재사용
         assertTrue(d2.vadFrameScoresAvailable) // 점수 복원
         assertTrue(rows(File(runDir, "kr/${combo("m2", "SILERO")}/result.csv"))[0]["note"]!!.contains("max_chunk=5.0")) // 실효 maxChunk 기록
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 닫기 실패 기록 확인. 기능: 엔진·VAD close 가 예외를 던져도 실행은 끝나고 로그에 CLOSE_FAILED(원인 포함)가 남는다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun closeFailuresAreLogged() = runBlocking {
+        engineOf = { FakeEngine(it, calls, closeError = IllegalStateException("release 실패")) } // 엔진 close 실패
+        vadOf = { FakeVad(it, detects, closeError = IllegalStateException("vad 닫기 실패")) } // VAD close 실패
+        val events = runner().run(config(listOf(spec("m1")), listOf("SILERO"), listOf(item("kr", "customer", "01", 2.0)))).toList() // 실행
+        assertEquals(RunEvent.Finished(1, 0, 0, 0), events.last()) // 실행은 정상 종료
+        val lines = OutputLayout.log(runDir, runId).readLines() // 로그
+        assertTrue(lines.any { it.contains("\tCLOSE_FAILED\t") && it.contains("fake_m1") && it.contains("release 실패") }) // 엔진 닫기 실패 기록
+        assertTrue(lines.any { it.contains("\tCLOSE_FAILED\t") && it.contains("SILERO") && it.contains("vad 닫기 실패") }) // VAD 닫기 실패 기록
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 취소 시 manifest 저장 실패 기록 확인. 기능: manifest 경로를 비어 있지 않은 폴더로 바꿔 저장을 실패시키면 CANCEL_SAVE_FAILED 줄이 남고 취소는 그대로 끝난다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun cancelSaveFailureIsLogged() = runBlocking {
+        val eng = cancelDuringTranscribe { // 취소 직전에
+            val mf = OutputLayout.manifest(runDir) // manifest 경로
+            mf.delete() // 파일 제거
+            File(mf, "block").apply { parentFile!!.mkdirs(); writeText("x") } // 같은 이름의 비어 있지 않은 폴더 → 원자적 교체 실패
+        }
+        assertTrue(eng.closed) // 엔진은 닫힘
+        val lines = OutputLayout.log(runDir, runId).readLines() // 로그
+        assertTrue(lines.any { it.contains("\tCANCEL_SAVE_FAILED\t") }) // 저장 실패 기록
+        assertTrue(lines.any { it.contains("\tRUN_CANCELLED\t") }) // 취소 기록
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 모델 로드 단계 표시와 크래시 재개 확인. 기능: 로드 중 inFlight="m2|MODEL_LOAD" 가 저장되고, 그 표시가 남은 채 재개하면 m2 를 로드하지 않고 남은 항목을 ERROR(MODEL_LOAD, CRASH_OR_KILLED)로 기록한다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun modelLoadCrashOnResumeSkipsModel() = runBlocking {
+        val seen = Collections.synchronizedList(mutableListOf<String?>()) // 엔진 생성 시점의 inFlight
+        engineOf = { s -> seen.add(RunManifest.read(OutputLayout.manifest(runDir))?.inFlight); FakeEngine(s, calls) } // 생성 시 manifest 확인
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1"), spec("m2")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/01 만 완료
+        assertEquals(listOf<String?>("m1|MODEL_LOAD"), seen.toList()) // 로드 직전 표시 저장 확인
+        manifest().copy(inFlight = RunManifest.modelLoadKey("m2")).write(OutputLayout.manifest(runDir)) // m2 로드 중 크래시 흉내
+        calls.clear() // 기록 초기화
+        created.clear() // 생성 기록 초기화
+        val events = runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertTrue(created.none { it.spec.id == "m2" }) // m2 는 다시 로드하지 않음
+        assertEquals(listOf("m1|0.10-2.90"), calls.toList()) // m1/02 만 전사
+        for (s in listOf("01", "02")) { // m2 항목마다
+            val err = File(runDir, "kr/${combo("m2", "SILERO")}/customer/$s.ERROR.txt").readText() // 오류 파일
+            assertTrue(err.contains("stage: MODEL_LOAD")) // 단계
+            assertTrue(err.contains("code: CRASH_OR_KILLED")) // 코드
+        }
+        val m = manifest() // manifest
+        assertNull(m.inFlight) // 표시 해제
+        assertNull(m.models[1].loadSec) // m2 로드 시간 없음
+        assertTrue(m.models[1].loadError!!.contains("CRASH_OR_KILLED")) // m2 로드 오류 기록
+        assertEquals(RunEvent.Finished(1, 0, 2, 0), events.last()) // 이번 실행 집계(m1/02 OK, m2 오류 2)
+        calls.clear() // 기록 초기화
+        runner().run(cfg.copy(resume = true)).toList() // 한 번 더 이어하기
+        assertTrue(calls.isEmpty()) // 더 할 일 없음(반복 크래시 없음)
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: VAD 생성 단계 표시와 크래시 재개 확인. 기능: 생성 중 inFlight="SILERO|VAD_INIT" 가 저장되고, 그 표시가 남은 채 재개하면 SILERO 엔진을 만들지 않고 그 계열 항목(모든 모델)을 ERROR(VAD, CRASH_OR_KILLED)로 기록한다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun vadInitCrashOnResumeSkipsFamily() = runBlocking {
+        val seen = Collections.synchronizedList(mutableListOf<String>()) // 생성 시점의 "계열=inFlight"
+        val siloAttempts = AtomicInteger(0) // SILERO 생성 수
+        vadOf = { f -> // 생성 시 manifest 확인
+            seen.add("${f.name}=${RunManifest.read(OutputLayout.manifest(runDir))?.inFlight}") // 기록
+            if (f == VadFamily.SILERO) siloAttempts.incrementAndGet() // SILERO 생성 수
+            FakeVad(f, detects) // 엔진
+        }
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1"), spec("m2")), listOf("SILERO", "WEBRTC_ANDROIDVAD"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/SILERO/01 만 완료
+        assertEquals(listOf("SILERO=SILERO|VAD_INIT"), seen.toList()) // 생성 직전 표시 저장 확인
+        manifest().copy(inFlight = RunManifest.vadInitKey(VadFamily.SILERO)).write(OutputLayout.manifest(runDir)) // SILERO 생성 중 크래시 흉내
+        siloAttempts.set(0) // 초기화
+        runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertEquals(0, siloAttempts.get()) // SILERO 엔진을 다시 만들지 않음
+        assertTrue(File(runDir, "kr/${combo("m1", "SILERO")}/customer/01.txt").isFile) // 이미 끝난 항목은 유지
+        for ((m, s) in listOf("m1" to "02", "m2" to "01", "m2" to "02")) { // 남은 SILERO 항목마다
+            val err = File(runDir, "kr/${combo(m, "SILERO")}/customer/$s.ERROR.txt").readText() // 오류 파일
+            assertTrue(err.contains("stage: VAD")) // 단계
+            assertTrue(err.contains("code: CRASH_OR_KILLED")) // 코드
+        }
+        for (m in listOf("m1", "m2")) for (s in listOf("01", "02")) assertTrue(File(runDir, "kr/${combo(m, "WEBRTC_ANDROIDVAD")}/customer/$s.txt").isFile) // 다른 계열은 정상
+        assertNull(manifest().inFlight) // 표시 해제
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 크래시 정리 시 기존 행 교체 확인. 기능: txt·CSV 행은 있는데 detail 이 깨진 항목을 재개하면 ERROR 로 바뀌고 CSV·요약에 그 항목 행이 정확히 1개(ERROR)만 남는다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun crashCleanupReplacesExistingRows() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).toList() // 정상 완료
+        OutputLayout.detail(runDir, files[1], combo("m1", "SILERO")).writeText("{ 깨짐") // 02 detail 손상
+        manifest().copy(inFlight = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]), finishedAt = null).write(OutputLayout.manifest(runDir)) // 02 진행 중 표시
+        runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/02.ERROR.txt").isFile) // 오류로 정리
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").exists()) // txt 제거
+        val r = rows(File(runDir, "kr/fake_m1_SILERO/result.csv")) // 조합 CSV
+        assertEquals(listOf("01.wav" to "OK", "02.wav" to "ERROR"), r.map { it["file"] to it["status"] }) // 02 행 1개(ERROR)
+        val sm = rows(OutputLayout.summaryCsv(runDir, runId)) // 요약 CSV
+        assertEquals(listOf("01.wav" to "OK", "02.wav" to "ERROR"), sm.map { it["file"] to it["status"] }) // 요약도 같음
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: LinkageError 격리 확인. 기능: 엔진이 NoClassDefFoundError 를 던져도 그 항목만 ERROR(TRANSCRIBE, LINKAGE_ERROR)이고 다음 항목은 계속된다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun linkageErrorIsIsolated() = runBlocking {
+        engineOf = { FakeEngine(it, calls, failWhen = { c -> c.endSec < 2.0 }, failError = NoClassDefFoundError("com/x/Missing")) } // 첫 파일에서 클래스 누락
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val events = runner().run(config(listOf(spec("m1")), listOf("SILERO"), files)).toList() // 실행
+        val err = File(runDir, "kr/fake_m1_SILERO/customer/01.ERROR.txt").readText() // 오류 파일
+        assertTrue(err.contains("stage: TRANSCRIBE")) // 단계
+        assertTrue(err.contains("code: LINKAGE_ERROR")) // 코드
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").isFile) // 다음 항목 정상
+        assertEquals(RunEvent.Finished(1, 0, 1, 0), events.last()) // 집계
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 비정상 종료 기록 확인. 기능: 수집 쪽 예외로 실행이 끝나면 로그에 RUN_FAILED 줄이 남고 예외가 전파된다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun runFailureIsLogged() = runBlocking {
+        try {
+            runner().run(config(listOf(spec("m1")), listOf("SILERO"), listOf(item("kr", "customer", "01", 2.0)))).collect { ev -> // 수집
+                if (ev is RunEvent.ItemDone) throw IllegalStateException("수집기 오류") // 수집 쪽 실패
+            }
+            fail("예외가 전파되어야 함") // 예외가 없으면 실패
+        } catch (e: IllegalStateException) {
+            assertEquals("수집기 오류", e.message) // 원래 예외
+        }
+        assertTrue(OutputLayout.log(runDir, runId).readLines().any { it.contains("\tRUN_FAILED\t") && it.contains("수집기 오류") }) // 기록
+    }
+
+    // change(add)-hyungchul-2026-10-11-02:14
+    /** 목적: 이어하기 설정 검증 확인. 기능: 앱 버전·모델 정밀도·모델 파일 hash 가 이전 실행과 다르면 이어하기를 거부한다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun resumeRejectsChangedAppOrModel() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0)) // 파일 1개
+        val base = spec("m1") // 원래 모델
+        runner().run(config(listOf(base), listOf("SILERO"), files)).filterIsInstance<RunEvent.Progress>().take(1).toList() // 시작만 하고 중단
+        /** 목적: 이어하기 거부 확인. 기능: 예외 메시지에 기대 문구가 있는지 본다. 입력: models(모델), expect(문구). 출력: 실패 시 AssertionError. 리턴: Unit */
+        suspend fun expectReject(models: List<ModelSpec>, expect: String) {
+            try {
+                runner().run(config(models, listOf("SILERO"), files, resume = true)).toList() // 이어하기 시도
+                fail("거부되어야 함: $expect") // 예외가 없으면 실패
+            } catch (e: IllegalStateException) {
+                assertTrue(e.message, e.message!!.contains(expect)) // 사유
+            }
+        }
+        val origDevice = device // 원래 기기
+        device = device.copy(appVersion = "2.0 (2)") // 앱 버전 변경
+        expectReject(listOf(base), "앱 버전") // 거부
+        device = origDevice // 복원
+        expectReject(listOf(base.copy(precision = "int8")), "정밀도") // 정밀도 변경 거부
+        expectReject(listOf(base.copy(files = listOf(com.cowork.stt_ondevice.model.ModelFile("a.bin", 1L, "00".repeat(32), "model")))), "SHA-256") // 파일 hash 변경 거부
+        runner().run(config(listOf(base), listOf("SILERO"), files, resume = true)).toList() // 같은 설정은 허용
+        assertNotNull(manifest().finishedAt) // 완료
     }
 }

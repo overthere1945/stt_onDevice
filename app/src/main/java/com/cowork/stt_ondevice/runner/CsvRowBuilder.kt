@@ -32,7 +32,7 @@ internal fun sha1Hex(bytes: ByteArray): String =
  */
 internal object CsvRowBuilder {
 
-    private val WHITESPACE = Regex("\\s+") // 공백류 연속(PC one_line 의 \s+)
+    private val WHITESPACE = Regex("(?U)\\s+") // 유니코드 공백류 연속(NBSP·U+3000 포함, Python str 의 \s·split 과 동일) // change(add)-hyungchul-2026-10-11-02:14
 
     /**
      * 목적: PC one_line 과 같은 한 줄 정리
