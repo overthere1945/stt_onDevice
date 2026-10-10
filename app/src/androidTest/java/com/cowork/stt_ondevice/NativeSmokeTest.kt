@@ -57,6 +57,13 @@
 //       (connectedDebugAndroidTest 는 끝나면 앱을 지우므로 큰 모델은 installDebug + installDebugAndroidTest 후
 //        adb shell am instrument -w -e class com.cowork.stt_ondevice.NativeSmokeTest com.cowork.stt_ondevice.test/androidx.test.runner.AndroidJUnitRunner
 //        로 실행하면 다시 넣지 않아도 됨)
+//       change(add)-hyungchul-2026-10-10-21:41 Vosk 엔진 테스트(4 스레드 요청, 음원 앞 0–20 s, 결과 text·inferSec·PrepareInfo 를 logcat 에 남김):
+//       - voskKoTranscribes: vosk-small-ko-0.22, kr/customer/01.wav → 한글 포함. PrepareInfo(런타임 0.3.75·CPU·카탈로그 정밀도 fp32·실제 스레드 1) 확인
+//       - voskEnTranscribes: vosk-small-en-us-0.15, en/Customer_Service/01.wav → 라틴 문자 포함
+//       각 모델은 models/<id>/ 아래 카탈로그 path 그대로 있어야 하고(파일마다 SHA-256 = 카탈로그 확인), 없으면 그 테스트만 건너뜀(assume).
+//       넣는 법(installDebug 뒤): tools/models_cache/<id>/x0/vosk-model-.../ 의 카탈로그 파일만
+//         adb shell mkdir -p $P/models/<id>/{am,conf,graph/phones,ivector}
+//         (카탈로그 path 마다) adb push tools/models_cache/<id>/x0/<압축 상위 폴더>/<path> $P/models/<id>/<path>
 // change(add)-hyungchul-2026-10-10-15:26
 package com.cowork.stt_ondevice // 앱 루트 패키지(계측 테스트)
 
@@ -696,6 +703,62 @@ class NativeSmokeTest {
             ran++ // 실행 수 증가
         }
         assumeTrue("선택 Omnilingual 모델이 하나도 기기에 없음 — 건너뜀", ran > 0) // 하나도 못 했으면 건너뜀 표시
+    }
+
+    // change(add)-hyungchul-2026-10-10-21:41
+    /**
+     * 목적: Vosk 모델 하나로 음원 앞부분 전사(공통 절차)
+     * 기능: 모델이 없으면 건너뜀(assume) → EngineFactory → prepare(4) → PrepareInfo 확인(카탈로그 런타임 버전, CPU, 카탈로그 정밀도, 실제 스레드 1) →
+     *       앞 20 s 전사 → 비어 있지 않음·detectedLang null 확인, 로드·추론 시간·텍스트를 logcat 에 남긴다.
+     * 입력: id(카탈로그 모델 id), rel(input_sound 기준 상대 경로), lang(언어 코드)
+     * 출력: 실패 시 AssertionError
+     * 리턴: ChunkText
+     */
+    private fun voskRun(id: String, rel: String, lang: String): ChunkText {
+        val installed = installedModel(id) // 기기 모델(SHA-256 확인 포함)
+        assumeTrue("기기에 $id 모델 없음 — 건너뜀", installed != null) // 없으면 건너뜀
+        val (spec, dir) = installed!! // 스펙·폴더
+        EngineFactory.create(spec, dir).use { engine -> // 엔진 생성
+            val info = runBlocking { engine.prepare(4) } // 모델 로드
+            Log.i(TAG, "$id prepare: $info") // 준비 결과 기록(loadSec 포함)
+            assertEquals(spec.runtimeVersion, info.runtimeVersion) // 카탈로그 런타임 버전(0.3.75)
+            assertEquals("CPU", info.backend) // CPU 전용
+            assertEquals(spec.precision, info.precision) // 카탈로그 정밀도
+            assertEquals(1, info.threads) // Vosk 는 스레드 설정이 없어 실제 값 1
+            val r = runBlocking { engine.transcribe(chunkOf(rel, 20), lang) } // 0–20 s 전사
+            Log.i(TAG, "$id $lang 0–20 s: inferSec=${"%.3f".format(r.inferSec)}, text=${r.text}") // 결과 기록
+            assertTrue("$id $lang 전사가 비어 있음", r.text.isNotBlank()) // 비어 있지 않음
+            assertEquals(null, r.detectedLang) // 언어 고정
+            return r // 결과
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-10-21:41
+    /**
+     * 목적: Vosk small KO 가 기기에서 한국어를 전사하는지 확인
+     * 기능: voskRun(kr 0–20 s) → 한글 포함.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun voskKoTranscribes() {
+        val ko = voskRun("vosk-small-ko-0.22", "kr/customer/01.wav", "ko") // 한국어 전사
+        assertTrue("한글이 없음: ${ko.text}", hasHangul(ko.text)) // 한글 포함
+    }
+
+    // change(add)-hyungchul-2026-10-10-21:41
+    /**
+     * 목적: Vosk small EN-US 가 기기에서 영어를 전사하는지 확인
+     * 기능: voskRun(en 0–20 s) → 라틴 문자 포함.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun voskEnTranscribes() {
+        val en = voskRun("vosk-small-en-us-0.15", "en/Customer_Service/01.wav", "en") // 영어 전사
+        assertTrue("영문이 없음: ${en.text}", hasLatin(en.text)) // 라틴 문자 포함
     }
 
     private companion object {

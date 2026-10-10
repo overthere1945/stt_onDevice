@@ -10,3 +10,6 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+# change(add)-hyungchul-2026-10-10-21:41 Vosk(Task 22): JNA 가 libvosk.so 심볼과 Structure/Callback 필드를 리플렉션으로 찾으므로 JNA 와 Vosk 클래스를 R8 이 지우거나 이름을 바꾸지 않게 유지
+-keep class com.sun.jna.** { *; }
+-keep class org.vosk.** { *; }

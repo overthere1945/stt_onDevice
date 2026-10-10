@@ -5,17 +5,21 @@
 //       ASR 이 아닌 스펙·role "model" 파일이 없는 whisper 스펙은 각각 정해진 코드로 거부되는지 확인한다.
 //       change(add)-hyungchul-2026-10-10-20:57 SHERPA_OFFLINE/SHERPA_ONLINE 스펙은 SherpaOfflineEngine/SherpaStreamingEngine(모델 폴더 그대로)을 만들고,
 //         whisper 런타임에 WhisperConfig 가 아닌 스펙은 EngineException("MODEL_LOAD","CONFIG_MISMATCH") 인지 확인한다.
+//       change(add)-hyungchul-2026-10-10-21:41 VOSK 스펙은 VoskEngine(모델 폴더 그대로)을 만들고 VoskConfig 가 아니면 CONFIG_MISMATCH 인지 확인한다.
+//         모든 ASR 런타임이 구현되었으므로 NOT_IMPLEMENTED 시험은 카탈로그에 없는 런타임(ORT)으로 바꾼 ASR 스펙으로 한다.
 // change(add)-hyungchul-2026-10-10-20:35
 package com.cowork.stt_ondevice.engine // 엔진 테스트 패키지
 
 import com.cowork.stt_ondevice.engine.sherpa.SherpaOfflineEngine // change(add)-hyungchul-2026-10-10-20:57 sherpa 오프라인 엔진
 import com.cowork.stt_ondevice.engine.sherpa.SherpaStreamingEngine // change(add)-hyungchul-2026-10-10-20:57 sherpa 스트리밍 엔진
+import com.cowork.stt_ondevice.engine.vosk.VoskEngine // change(add)-hyungchul-2026-10-10-21:41 Vosk 엔진
 import com.cowork.stt_ondevice.engine.whisper.WhisperCppEngine // whisper.cpp 엔진
 import com.cowork.stt_ondevice.model.ModelCatalog // 실제 카탈로그
 import com.cowork.stt_ondevice.model.ModelKind // ASR/VAD
 import com.cowork.stt_ondevice.model.Runtime // 런타임 구분
 import com.cowork.stt_ondevice.model.SherpaConfig // change(add)-hyungchul-2026-10-10-20:57 sherpa 설정(불일치 시험용)
 import com.cowork.stt_ondevice.model.SherpaKind // change(add)-hyungchul-2026-10-10-20:57 sherpa 모델 종류
+import com.cowork.stt_ondevice.model.WhisperConfig // change(add)-hyungchul-2026-10-10-21:41 whisper 설정(불일치 시험용)
 import org.junit.Assert.assertEquals // 값 일치 검증
 import org.junit.Assert.assertSame // 같은 객체 검증
 import org.junit.Assert.assertThrows // 예외 검증
@@ -60,8 +64,8 @@ class EngineFactoryTest {
 
     /**
      * 목적: 미구현 런타임 거부 검증
-     * 기능: 카탈로그의 WHISPER_CPP 가 아닌 ASR 스펙은 모두 EngineException(MODEL_LOAD, NOT_IMPLEMENTED) 을 던진다(다른 엔진으로 대체 금지).
-     *       change(add)-hyungchul-2026-10-10-20:57 sherpa 런타임은 Task 21 에서 구현되어 대상에서 뺀다(남은 것은 Vosk).
+     * 기능: 구현되지 않은 런타임(ORT·LITERT)을 가진 ASR 스펙은 EngineException(MODEL_LOAD, NOT_IMPLEMENTED) 을 던진다(다른 엔진으로 대체 금지).
+     *       change(add)-hyungchul-2026-10-10-21:41 Vosk 까지 구현되어 카탈로그에는 미구현 ASR 스펙이 없으므로 whisper 스펙의 runtime 만 바꿔 시험한다.
      * 입력: 없음
      * 출력: 없음(실패 시 AssertionError)
      * 리턴: 없음
@@ -69,14 +73,35 @@ class EngineFactoryTest {
     @Test
     fun otherRuntimesThrowNotImplemented() {
         val dir = tmp.newFolder("m") // 모델 폴더
-        val implemented = setOf(Runtime.WHISPER_CPP, Runtime.SHERPA_OFFLINE, Runtime.SHERPA_ONLINE) // change(add)-hyungchul-2026-10-10-20:57 구현된 런타임
-        val specs = ModelCatalog.all.filter { it.kind == ModelKind.ASR && it.runtime !in implemented } // change(add)-hyungchul-2026-10-10-20:57 미구현 ASR 스펙
-        assertTrue("미구현 런타임 스펙이 있어야 함", specs.isNotEmpty()) // 대상 존재
+        val specs = listOf(Runtime.ORT, Runtime.LITERT).map { ModelCatalog.byId("whispercpp-tiny").copy(runtime = it) } // change(add)-hyungchul-2026-10-10-21:41 미구현 런타임 ASR 스펙
+        assertTrue("카탈로그의 모든 ASR 런타임이 구현되어야 함", ModelCatalog.all.none { it.kind == ModelKind.ASR && it.runtime in setOf(Runtime.ORT, Runtime.LITERT) }) // change(add)-hyungchul-2026-10-10-21:41 카탈로그 ASR 은 모두 구현됨
         for (spec in specs) { // 스펙마다
             val e = assertThrows(EngineException::class.java) { EngineFactory.create(spec, dir) } // 예외 확인
             assertEquals("${spec.id}: stage", "MODEL_LOAD", e.stage) // 단계
             assertEquals("${spec.id}: code", "NOT_IMPLEMENTED", e.code) // 코드
             assertTrue("${spec.id}: 메시지에 런타임 이름", e.message!!.contains(spec.runtime.name)) // 사유
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-10-21:41
+    /**
+     * 목적: Vosk 런타임 분기 검증
+     * 기능: 카탈로그의 VOSK 스펙(KO·EN 2개)이 VoskEngine 을 만들고, spec·모델 폴더가 그대로인지, prepare 전 close 가 안전한지 확인한다.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun voskRuntimeCreatesVoskEngine() {
+        val dir = tmp.newFolder("models", "v") // 모델 폴더
+        val specs = ModelCatalog.all.filter { it.runtime == Runtime.VOSK } // Vosk 스펙들
+        assertEquals(2, specs.size) // small ko / small en-us
+        for (spec in specs) { // 스펙마다
+            val engine = EngineFactory.create(spec, dir) // 생성
+            assertTrue("${spec.id}: VoskEngine 이어야 함", engine is VoskEngine) // 타입
+            assertSame(spec, engine.spec) // 스펙 보존
+            assertEquals(dir, (engine as VoskEngine).modelDir) // 모델 폴더
+            engine.close() // prepare 전 close 안전
         }
     }
 
@@ -115,7 +140,8 @@ class EngineFactoryTest {
     // change(add)-hyungchul-2026-10-10-20:57
     /**
      * 목적: 런타임과 설정이 맞지 않는 스펙 거부 검증
-     * 기능: whisper 런타임 + SherpaConfig, sherpa 오프라인 런타임 + 스트리밍 종류, sherpa 스트리밍 런타임 + 오프라인 종류 →
+     * 기능: whisper 런타임 + SherpaConfig, sherpa 오프라인 런타임 + 스트리밍 종류, sherpa 스트리밍 런타임 + 오프라인 종류,
+     *       change(add)-hyungchul-2026-10-10-21:41 Vosk 런타임 + 다른 설정 2가지 →
      *       모두 EngineException(MODEL_LOAD, CONFIG_MISMATCH)(IllegalArgumentException 이 새지 않음).
      * 입력: 없음
      * 출력: 없음(실패 시 AssertionError)
@@ -123,10 +149,12 @@ class EngineFactoryTest {
      */
     @Test
     fun configMismatchIsEngineException() {
-        val specs = listOf( // 불일치 스펙 3개
+        val specs = listOf( // 불일치 스펙 5개
             ModelCatalog.byId("whispercpp-tiny").copy(engineConfig = SherpaConfig(SherpaKind.SENSEVOICE)), // whisper + sherpa 설정
             ModelCatalog.byId("sherpa-zipformer-ko-2024-06-24").copy(engineConfig = SherpaConfig(SherpaKind.STREAMING_ZIPFORMER)), // 오프라인 + 스트리밍 종류
             ModelCatalog.byId("sherpa-zipformer-streaming-ko-2024-06-16").copy(engineConfig = SherpaConfig(SherpaKind.ZIPFORMER_TRANSDUCER)), // 스트리밍 + 오프라인 종류
+            ModelCatalog.byId("vosk-small-ko-0.22").copy(engineConfig = WhisperConfig(5)), // change(add)-hyungchul-2026-10-10-21:41 Vosk + whisper 설정
+            ModelCatalog.byId("vosk-small-en-us-0.15").copy(engineConfig = SherpaConfig(SherpaKind.SENSEVOICE)), // change(add)-hyungchul-2026-10-10-21:41 Vosk + sherpa 설정
         )
         for (spec in specs) { // 스펙마다
             val e = assertThrows(EngineException::class.java) { EngineFactory.create(spec, tmp.root) } // 예외 확인

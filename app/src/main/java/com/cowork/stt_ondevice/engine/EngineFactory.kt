@@ -5,12 +5,15 @@
 //       change(add)-hyungchul-2026-10-10-20:57 SHERPA_OFFLINE → SherpaOfflineEngine, SHERPA_ONLINE → SherpaStreamingEngine(모델 폴더 전체, 파일은 role 로 찾음).
 //         설정 불일치(whisper 스펙에 WhisperConfig 아님, sherpa 스펙에 맞지 않는 SherpaConfig)는 EngineException("MODEL_LOAD","CONFIG_MISMATCH").
 //         남은 미구현 런타임은 Vosk(Task 22).
+//       change(add)-hyungchul-2026-10-10-21:41 VOSK → VoskEngine(모델 폴더 전체). 이제 모든 ASR 런타임이 구현되어 NOT_IMPLEMENTED 는 ORT·LITERT 등 ASR 이 아닌 런타임 값에만 남는다.
+//         VoskConfig 가 아닌 스펙은 VoskEngine 생성자가 CONFIG_MISMATCH 로 거부한다.
 //       엔진 생성만 하며 모델 로드(네이티브 호출)는 prepare() 에서 한다.
 // change(add)-hyungchul-2026-10-10-20:35
 package com.cowork.stt_ondevice.engine // 엔진 패키지
 
 import com.cowork.stt_ondevice.engine.sherpa.SherpaOfflineEngine // change(add)-hyungchul-2026-10-10-20:57 sherpa 오프라인 엔진
 import com.cowork.stt_ondevice.engine.sherpa.SherpaStreamingEngine // change(add)-hyungchul-2026-10-10-20:57 sherpa 스트리밍 엔진
+import com.cowork.stt_ondevice.engine.vosk.VoskEngine // change(add)-hyungchul-2026-10-10-21:41 Vosk 엔진
 import com.cowork.stt_ondevice.engine.whisper.WhisperCppEngine // whisper.cpp 엔진
 import com.cowork.stt_ondevice.model.ModelKind // ASR/VAD
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
@@ -52,6 +55,7 @@ object EngineFactory {
             }
             Runtime.SHERPA_OFFLINE -> SherpaOfflineEngine(spec, modelDir) // change(add)-hyungchul-2026-10-10-20:57 sherpa 오프라인(종류 불일치 시 생성자가 CONFIG_MISMATCH)
             Runtime.SHERPA_ONLINE -> SherpaStreamingEngine(spec, modelDir) // change(add)-hyungchul-2026-10-10-20:57 sherpa 스트리밍(종류 불일치 시 생성자가 CONFIG_MISMATCH)
+            Runtime.VOSK -> VoskEngine(spec, modelDir) // change(add)-hyungchul-2026-10-10-21:41 Vosk(종류 불일치 시 생성자가 CONFIG_MISMATCH)
             else -> throw EngineException("MODEL_LOAD", "NOT_IMPLEMENTED", "아직 구현하지 않은 런타임: ${spec.runtime.name} (${spec.id})") // 미구현(대체 금지)
         }
     }
