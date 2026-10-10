@@ -1,6 +1,7 @@
 // 파일명: app/build.gradle.kts
 // 목적: 앱 모듈의 빌드 설정 (SDK 버전, ABI, Compose, 의존성)
-// 기능: Compose 기반 앱 빌드(minSdk 31, arm64-v8a 전용, Java 17), 16KB 페이지 정렬을 위한 비압축 JNI 패키징
+// 기능: Compose 기반 앱 빌드(minSdk 31, arm64-v8a 전용, Java 17), 16KB 페이지 정렬을 위한 비압축 JNI 패키징,
+//       change(add)-hyungchul-2026-10-10-15:26 CMake 네이티브 빌드(NDK 30.0.16248370, CMake 4.1.2, c++_static)
 
 plugins {
     alias(libs.plugins.android.application)
@@ -15,6 +16,8 @@ android {
     compileSdk {
         version = release(37)
     }
+    // change(add)-hyungchul-2026-10-10-15:26: 네이티브 빌드(libstt_native.so)에 쓸 NDK 버전 고정
+    ndkVersion = "30.0.16248370"
 
     defaultConfig {
         applicationId = "com.cowork.stt_ondevice"
@@ -29,6 +32,13 @@ android {
         // change(add)-hyungchul-2026-10-10-11:56: arm64-v8a 전용 (S25 Ultra 대상)
         ndk {
             abiFilters += "arm64-v8a"
+        }
+
+        // change(add)-hyungchul-2026-10-10-15:26: CMake 인자 — C++ STL 정적 링크(libc++_shared.so 를 APK 에 넣지 않음)
+        externalNativeBuild {
+            cmake {
+                arguments += "-DANDROID_STL=c++_static"
+            }
         }
     }
 
@@ -53,6 +63,13 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = false
+        }
+    }
+    // change(add)-hyungchul-2026-10-10-15:26: 앱 네이티브 라이브러리(libfvad·TEN JNI, 이후 whisper.cpp) CMake 빌드, CMake 4.1.2 고정
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "4.1.2"
         }
     }
 }
