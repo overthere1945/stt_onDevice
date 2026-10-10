@@ -135,6 +135,8 @@ kaldiio 2.18.1, nemo_toolkit 3.0.0, numpy 2.5.3. 전체는 lock 파일.
   use_energy false, energy_floor 0, raw_energy true, use_log_fbank true, use_power true.
   povey 창: `w[n] = (0.5 − 0.5·cos(2πn/(400−1)))^0.85`. → **Kotlin `KaldiFbank` 에 창 함수 선택(povey) 만 추가하면 재사용 가능**하다
   (현재 `KaldiFbank.kt` 는 hamming 고정).
+  change(add)-hyungchul-2026-10-10-15:04 Task 14: `KaldiFbank(windowType = KaldiWindowType.POVEY)` 옵션을 추가했고(기본 HAMMING = FSMN 그대로),
+  CMVN 은 `vad/feature/FireRedCmvn.kt`(cmvn.ark 바이너리 파서), 추론은 `vad/impl/FireRedVad.kt`·`vad/impl/MarbleNetVad.kt` 가 한다.
 - CMVN 파일 `cmvn.ark`: **Kaldi 바이너리 double 행렬**(헤더 `\0B` + `DM`, 2 × 81). 0행 = 특징별 합 80개 + 마지막 열 프레임 수(count = 1694418954),
   1행 = 제곱합 80개 + 0. 공식 해석: `mean = sum/count`, `var = sumsq/count − mean²`(하한 1e-20), `istd = 1/sqrt(var)`(double).
   적용 `(x − mean) × istd` 를 **double 로 계산한 뒤 float32**(`torch.from_numpy(..).float()`). LFR 없음(FSMN 은 LFR(5,1) 후 am.mvn).

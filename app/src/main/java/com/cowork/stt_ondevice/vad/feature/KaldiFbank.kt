@@ -4,6 +4,8 @@
 //       입력 ×32768 → snip_edges 프레임 분할(25 ms / 10 ms) → DC 제거 → 프리엠퍼시스 0.97 → 해밍 창
 //       → 512 점 FFT(0 패딩) → 파워 스펙트럼 → kaldi mel 필터뱅크(20 Hz..나이퀴스트, 80 개) → log(max(값, float eps)).
 //       dither 0, use_energy false(에너지 열 없음), htk_mode false, is_librosa false.
+//       change(add)-hyungchul-2026-10-10-15:04 창 함수 선택(windowType) 추가: 기본 HAMMING(FSMN, 기존 동작 그대로),
+//       POVEY 는 FireRedVAD(fireredvad/core/audio_feat.py KaldifeatFbank = knf 기본 window_type "povey") 용이다.
 //       kaldi-native-fbank 는 신호 처리를 float 로 하지만 여기서는 FFT·누적을 double 로 하고(오차가 더 작음),
 //       창·프리엠퍼시스 계수·mel 가중치는 kaldi 와 같은 float 값을 쓴 뒤 결과를 Float 로 낸다.
 package com.cowork.stt_ondevice.vad.feature // 특징 추출 패키지
@@ -18,7 +20,8 @@ import kotlin.math.sin // 사인
 /**
  * 목적: Kaldi 호환 fbank 계산기
  * 기능: 생성 시 창 함수·FFT 표·mel 필터뱅크를 한 번 만들고, compute 로 파형 전체의 fbank 행렬을 만든다.
- * 입력: numMel(mel 필터 수), frameLengthMs(창 길이 ms), frameShiftMs(이동 ms), sampleRate(Hz)
+ * 입력: numMel(mel 필터 수), frameLengthMs(창 길이 ms), frameShiftMs(이동 ms), sampleRate(Hz),
+ *       windowType(창 함수, 기본 HAMMING — change(add)-hyungchul-2026-10-10-15:04)
  * 출력: 없음
  * 리턴: 해당 없음
  */
@@ -27,6 +30,7 @@ class KaldiFbank(
     val frameLengthMs: Int = 25, // 창 길이(ms)
     val frameShiftMs: Int = 10, // 프레임 이동(ms)
     val sampleRate: Int = 16000, // 샘플레이트(Hz)
+    val windowType: KaldiWindowType = KaldiWindowType.HAMMING, // change(add)-hyungchul-2026-10-10-15:04 창 함수(기본 해밍 = FSMN)
 ) {
 
     init {
@@ -36,7 +40,11 @@ class KaldiFbank(
     private val frameLength = sampleRate * frameLengthMs / 1000 // 창 샘플 수(400)
     private val frameShift = sampleRate * frameShiftMs / 1000 // 이동 샘플 수(160)
     private val fftSize = nextPowerOfTwo(frameLength) // round_to_power_of_two: FFT 크기(512)
-    private val window = hammingWindow(frameLength) // 해밍 창 계수
+    // change(add)-hyungchul-2026-10-10-15:04 창 함수 선택(기존: hammingWindow 고정)
+    private val window = when (windowType) { // 창 계수
+        KaldiWindowType.HAMMING -> hammingWindow(frameLength) // 해밍(FSMN)
+        KaldiWindowType.POVEY -> poveyWindow(frameLength) // povey(FireRedVAD)
+    }
     private val fft = RealPowerFft(fftSize) // 파워 스펙트럼 계산기
     private val melBins = kaldiMelBins() // mel 필터(시작 FFT 빈, 가중치)
 
@@ -76,7 +84,7 @@ class KaldiFbank(
         for (i in 0 until frameLength) frame[i] -= mean // remove_dc_offset
         for (i in frameLength - 1 downTo 1) frame[i] -= PREEMPH * frame[i - 1] // 프리엠퍼시스(뒤에서부터)
         frame[0] -= PREEMPH * frame[0] // 첫 샘플은 자기 자신 기준(kaldi 규칙)
-        for (i in 0 until frameLength) frame[i] *= window[i] // 해밍 창 적용
+        for (i in 0 until frameLength) frame[i] *= window[i] // 창 적용(해밍 또는 povey) change(add)-hyungchul-2026-10-10-15:04 주석 수정
     }
 
     /**
@@ -140,8 +148,10 @@ class KaldiFbank(
      * 입력: n(2 의 거듭제곱 FFT 크기)
      * 출력: 없음
      * 리턴: 해당 없음
+     * change(add)-hyungchul-2026-10-10-15:04 private → internal: NemoMelSpectrogram(MarbleNet)이 같은 FFT 를 재사용한다.
+     *       작업 버퍼(re, im)를 인스턴스가 재사용하므로 스레드 안전하지 않다(인스턴스를 스레드 간에 공유하지 말 것).
      */
-    private class RealPowerFft(private val n: Int) {
+    internal class RealPowerFft(private val n: Int) {
         private val re = DoubleArray(n) // 실수부 작업 버퍼
         private val im = DoubleArray(n) // 허수부 작업 버퍼
         private val cosTable = DoubleArray(n / 2) { cos(2.0 * PI * it / n) } // 회전 인자 cos
@@ -210,6 +220,19 @@ class KaldiFbank(
             return DoubleArray(n) { (0.54 - 0.46 * cos(a * it)).toFloat().toDouble() } // float 저장값과 같게
         }
 
+        // change(add)-hyungchul-2026-10-10-15:04
+        /**
+         * 목적: kaldi povey 창(kaldi-native-fbank feature-window.cc window_type "povey")
+         * 기능: w[i] = (0.5 − 0.5·cos(2π·i/(N−1)))^0.85 를 double 로 계산해 kaldi 처럼 float 로 저장한 값을 쓴다.
+         * 입력: n(창 길이)
+         * 출력: 없음
+         * 리턴: 창 계수 DoubleArray
+         */
+        private fun poveyWindow(n: Int): DoubleArray {
+            val a = 2.0 * PI / (n - 1) // 각도 간격
+            return DoubleArray(n) { Math.pow(0.5 - 0.5 * cos(a * it), 0.85).toFloat().toDouble() } // float 저장값과 같게
+        }
+
         /**
          * 목적: 2 의 거듭제곱 올림(kaldi RoundUpToNearestPowerOfTwo)
          * 기능: n 이상인 가장 작은 2 의 거듭제곱을 구한다.
@@ -223,4 +246,14 @@ class KaldiFbank(
             return p // 결과
         }
     }
+}
+
+// change(add)-hyungchul-2026-10-10-15:04
+/**
+ * 목적: KaldiFbank 창 함수 종류
+ * 기능: kaldi window_type 중 이 앱이 쓰는 두 가지만 둔다(다른 값은 지원하지 않음).
+ */
+enum class KaldiWindowType {
+    HAMMING, // 0.54 − 0.46·cos(2πi/(N−1)) — FunASR FSMN-VAD
+    POVEY, // (0.5 − 0.5·cos(2πi/(N−1)))^0.85 — FireRedVAD(knf 기본값)
 }

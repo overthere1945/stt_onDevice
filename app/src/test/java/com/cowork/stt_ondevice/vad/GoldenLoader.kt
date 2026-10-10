@@ -4,6 +4,7 @@
 //       구간 목록 비교(assertSegmentsClose)를 제공한다. JSON 형식은 tools/golden/README_한국어.md §5 를 따른다.
 //       모르는 키는 무시한다(JsonObject 로 필요한 키만 꺼냄, R13).
 //       change(add)-hyungchul-2026-10-10-13:56 모델 추론 정합용 점수 골든 읽기(loadScores, Task 12) 추가.
+//       change(add)-hyungchul-2026-10-10-15:04 원문 JSON 객체 읽기(loadRaw, Task 14) 추가.
 package com.cowork.stt_ondevice.vad // VAD 테스트 패키지
 
 import kotlinx.serialization.json.Json // kotlinx JSON 파서
@@ -155,6 +156,20 @@ object GoldenLoader {
         )
         assertEquals("JSON family 불일치: $name", family, g.family) // 파일 이름과 내용의 계열 일치
         return g // 결과
+    }
+
+    // change(add)-hyungchul-2026-10-10-15:04
+    /**
+     * 목적: 골든 JSON 원문 객체 읽기(Task 14: Golden 에 없는 계열별 추가 키 — binarized·filtered·특징 행렬 등 — 를 테스트가 직접 꺼내기 위함)
+     * 기능: golden/<name>.json 을 읽어 JsonObject 그대로 돌려준다.
+     * 입력: name(확장자 제외 파일 이름)
+     * 출력: 파일 없으면 IllegalArgumentException
+     * 리턴: JsonObject
+     */
+    fun loadRaw(name: String): JsonObject {
+        val res = javaClass.classLoader!!.getResource("$DIR/$name.json") // 클래스패스 리소스 찾기
+            ?: throw IllegalArgumentException("골든 파일 없음: $DIR/$name.json") // 없으면 바로 실패
+        return json.parseToJsonElement(res.readText()).jsonObject // JSON 객체로 파싱
     }
 
     /**
