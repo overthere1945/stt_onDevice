@@ -98,6 +98,8 @@ class VadPresetsTest {
         assertEquals(800, fsmnDef.maxEndSilenceTime) // end silence
         assertEquals(-100f, fsmnDef.snrThres, 0f) // snr
         assertEquals(1e-4f, fsmnDef.fePriorThres, 0f) // fe prior
+        // change(add)-hyungchul-2026-10-10-13:25 R11: ModelScope ONNX config(20000) 과 다르다는 주의 문구
+        assertTrue(VadPresets.byId("FSMN_DEFAULT").note.contains("20000")) // 주의 문구에 20000 언급
         assertEquals(-0.1f, fsmnDef.speechNoiseThreshLow, 0f) // low
 
         val aw = VadPresets.byId("WEBRTC_ANDROIDVAD").params as WebRtcParams // android-vad

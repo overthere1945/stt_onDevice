@@ -21,6 +21,7 @@ import java.io.File // 리소스 폴더 목록 조회
  * 목적: 구간 골든 JSON 1건의 메모리 표현
  * 기능: 공통 키(계획서 형식)와 Silero 계열 정밀 비교에 쓰는 추가 키(totalSamples, expectedSamples, windowSamples, params)를 담는다.
  *       추가 키가 JSON 에 없으면 null 이다(0 으로 채우지 않음).
+ *       change(add)-hyungchul-2026-10-10-13:25 FSMN 정밀 비교용 expectedMs·blocks 추가(기본값 null).
  */
 data class Golden(
     val name: String, // 골든 파일 이름(확장자 .json 제외)
@@ -36,6 +37,20 @@ data class Golden(
     val expectedSamples: List<IntArray>?, // SILERO·TEN_SHERPA 만: 기대 구간 정수 샘플 [start, end]
     val windowSamples: Int?, // SILERO·TEN_SHERPA 만: 창(hop) 크기 샘플(512 또는 256)
     val params: JsonObject?, // 골든 생성 시 적용한 파라미터 원문(계열마다 키가 다름)
+    // change(add)-hyungchul-2026-10-10-13:25 FSMN 정밀 비교용 추가 키(Task 9)
+    val expectedMs: List<LongArray>? = null, // FSMN 만: 원본 ms 정수 구간 [start, end]
+    val blocks: List<GoldenBlock>? = null, // FSMN 만: funasr_onnx 블록 호출 기록(호출 순서)
+)
+
+// change(add)-hyungchul-2026-10-10-13:25
+/**
+ * 목적: FSMN 골든의 블록 호출 기록 1건(JSON `blocks` 원소 `[프레임 수, 파형 샘플 수, is_final]`)
+ * 기능: funasr_onnx Fsmn_vad 가 E2EVadModel 을 부를 때 넘긴 블록 크기와 is_final 을 담는다.
+ */
+data class GoldenBlock(
+    val frames: Int, // 블록 프레임 수(점수 개수)
+    val waveSamples: Int, // 블록 파형 샘플 수
+    val isFinal: Boolean, // is_final 인자
 )
 
 // change(add)-hyungchul-2026-10-10-13:04
@@ -80,6 +95,15 @@ object GoldenLoader {
             },
             windowSamples = obj.num("windowSamples")?.toInt(), // 창 크기
             params = obj["params"]?.takeUnless { it is JsonNull }?.jsonObject, // 파라미터 원문
+            // change(add)-hyungchul-2026-10-10-13:25 FSMN 추가 키(없으면 null)
+            expectedMs = obj.arr("expectedMs")?.map { p -> // ms 정수 구간
+                val a = p.jsonArray // [start, end]
+                longArrayOf(a[0].jsonPrimitive.content.toLong(), a[1].jsonPrimitive.content.toLong()) // 정수 쌍
+            },
+            blocks = obj.arr("blocks")?.map { b -> // 블록 호출 기록
+                val a = b.jsonArray // [프레임 수, 파형 샘플 수, is_final]
+                GoldenBlock(a[0].jsonPrimitive.content.toInt(), a[1].jsonPrimitive.content.toInt(), a[2].jsonPrimitive.content.toBooleanStrict()) // 원소 변환
+            },
         )
     }
 

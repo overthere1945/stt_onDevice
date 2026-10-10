@@ -52,7 +52,11 @@ object VadPresets {
         VadPreset("PYA2_AMI", VadFamily.PYANNOTE, PyannoteParams(0.684f, 0.577f, 0.181, 0.037), "pyannote/segmentation 모델 카드(AMI)", PYA2_NOTE),
         VadPreset("PYA2_VOXCONVERSE", VadFamily.PYANNOTE, PyannoteParams(0.767f, 0.713f, 0.182, 0.501), "pyannote/segmentation 모델 카드(VoxConverse)", PYA2_NOTE),
         // ---- FSMN (FsmnStateMachine) ----
-        VadPreset("FSMN_DEFAULT", VadFamily.FSMN, fsmnDefault, "funasr/fsmn-vad config.yaml"),
+        // change(add)-hyungchul-2026-10-10-13:25 R11: ModelScope ONNX 패키지 config 값과의 차이를 note 로 명시
+        VadPreset(
+            "FSMN_DEFAULT", VadFamily.FSMN, fsmnDefault, "funasr/fsmn-vad config.yaml",
+            "ModelScope ONNX 패키지(iic/speech_fsmn_vad_zh-cn-16k-common-onnx)의 config.yaml 은 max_single_segment_time 20000 이다. 이 프리셋은 spec(funasr/fsmn-vad config)대로 60000 을 유지한다.",
+        ),
         VadPreset("FSMN_ASR30", VadFamily.FSMN, fsmnDefault.copy(maxSingleSegmentTime = 30000), "FSMN_DEFAULT + max_single_segment_time 30000 (SenseVoice README 사용 예)"),
         // ---- WebRTC ----
         VadPreset("WEBRTC_LIB_DEFAULT", VadFamily.WEBRTC, WebRtcParams(0, 30, WebRtcStyle.RAW), "libfvad 기본 mode", "후처리 없음. 연속 voiced 프레임을 병합한다."),
