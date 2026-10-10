@@ -1,5 +1,13 @@
+// 파일명: app/build.gradle.kts
+// 목적: 앱 모듈의 빌드 설정 (SDK 버전, ABI, Compose, 의존성)
+// 기능: Compose 기반 앱 빌드(minSdk 31, arm64-v8a 전용, Java 17), 16KB 페이지 정렬을 위한 비압축 JNI 패키징
+
 plugins {
     alias(libs.plugins.android.application)
+    // change(add)-hyungchul-2026-10-10-11:56: Compose 컴파일러 플러그인 적용 (AGP 9 내장 Kotlin 사용 — kotlin-android 플러그인은 적용하지 않음)
+    alias(libs.plugins.kotlin.compose)
+    // change(add)-hyungchul-2026-10-10-11:56: kotlinx-serialization 플러그인 적용 (이후 Task 의 JSON 직렬화용)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -10,12 +18,18 @@ android {
 
     defaultConfig {
         applicationId = "com.cowork.stt_ondevice"
-        minSdk = 30
+        // change(add)-hyungchul-2026-10-10-11:56: minSdk 30 -> 31
+        minSdk = 31
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // change(add)-hyungchul-2026-10-10-11:56: arm64-v8a 전용 (S25 Ultra 대상)
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -27,18 +41,43 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        // change(add)-hyungchul-2026-10-10-11:56: Java 11 -> 17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    // change(add)-hyungchul-2026-10-10-11:56: Compose 활성화
+    buildFeatures {
+        compose = true
+    }
+    // change(add)-hyungchul-2026-10-10-11:56: .so 를 압축하지 않고 APK 에 정렬 저장 (16KB 페이지 정렬 요건, pickFirst 는 사용하지 않음)
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 }
 
 dependencies {
     implementation(libs.androidx.activity.ktx)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.core.ktx)
-    implementation(libs.material)
+    // change(add)-hyungchul-2026-10-10-11:56: Compose BOM 과 UI 라이브러리
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    // change(add)-hyungchul-2026-10-10-11:56: Activity / Lifecycle / Navigation 의 Compose 연동
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.navigation.compose)
+    // change(add)-hyungchul-2026-10-10-11:56: 코루틴 / 직렬화
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
+    // change(add)-hyungchul-2026-10-10-11:56: JVM 단위 테스트용 코루틴 테스트 / ONNX Runtime
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.onnxruntime.jvm)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
 }
