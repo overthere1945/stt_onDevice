@@ -2,9 +2,9 @@
 # 파일명: tools/check_pairing.sh
 # 목적: 앱의 출력 트리를 사용자의 기존 PC 평가기(run_eval.py)가 그대로 소비하는지(페어링) 확인한다. (Task 26)
 # 기능: app/build/sample_run/LATEST 가 가리키는 샘플 실행(SampleRunExportTest 가 만든 것)을 kr·en 각각 평가기로 채점하고
-#       by_model.csv 에서 (1) 모델 4개(fake_m1_NONE, fake_m1_SILERO, fake_m2_NONE, fake_m2_SILERO)가 모두 있는지,
-#       (2) 모든 행의 WER·CER(micro/macro 모든 (%) 열)가 0.0 인지 확인한다. 조합 폴더의 result.csv 때문에 생기는
-#       '<조합명>_<model>' 유령 모델은 경고로만 출력한다(실패 아님). 하나라도 어긋나면 해당 행을 출력하고 exit 1, 모두 맞으면 exit 0.
+#       by_model.csv 에서 (1) 모델 집합이 정확히 {fake_m1_NONE, fake_m1_SILERO, fake_m2_NONE, fake_m2_SILERO} 와 같은지(유령 모델이 있으면 실패),
+#       (2) 모든 행의 WER·CER(micro/macro 모든 (%) 열)가 0.0 인지 확인한다. 앱은 result.csv 를 평가 대상 폴더 밖
+#       (_results/)에 두므로 '<조합명>_<model>' 유령 모델이 나오면 R36 회귀로 보고 실패시킨다. 하나라도 어긋나면 해당 행을 출력하고 exit 1, 모두 맞으면 exit 0.
 #       평가기(~/workspace/python 아래)는 읽기 전용으로 "실행만" 한다: 평가기 폴더로 cd 해서 사용자와 똑같이 돌리되(상대 import 때문),
 #       --out 은 전부 app/build/eval_check/<lang> 아래라 평가기 폴더에는 아무것도 쓰지 않는다
 #       (python 은 PYTHONDONTWRITEBYTECODE=1 로 __pycache__ 생성도 막는다).
@@ -55,17 +55,15 @@ path, lang, expected = sys.argv[1], sys.argv[2], sys.argv[3:]
 with open(path, encoding="utf-8-sig", newline="") as f:
     rows = list(csv.DictReader(f))
 names = [r.get("model", "") for r in rows]
-bad, warn = [], []
+bad = []
 for m in expected:                                   # 기대 모델이 모두 있는지
     if m not in names:
         bad.append(f"[{lang}] 모델 누락: {m}")
-for m in names:                                      # 기대하지 않은 모델이 있는지
-    if m in expected:
-        continue
-    if any(m.startswith(e + "_") for e in expected): # '<조합명>_<model>' = 조합 폴더의 result.csv 가 만든 유령 모델(아래 설명)
-        warn.append(f"[{lang}] 주의: 유령 모델 {m}")
-    else:
-        bad.append(f"[{lang}] 예상 밖 모델: {m}")
+for m in names:                                      # 기대 밖 모델(유령 모델 <조합명>_<model> 포함)이 없는지
+    if m not in expected:
+        bad.append(f"[{lang}] 예상 밖 모델(유령 모델이면 result.csv 위치 문제): {m}")
+if len(names) != len(set(names)):
+    bad.append(f"[{lang}] 모델 이름 중복: {names}")
 rate_cols = [c for c in (rows[0].keys() if rows else []) if (c.startswith("WER") or c.startswith("CER")) and c.endswith("(%)")]
 if not rate_cols:
     bad.append(f"[{lang}] WER/CER 열을 찾지 못함")
@@ -77,14 +75,10 @@ for r in rows:                                       # 모든 WER/CER(micro·mac
             ok = False
         if not ok:
             bad.append(f"[{lang}] {c} 가 0.0 아님: {r}")
-if warn:                                             # 유령 모델은 실패가 아니라 경고(사용자 GUI 의 'txt 만 평가' 옵션이 막는 현상)
-    print("\n".join(warn), file=sys.stderr)
-    print(f"[{lang}] 설명: 앱은 조합 폴더마다 result.csv(model 열=모델명)를 쓰는데, run_eval.py 는 폴더 접두어(조합명)와 model 열을 이어 "
-          "'<조합명>_<model>' 이름으로 한 번 더 등록한다. 사용자 GUI 의 '요약 CSV 를 평가에서 제외(txt 만)' 옵션을 쓰면 나타나지 않는다.", file=sys.stderr)
 if bad:
     print("\n".join(bad), file=sys.stderr)
     sys.exit(1)
-print(f"[{lang}] OK: 모델 {len(expected)}개 존재, 모든 WER/CER = 0.0" + (f" (유령 모델 경고 {len(warn)}건)" if warn else ""))
+print(f"[{lang}] OK: 모델 {len(expected)}개 존재, 모든 WER/CER = 0.0")
 PYEOF
   then
     FAIL=1 # 검사 실패

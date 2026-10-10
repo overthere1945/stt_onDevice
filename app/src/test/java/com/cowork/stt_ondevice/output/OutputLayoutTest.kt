@@ -31,7 +31,7 @@ class OutputLayoutTest {
         assertEquals(combo, OutputLayout.comboName("whispercpp", "small", "SILERO_SAFE")) // 조합명
         assertEquals(File("run/kr/whispercpp_small_SILERO_SAFE/customer/test/01.txt"), OutputLayout.transcript(run, item, combo)) // 전사 txt
         assertEquals(File("run/kr/whispercpp_small_SILERO_SAFE/customer/test/01.ERROR.txt"), OutputLayout.errorFile(run, item, combo)) // 오류 txt
-        assertEquals(File("run/kr/whispercpp_small_SILERO_SAFE/result.csv"), OutputLayout.resultCsv(run, "kr", combo)) // 조합별 CSV
+        assertEquals(File("run/_results/kr/whispercpp_small_SILERO_SAFE/result.csv"), OutputLayout.resultCsv(run, "kr", combo)) // 조합별 CSV(평가 대상 폴더 밖, R36)
     }
 
     /**

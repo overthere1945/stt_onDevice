@@ -34,7 +34,7 @@ internal class ItemOutputs(
 
     /**
      * 목적: 조합 result.csv 작성기
-     * 기능: <runDir>/<lang>/<combo>/result.csv 용 작성기를 만든다.
+     * 기능: <runDir>/_results/<lang>/<combo>/result.csv 용 작성기를 만든다(OutputLayout.resultCsv, R36).
      * 입력: combo(조합), item(입력 항목 — lang 사용)
      * 출력: 없음
      * 리턴: ResultCsvWriter

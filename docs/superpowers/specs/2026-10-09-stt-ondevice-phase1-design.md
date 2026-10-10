@@ -326,7 +326,7 @@ interface AsrEngine : AutoCloseable {
 ```
 output_stt/<run_id>/
  ├ <lang>/<algo>_<model>_<VAD>/<rel_dir>/<stem>.txt          (실패: <stem>.ERROR.txt)
- ├ <lang>/<algo>_<model>_<VAD>/result.csv                    (UTF-8 BOM, PC STT_CSV_HEADER 60열 그대로)
+ ├ _results/<lang>/<algo>_<model>_<VAD>/result.csv           (UTF-8 BOM, PC STT_CSV_HEADER 60열 그대로; 평가 대상 폴더 밖)
  ├ details/<lang>/<algo>_<model>_<VAD>/<rel_dir>/<stem>.json (chunk별 offset/텍스트/raw, 시간, 자원, 엔진 메타)
  ├ vad_segments/<VAD>/<lang>/<rel_dir>/<stem>.json
  ├ run_manifest.json                                          (기기, 앱 빌드, 모델 hash/라이선스, 프리셋 값, UNSUPPORTED 목록)
@@ -342,6 +342,7 @@ output_stt/<run_id>/
   [구간별] start(sec), end(sec), text
   0.42, 28.10, ...
   ```
+- result.csv 는 평가 대상 폴더(`<run_id>/<lang>`) 밖 `_results/` 에 둔다: PC 평가기(run_eval.py)가 hyp 폴더 안의 result.csv 를 별도 모델로 한 번 더 읽어 `<combo>_<model>` 유령 모델이 생기기 때문(R36).
 - result.csv 60열 매핑: `algo`=`<algo>_<VAD>`가 아닌 **`<algo>`**, `model`=`<model>`, `exec_mode`=`embedded`, `engine_version`=runtime 버전,
   `device`=`cpu`, `device_name`=SoC/모델명, `compute_type`=실제 precision, `workers`=threads, `cloud_total_sec`=transcribe_sec(로컬은 업로드 0),
   `note`에 `vad=<preset>;chunk_mode=..;max_chunk=..;alias=<PC 호환명>`. GPU·비용·Google/Azure 전용 열은 빈 값.

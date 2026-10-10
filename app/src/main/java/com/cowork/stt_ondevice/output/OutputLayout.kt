@@ -54,13 +54,15 @@ object OutputLayout {
 
     /**
      * 목적: 조합별 결과 CSV 경로
-     * 기능: <runDir>/<lang>/<combo>/result.csv
+     * 기능: <runDir>/_results/<lang>/<combo>/result.csv (R36: 평가 대상 폴더 <runDir>/<lang> 밖에 둔다.
+     *       PC 평가기가 hyp 폴더 안의 result.csv 를 별도 모델 <combo>_<model> 로 한 번 더 읽어 유령 모델이 생기기 때문)
      * 입력: runDir(실행 폴더), lang(언어 폴더명), combo(조합명)
      * 출력: 없음
      * 리턴: result.csv 파일 경로
      */
+    // change(add)-hyungchul-2026-10-11-02:50: R36 평가 대상 폴더 밖(_results)으로 이동
     fun resultCsv(runDir: File, lang: String, combo: String): File =
-        File(File(File(runDir, lang), combo), "result.csv") // 조합 폴더 바로 아래
+        File(File(File(File(runDir, "_results"), lang), combo), "result.csv") // _results/<lang>/<combo> 아래
 
     /**
      * 목적: 파일별 상세 JSON 경로

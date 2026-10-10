@@ -272,7 +272,8 @@ class BatchRunnerTest {
         assertEquals("안녕 세계", lines[1]) // 전체 텍스트
         assertEquals("[구간별] start(sec), end(sec), text", lines[3]) // 구간 머리줄
         assertEquals("0.10, 1.90, 안녕 세계", lines[4]) // 원본 offset 구간
-        val csv = File(runDir, "kr/fake_m1_SILERO/result.csv") // 조합 CSV
+        val csv = OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO") // 조합 CSV
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/result.csv").exists()) // 평가 대상 폴더 안에는 result.csv 가 없어야 함(유령 모델 방지, R36) // change(add)-hyungchul-2026-10-11-02:50
         val bytes = csv.readBytes() // 바이트
         assertTrue(bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) // UTF-8 BOM
         val r = rows(csv) // 행 파싱
@@ -321,7 +322,7 @@ class BatchRunnerTest {
         val lines = File(runDir, "kr/fake_m1_SILERO/customer/01.txt").readText().split("\n") // txt 줄
         assertEquals("[전체 텍스트] (엔진: fake m1 / VAD: SILERO / 조각 0개)", lines[0]) // 머리줄
         assertEquals("", lines[1]) // 빈 전체 텍스트
-        val row = rows(File(runDir, "kr/fake_m1_SILERO/result.csv")).single() // CSV 행
+        val row = rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")).single() // CSV 행
         assertEquals("NO_MATCH", row["status"]) // 상태
         assertEquals("0", row["utterances"]) // 발화 0
         assertEquals("", row["text"]) // 빈 텍스트
@@ -344,7 +345,7 @@ class BatchRunnerTest {
         val err = File(dir, "02.ERROR.txt").readText() // 오류 내용
         assertTrue(err.contains("stage: TRANSCRIBE")) // 단계
         assertTrue(err.contains("code: NATIVE_ERROR")) // 코드
-        val r = rows(File(runDir, "kr/fake_m1_SILERO/result.csv")) // CSV
+        val r = rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")) // CSV
         assertEquals(listOf("OK", "ERROR", "OK"), r.map { it["status"] }) // 상태 순서
         assertTrue(r[1]["note"]!!.endsWith(";stage=TRANSCRIBE;code=NATIVE_ERROR")) // note 에 stage/code
         assertEquals("", r[1]["text"]) // 오류 행 텍스트 없음
@@ -370,14 +371,14 @@ class BatchRunnerTest {
         assertNull(m.models[0].loadSec) // 실패 모델 로드 시간 없음
         assertTrue(m.models[0].loadError!!.contains("OOM")) // 실패 사유 기록
         assertEquals(0.5, m.models[1].loadSec!!, 0.0) // 정상 모델 로드 시간
-        assertEquals(4, rows(File(runDir, "kr/${combo("m1", "SILERO")}/result.csv")).size + rows(File(runDir, "kr/${combo("m1", "SILERO_SAFE")}/result.csv")).size) // m1 오류 행 4개
-        val r1 = rows(File(runDir, "kr/${combo("m1", "SILERO")}/result.csv"))[0] // m1 오류 행 // change(add)-hyungchul-2026-10-11-02:14
+        assertEquals(4, rows(OutputLayout.resultCsv(runDir, "kr", combo("m1", "SILERO"))).size + rows(OutputLayout.resultCsv(runDir, "kr", combo("m1", "SILERO_SAFE"))).size) // m1 오류 행 4개
+        val r1 = rows(OutputLayout.resultCsv(runDir, "kr", combo("m1", "SILERO")))[0] // m1 오류 행 // change(add)-hyungchul-2026-10-11-02:14
         assertEquals("0.3", r1["engine_version"]) // prepare 전 실패 → 카탈로그 런타임 버전
         assertEquals("", r1["compute_type"]) // 실제 정밀도 모름 → 빈 칸
         assertEquals("4", r1["workers"]) // 설정 스레드 수
         assertEquals("", r1["audio_sec"]) // 미측정 → 빈 칸
         assertTrue(r1["note"]!!.endsWith(";stage=MODEL_LOAD;code=OOM")) // note
-        val r2 = rows(File(runDir, "kr/${combo("m2", "SILERO")}/result.csv"))[0] // m2 정상 행
+        val r2 = rows(OutputLayout.resultCsv(runDir, "kr", combo("m2", "SILERO")))[0] // m2 정상 행
         assertEquals("fake-1.0", r2["engine_version"]) // prepare 보고 버전
         assertEquals("int8", r2["compute_type"]) // prepare 보고 정밀도
     }
@@ -408,7 +409,7 @@ class BatchRunnerTest {
         calls.clear() // 기록 초기화
         val events = runner().run(config(listOf(spec("m1")), listOf("SILERO"), files, resume = true)).toList() // 이어하기
         assertEquals(listOf("m1|0.10-3.90", "m1|0.10-4.90"), calls.toList()) // 남은 2개만
-        assertEquals(4, rows(File(runDir, "kr/fake_m1_SILERO/result.csv")).size) // CSV 4행
+        assertEquals(4, rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")).size) // CSV 4행
         assertEquals(4, rows(OutputLayout.summaryCsv(runDir, runId)).size) // 요약도 4행
         assertNotNull(manifest().finishedAt) // 이번엔 완료
         assertTrue(manifest().resume) // 이어하기 표시
@@ -432,7 +433,7 @@ class BatchRunnerTest {
         assertTrue(err.readText().contains("code: CRASH_OR_KILLED")) // 코드
         assertFalse(File(dir, "02.txt").exists()) // txt 없음
         assertEquals(listOf("m1|0.10-3.90"), calls.toList()) // 03 만 전사
-        val r = rows(File(runDir, "kr/fake_m1_SILERO/result.csv")) // CSV
+        val r = rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")) // CSV
         assertEquals(listOf("01.wav" to "OK", "02.wav" to "ERROR", "03.wav" to "OK"), r.map { it["file"] to it["status"] }) // 행
         assertTrue(r[1]["note"]!!.endsWith(";stage=TRANSCRIBE;code=CRASH_OR_KILLED")) // note
         assertNull(manifest().inFlight) // 정리됨
@@ -444,7 +445,7 @@ class BatchRunnerTest {
         val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
         val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
         runner().run(cfg).toList() // 정상 완료
-        val csv = File(runDir, "kr/fake_m1_SILERO/result.csv") // 조합 CSV
+        val csv = OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO") // 조합 CSV
         val summary = OutputLayout.summaryCsv(runDir, runId) // 요약 CSV
         val csvFull = csv.readText(Charsets.UTF_8) // 원래 내용
         val summaryFull = summary.readText(Charsets.UTF_8) // 원래 요약
@@ -570,7 +571,7 @@ class BatchRunnerTest {
         val d2 = AppJson.decodeFromString(DetailJson.serializer(), OutputLayout.detail(runDir, it1, combo("m2", "SILERO")).readText()) // m2 detail
         assertEquals(true, d2.vadReused) // 디스크 재사용
         assertTrue(d2.vadFrameScoresAvailable) // 점수 복원
-        assertTrue(rows(File(runDir, "kr/${combo("m2", "SILERO")}/result.csv"))[0]["note"]!!.contains("max_chunk=5.0")) // 실효 maxChunk 기록
+        assertTrue(rows(OutputLayout.resultCsv(runDir, "kr", combo("m2", "SILERO")))[0]["note"]!!.contains("max_chunk=5.0")) // 실효 maxChunk 기록
     }
 
     // change(add)-hyungchul-2026-10-11-02:14
@@ -673,7 +674,7 @@ class BatchRunnerTest {
         runner().run(cfg.copy(resume = true)).toList() // 이어하기
         assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/02.ERROR.txt").isFile) // 오류로 정리
         assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").exists()) // txt 제거
-        val r = rows(File(runDir, "kr/fake_m1_SILERO/result.csv")) // 조합 CSV
+        val r = rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")) // 조합 CSV
         assertEquals(listOf("01.wav" to "OK", "02.wav" to "ERROR"), r.map { it["file"] to it["status"] }) // 02 행 1개(ERROR)
         val sm = rows(OutputLayout.summaryCsv(runDir, runId)) // 요약 CSV
         assertEquals(listOf("01.wav" to "OK", "02.wav" to "ERROR"), sm.map { it["file"] to it["status"] }) // 요약도 같음
