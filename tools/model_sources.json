@@ -1,0 +1,1102 @@
+{
+ "checkedDate": "2026-10-10",
+ "models": [
+  {
+   "id": "whispercpp-tiny",
+   "kind": "ASR",
+   "algo": "whispercpp",
+   "model": "tiny",
+   "displayName": "Whisper tiny (whisper.cpp f16)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "WHISPER_CPP",
+   "runtimeVersion": "1.9.5",
+   "precision": "f16",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "whisper",
+    "beamSize": 5
+   },
+   "originalRepo": "https://huggingface.co/openai/whisper-tiny",
+   "license": "MIT",
+   "licenseUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "faster-whisper",
+   "note": "ggerganov/whisper.cpp(카드 license: mit) 커밋 5359861 의 ggml-tiny.bin, 원본 openai/whisper-tiny(MIT), 다국어 모델",
+   "downloads": [
+    {
+     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "ggml-tiny.bin",
+     "expectBytes": 77691713,
+     "expectSha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"
+    }
+   ],
+   "files": [
+    {
+     "path": "ggml-tiny.bin",
+     "role": "model",
+     "expectSha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"
+    }
+   ]
+  },
+  {
+   "id": "whispercpp-base",
+   "kind": "ASR",
+   "algo": "whispercpp",
+   "model": "base",
+   "displayName": "Whisper base (whisper.cpp f16)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "WHISPER_CPP",
+   "runtimeVersion": "1.9.5",
+   "precision": "f16",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "whisper",
+    "beamSize": 5
+   },
+   "originalRepo": "https://huggingface.co/openai/whisper-base",
+   "license": "MIT",
+   "licenseUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "faster-whisper",
+   "note": "ggerganov/whisper.cpp(카드 license: mit) 커밋 5359861 의 ggml-base.bin, 원본 openai/whisper-base(MIT), 다국어 모델",
+   "downloads": [
+    {
+     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "ggml-base.bin",
+     "expectBytes": 147951465,
+     "expectSha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+    }
+   ],
+   "files": [
+    {
+     "path": "ggml-base.bin",
+     "role": "model",
+     "expectSha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+    }
+   ]
+  },
+  {
+   "id": "whispercpp-small",
+   "kind": "ASR",
+   "algo": "whispercpp",
+   "model": "small",
+   "displayName": "Whisper small (whisper.cpp f16)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "WHISPER_CPP",
+   "runtimeVersion": "1.9.5",
+   "precision": "f16",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "whisper",
+    "beamSize": 5
+   },
+   "originalRepo": "https://huggingface.co/openai/whisper-small",
+   "license": "MIT",
+   "licenseUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "faster-whisper",
+   "note": "ggerganov/whisper.cpp(카드 license: mit) 커밋 5359861 의 ggml-small.bin, 원본 openai/whisper-small(MIT), 다국어 모델",
+   "downloads": [
+    {
+     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "ggml-small.bin",
+     "expectBytes": 487601967,
+     "expectSha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
+    }
+   ],
+   "files": [
+    {
+     "path": "ggml-small.bin",
+     "role": "model",
+     "expectSha256": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
+    }
+   ]
+  },
+  {
+   "id": "whispercpp-medium",
+   "kind": "ASR",
+   "algo": "whispercpp",
+   "model": "medium",
+   "displayName": "Whisper medium (whisper.cpp f16)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "WHISPER_CPP",
+   "runtimeVersion": "1.9.5",
+   "precision": "f16",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "whisper",
+    "beamSize": 5
+   },
+   "originalRepo": "https://huggingface.co/openai/whisper-medium",
+   "license": "MIT",
+   "licenseUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "faster-whisper",
+   "note": "ggerganov/whisper.cpp(카드 license: mit) 커밋 5359861 의 ggml-medium.bin, 원본 openai/whisper-medium(MIT), 다국어 모델",
+   "downloads": [
+    {
+     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium.bin",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "ggml-medium.bin",
+     "expectBytes": 1533763059,
+     "expectSha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"
+    }
+   ],
+   "files": [
+    {
+     "path": "ggml-medium.bin",
+     "role": "model",
+     "expectSha256": "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"
+    }
+   ]
+  },
+  {
+   "id": "whispercpp-large-v3-turbo-q5_0",
+   "kind": "ASR",
+   "algo": "whispercpp",
+   "model": "large-v3-turbo-q5_0",
+   "displayName": "Whisper large-v3-turbo-q5_0 (whisper.cpp q5_0)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "WHISPER_CPP",
+   "runtimeVersion": "1.9.5",
+   "precision": "q5_0",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "whisper",
+    "beamSize": 5
+   },
+   "originalRepo": "https://huggingface.co/openai/whisper-large-v3-turbo",
+   "license": "MIT",
+   "licenseUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "faster-whisper",
+   "note": "ggerganov/whisper.cpp(카드 license: mit) 커밋 5359861 의 ggml-large-v3-turbo-q5_0.bin, 원본 openai/whisper-large-v3-turbo(MIT), 다국어 모델",
+   "downloads": [
+    {
+     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "ggml-large-v3-turbo-q5_0.bin",
+     "expectBytes": 574041195,
+     "expectSha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+    }
+   ],
+   "files": [
+    {
+     "path": "ggml-large-v3-turbo-q5_0.bin",
+     "role": "model",
+     "expectSha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+    }
+   ]
+  },
+  {
+   "id": "whispercpp-large-v3-turbo-q8_0",
+   "kind": "ASR",
+   "algo": "whispercpp",
+   "model": "large-v3-turbo-q8_0",
+   "displayName": "Whisper large-v3-turbo-q8_0 (whisper.cpp q8_0)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "WHISPER_CPP",
+   "runtimeVersion": "1.9.5",
+   "precision": "q8_0",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "whisper",
+    "beamSize": 5
+   },
+   "originalRepo": "https://huggingface.co/openai/whisper-large-v3-turbo",
+   "license": "MIT",
+   "licenseUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "faster-whisper",
+   "note": "ggerganov/whisper.cpp(카드 license: mit) 커밋 5359861 의 ggml-large-v3-turbo-q8_0.bin, 원본 openai/whisper-large-v3-turbo(MIT), 다국어 모델",
+   "downloads": [
+    {
+     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q8_0.bin",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "ggml-large-v3-turbo-q8_0.bin",
+     "expectBytes": 874188075,
+     "expectSha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
+    }
+   ],
+   "files": [
+    {
+     "path": "ggml-large-v3-turbo-q8_0.bin",
+     "role": "model",
+     "expectSha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-zipformer-ko-2024-06-24",
+   "kind": "ASR",
+   "algo": "sherpa-zipformer",
+   "model": "ko-2024-06-24",
+   "displayName": "Zipformer KO 2024-06-24 (int8)",
+   "languages": [
+    "ko"
+   ],
+   "runtime": "SHERPA_OFFLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "ZIPFORMER_TRANSDUCER"
+   },
+   "originalRepo": "https://huggingface.co/johnBamma/icefall-asr-ksponspeech-zipformer-2024-06-24",
+   "license": "Apache-2.0(원본 icefall 카드) / 학습데이터 KsponSpeech(AI Hub) 이용조건 미확인",
+   "licenseUrl": "https://huggingface.co/johnBamma/icefall-asr-ksponspeech-zipformer-2024-06-24",
+   "commercial": "UNVERIFIED",
+   "compatAlias": "sherpa-onnx",
+   "note": "KsponSpeech 학습 icefall zipformer 의 sherpa 변환본(k2-fsa/sherpa-onnx-zipformer-korean-2024-06-24). 인코더·조이너 int8 + 디코더 fp32(sherpa 공식 예제 조합)",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-korean-2024-06-24.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-zipformer-korean-2024-06-24/",
+     "expectBytes": 329740690
+    }
+   ],
+   "files": [
+    {
+     "path": "encoder-epoch-99-avg-1.int8.onnx",
+     "role": "encoder"
+    },
+    {
+     "path": "decoder-epoch-99-avg-1.onnx",
+     "role": "decoder"
+    },
+    {
+     "path": "joiner-epoch-99-avg-1.int8.onnx",
+     "role": "joiner"
+    },
+    {
+     "path": "tokens.txt",
+     "role": "tokens"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-zipformer-en-2023-06-26",
+   "kind": "ASR",
+   "algo": "sherpa-zipformer",
+   "model": "en-2023-06-26",
+   "displayName": "Zipformer EN 2023-06-26 (int8)",
+   "languages": [
+    "en"
+   ],
+   "runtime": "SHERPA_OFFLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "ZIPFORMER_TRANSDUCER"
+   },
+   "originalRepo": "https://huggingface.co/Zengwei/icefall-asr-librispeech-zipformer-2023-05-15",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26",
+   "commercial": "ALLOWED",
+   "compatAlias": "sherpa-onnx",
+   "note": "LibriSpeech(CC BY 4.0) 학습 icefall zipformer(Zengwei/icefall-asr-librispeech-zipformer-2023-05-15) 의 sherpa 변환본. 선택 이유: 한국어 zipformer 와 같은 구조·같은 파일 구성(인코더·조이너 int8 + 디코더 fp32)의 공식 EN offline transducer 중 변환본 카드(csukuangfj/sherpa-onnx-zipformer-en-2023-06-26)에 license: apache-2.0 이 명시된 표준 크기 모델",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-en-2023-06-26.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-zipformer-en-2023-06-26/",
+     "expectBytes": 307666046
+    }
+   ],
+   "files": [
+    {
+     "path": "encoder-epoch-99-avg-1.int8.onnx",
+     "role": "encoder"
+    },
+    {
+     "path": "decoder-epoch-99-avg-1.onnx",
+     "role": "decoder"
+    },
+    {
+     "path": "joiner-epoch-99-avg-1.int8.onnx",
+     "role": "joiner"
+    },
+    {
+     "path": "tokens.txt",
+     "role": "tokens"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-zipformer-streaming-ko-2024-06-16",
+   "kind": "ASR",
+   "algo": "sherpa-zipformer-streaming",
+   "model": "ko-2024-06-16",
+   "displayName": "Streaming Zipformer KO 2024-06-16 (int8)",
+   "languages": [
+    "ko"
+   ],
+   "runtime": "SHERPA_ONLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 0,
+   "streaming": "NATIVE_STREAMING",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "STREAMING_ZIPFORMER"
+   },
+   "originalRepo": "https://huggingface.co/johnBamma/icefall-asr-ksponspeech-pruned-transducer-stateless7-streaming-2024-06-12",
+   "license": "Apache-2.0(원본 icefall 카드) / 학습데이터 KsponSpeech(AI Hub) 이용조건 미확인",
+   "licenseUrl": "https://huggingface.co/johnBamma/icefall-asr-ksponspeech-pruned-transducer-stateless7-streaming-2024-06-12",
+   "commercial": "UNVERIFIED",
+   "compatAlias": "sherpa-onnx",
+   "note": "KsponSpeech 학습 스트리밍 zipformer(v1) 의 sherpa 변환본(k2-fsa/sherpa-onnx-streaming-zipformer-korean-2024-06-16). 인코더·조이너 int8 + 디코더 fp32, modelType zipformer",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-streaming-zipformer-korean-2024-06-16/",
+     "expectBytes": 418218652
+    }
+   ],
+   "files": [
+    {
+     "path": "encoder-epoch-99-avg-1.int8.onnx",
+     "role": "encoder"
+    },
+    {
+     "path": "decoder-epoch-99-avg-1.onnx",
+     "role": "decoder"
+    },
+    {
+     "path": "joiner-epoch-99-avg-1.int8.onnx",
+     "role": "joiner"
+    },
+    {
+     "path": "tokens.txt",
+     "role": "tokens"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-sensevoice-small-int8-2024-07-17",
+   "kind": "ASR",
+   "algo": "sherpa-sensevoice",
+   "model": "small-int8",
+   "displayName": "SenseVoice Small (int8, 2024-07-17)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "SHERPA_OFFLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "SENSEVOICE"
+   },
+   "originalRepo": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall",
+   "license": "FunASR Model License 1.1",
+   "licenseUrl": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
+   "commercial": "CONDITIONAL",
+   "compatAlias": "sensevoice",
+   "note": "FunAudioLLM/SenseVoiceSmall 원본의 sherpa int8 변환본(2024-07-17). 더 최신인 2025-09-09 int8 은 ASLP-lab/WSYue-ASR sensevoice_small_yue(광둥어 미세조정본) 변환본이라 원본 기준 ko/en 비교에서 제외. 조건: 출처·저자 표기와 모델 이름 유지(FunASR Model License 1.1 §2.2)",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/",
+     "expectBytes": 163002883,
+     "expectSha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e"
+    }
+   ],
+   "files": [
+    {
+     "path": "model.int8.onnx",
+     "role": "model"
+    },
+    {
+     "path": "tokens.txt",
+     "role": "tokens"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-qwen3asr-0.6b-int8-2026-03-25",
+   "kind": "ASR",
+   "algo": "sherpa-qwen3asr",
+   "model": "0.6B-int8",
+   "displayName": "Qwen3-ASR 0.6B (int8)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "SHERPA_OFFLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "QWEN3_ASR"
+   },
+   "originalRepo": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B",
+   "commercial": "ALLOWED",
+   "compatAlias": "qwen3_asr",
+   "note": "Qwen3-ASR-0.6B sherpa 변환본(conv_frontend fp32 + encoder/decoder int8). tokenizer 는 폴더(tokenizer/)를 통째로 넘긴다",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25/",
+     "expectBytes": 878702423,
+     "expectSha256": "393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96"
+    }
+   ],
+   "files": [
+    {
+     "path": "conv_frontend.onnx",
+     "role": "convFrontend"
+    },
+    {
+     "path": "encoder.int8.onnx",
+     "role": "encoder"
+    },
+    {
+     "path": "decoder.int8.onnx",
+     "role": "decoder"
+    },
+    {
+     "path": "tokenizer/merges.txt",
+     "role": "tokenizer"
+    },
+    {
+     "path": "tokenizer/tokenizer_config.json",
+     "role": "tokenizer"
+    },
+    {
+     "path": "tokenizer/vocab.json",
+     "role": "tokenizer"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-omnilingual-ctc300m-v1-int8-2025-11-12",
+   "kind": "ASR",
+   "algo": "sherpa-omnilingual",
+   "model": "ctc300m-v1-int8",
+   "displayName": "Omnilingual CTC 300M v1 (int8)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "SHERPA_OFFLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "OMNILINGUAL_CTC"
+   },
+   "originalRepo": "https://huggingface.co/facebook/omniASR-CTC-300M",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://github.com/facebookresearch/omnilingual-asr/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "omnilingual",
+   "note": "Meta Omnilingual ASR CTC sherpa int8 변환본(sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12)",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12/",
+     "expectBytes": 292571207,
+     "expectSha256": "cdcd0559c7c73efed54209a926e321afc914d046c5fdbf3665f00dc78180e5ed"
+    }
+   ],
+   "files": [
+    {
+     "path": "model.int8.onnx",
+     "role": "model"
+    },
+    {
+     "path": "tokens.txt",
+     "role": "tokens"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-omnilingual-ctc300m-v2-int8-2026-02-05",
+   "kind": "ASR",
+   "algo": "sherpa-omnilingual",
+   "model": "ctc300m-v2-int8",
+   "displayName": "Omnilingual CTC 300M v2 (int8)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "SHERPA_OFFLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "OMNILINGUAL_CTC"
+   },
+   "originalRepo": "https://github.com/facebookresearch/omnilingual-asr",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://github.com/facebookresearch/omnilingual-asr/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "omnilingual",
+   "note": "Meta Omnilingual ASR CTC sherpa int8 변환본(sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-v2-int8-2026-02-05)",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-v2-int8-2026-02-05.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-v2-int8-2026-02-05/",
+     "expectBytes": 292313120,
+     "expectSha256": "951b32409aade32bd525310bb39e9666773ba3fc611a39e817f620936d76c631"
+    }
+   ],
+   "files": [
+    {
+     "path": "model.int8.onnx",
+     "role": "model"
+    },
+    {
+     "path": "tokens.txt",
+     "role": "tokens"
+    }
+   ]
+  },
+  {
+   "id": "sherpa-omnilingual-ctc1b-v2-int8-2026-02-05",
+   "kind": "ASR",
+   "algo": "sherpa-omnilingual",
+   "model": "ctc1b-v2-int8",
+   "displayName": "Omnilingual CTC 1B v2 (int8)",
+   "languages": [
+    "ko",
+    "en"
+   ],
+   "runtime": "SHERPA_OFFLINE",
+   "runtimeVersion": "1.13.8",
+   "precision": "int8",
+   "maxChunkSec": 30,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "sherpa",
+    "kind": "OMNILINGUAL_CTC"
+   },
+   "originalRepo": "https://github.com/facebookresearch/omnilingual-asr",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://github.com/facebookresearch/omnilingual-asr/blob/main/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": "omnilingual",
+   "note": "Meta Omnilingual ASR CTC sherpa int8 변환본(sherpa-onnx-omnilingual-asr-1600-languages-1B-ctc-v2-int8-2026-02-05)",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-omnilingual-asr-1600-languages-1B-ctc-v2-int8-2026-02-05.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-omnilingual-asr-1600-languages-1B-ctc-v2-int8-2026-02-05/",
+     "expectBytes": 787296506,
+     "expectSha256": "f4deae6e6cbf4ca785b89eaa3836156581208bf977ea2e6d7ae84d7efcfc3a40"
+    }
+   ],
+   "files": [
+    {
+     "path": "model.int8.onnx",
+     "role": "model"
+    },
+    {
+     "path": "tokens.txt",
+     "role": "tokens"
+    }
+   ]
+  },
+  {
+   "id": "vosk-small-ko-0.22",
+   "kind": "ASR",
+   "algo": "vosk",
+   "model": "small-ko-0.22",
+   "displayName": "Vosk small KO 0.22",
+   "languages": [
+    "ko"
+   ],
+   "runtime": "VOSK",
+   "runtimeVersion": "0.3.75",
+   "precision": "fp32",
+   "maxChunkSec": 0,
+   "streaming": "NATIVE_STREAMING",
+   "engineConfig": {
+    "type": "vosk"
+   },
+   "originalRepo": "https://alphacephei.com/vosk/models",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://alphacephei.com/vosk/models",
+   "commercial": "ALLOWED",
+   "compatAlias": "vosk",
+   "note": "alphacephei 공식 모델 목록(https://alphacephei.com/vosk/models) License 열 'Apache 2.0'. Kaldi 모델 폴더 전체를 Model(path) 로 연다(README 만 제외)",
+   "downloads": [
+    {
+     "url": "https://alphacephei.com/vosk/models/vosk-model-small-ko-0.22.zip",
+     "archive": "ZIP",
+     "stripPrefix": "vosk-model-small-ko-0.22/",
+     "expectBytes": 86914329
+    }
+   ],
+   "files": [
+    {
+     "path": "am/final.mdl",
+     "role": "modelDir"
+    },
+    {
+     "path": "conf/mfcc.conf",
+     "role": "modelDir"
+    },
+    {
+     "path": "conf/model.conf",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/Gr.fst",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/HCLr.fst",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/disambig_tid.int",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/phones.txt",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/phones/word_boundary.int",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/final.dubm",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/final.ie",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/final.mat",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/global_cmvn.stats",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/online_cmvn.conf",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/splice.conf",
+     "role": "modelDir"
+    }
+   ]
+  },
+  {
+   "id": "vosk-small-en-us-0.15",
+   "kind": "ASR",
+   "algo": "vosk",
+   "model": "small-en-us-0.15",
+   "displayName": "Vosk small EN-US 0.15",
+   "languages": [
+    "en"
+   ],
+   "runtime": "VOSK",
+   "runtimeVersion": "0.3.75",
+   "precision": "fp32",
+   "maxChunkSec": 0,
+   "streaming": "NATIVE_STREAMING",
+   "engineConfig": {
+    "type": "vosk"
+   },
+   "originalRepo": "https://alphacephei.com/vosk/models",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://alphacephei.com/vosk/models",
+   "commercial": "ALLOWED",
+   "compatAlias": "vosk",
+   "note": "alphacephei 공식 모델 목록(https://alphacephei.com/vosk/models) License 열 'Apache 2.0'. Kaldi 모델 폴더 전체를 Model(path) 로 연다(README 만 제외)",
+   "downloads": [
+    {
+     "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+     "archive": "ZIP",
+     "stripPrefix": "vosk-model-small-en-us-0.15/",
+     "expectBytes": 41205931
+    }
+   ],
+   "files": [
+    {
+     "path": "am/final.mdl",
+     "role": "modelDir"
+    },
+    {
+     "path": "conf/mfcc.conf",
+     "role": "modelDir"
+    },
+    {
+     "path": "conf/model.conf",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/Gr.fst",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/HCLr.fst",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/disambig_tid.int",
+     "role": "modelDir"
+    },
+    {
+     "path": "graph/phones/word_boundary.int",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/final.dubm",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/final.ie",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/final.mat",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/global_cmvn.stats",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/online_cmvn.conf",
+     "role": "modelDir"
+    },
+    {
+     "path": "ivector/splice.conf",
+     "role": "modelDir"
+    }
+   ]
+  },
+  {
+   "id": "vad-silero-v6.2.3",
+   "kind": "VAD",
+   "algo": "vad-silero",
+   "model": "v6.2.3",
+   "displayName": "Silero VAD v6.2.3",
+   "languages": [],
+   "runtime": "ORT",
+   "runtimeVersion": "1.30.0",
+   "precision": "fp32",
+   "maxChunkSec": 0,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "vad",
+    "family": "SILERO"
+   },
+   "originalRepo": "https://github.com/snakers4/silero-vad",
+   "license": "MIT",
+   "licenseUrl": "https://github.com/snakers4/silero-vad/blob/v6.2.3/LICENSE",
+   "commercial": "ALLOWED",
+   "compatAlias": null,
+   "note": "공식 저장소 태그 v6.2.3(커밋 5cd7945) 의 silero_vad.onnx, 골든 도구 해시와 교차 확인",
+   "downloads": [
+    {
+     "url": "https://github.com/snakers4/silero-vad/raw/v6.2.3/src/silero_vad/data/silero_vad.onnx",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "silero_vad.onnx",
+     "expectBytes": 2327524,
+     "expectSha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+    }
+   ],
+   "files": [
+    {
+     "path": "silero_vad.onnx",
+     "role": "model",
+     "expectSha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+    }
+   ]
+  },
+  {
+   "id": "vad-pyannote-seg3.0",
+   "kind": "VAD",
+   "algo": "vad-pyannote",
+   "model": "seg3.0",
+   "displayName": "pyannote segmentation-3.0",
+   "languages": [],
+   "runtime": "ORT",
+   "runtimeVersion": "1.30.0",
+   "precision": "fp32",
+   "maxChunkSec": 0,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "vad",
+    "family": "PYANNOTE"
+   },
+   "originalRepo": "https://huggingface.co/pyannote/segmentation-3.0",
+   "license": "MIT",
+   "licenseUrl": "https://huggingface.co/pyannote/segmentation-3.0",
+   "commercial": "ALLOWED",
+   "compatAlias": null,
+   "note": "원본 HF gated(MIT), sherpa-onnx 변환본(speaker-segmentation-models) 의 fp32 model.onnx 사용",
+   "downloads": [
+    {
+     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+     "archive": "TAR_BZ2",
+     "stripPrefix": "sherpa-onnx-pyannote-segmentation-3-0/",
+     "expectBytes": 6958444,
+     "expectSha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488"
+    }
+   ],
+   "files": [
+    {
+     "path": "model.onnx",
+     "role": "model",
+     "expectSha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
+    }
+   ]
+  },
+  {
+   "id": "vad-fsmn-zh-cn-16k-onnx",
+   "kind": "VAD",
+   "algo": "vad-fsmn",
+   "model": "zh-cn-16k-onnx",
+   "displayName": "FSMN-VAD (FunASR, int8)",
+   "languages": [],
+   "runtime": "ORT",
+   "runtimeVersion": "1.30.0",
+   "precision": "int8",
+   "maxChunkSec": 0,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "vad",
+    "family": "FSMN"
+   },
+   "originalRepo": "https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-onnx",
+   "license": "FunASR Model License 1.1",
+   "licenseUrl": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
+   "commercial": "CONDITIONAL",
+   "compatAlias": null,
+   "note": "modelscope iic/speech_fsmn_vad_zh-cn-16k-common-onnx 태그 v2.0.6(= master 와 같은 해시) 3파일. modelscope 메타 License 표기는 Apache License 2.0 이나 FunASR 모델은 FunASR Model License 1.1 적용 → 보수적으로 조건부. 조건: 출처·모델 이름 유지",
+   "downloads": [
+    {
+     "url": "https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-onnx/resolve/v2.0.6/model_quant.onnx",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "model_quant.onnx",
+     "expectSha256": "5289eb2aa3c9af2d7a4284bcfa7c3ceb81d360814ed4203239b6c5d0569da8a1",
+     "expectBytes": 506744
+    },
+    {
+     "url": "https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-onnx/resolve/v2.0.6/am.mvn",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "am.mvn",
+     "expectSha256": "6820fef9687708c4fc3fab2530179c8fcea6262daa25514380056cd8f6eb1754",
+     "expectBytes": 8040
+    },
+    {
+     "url": "https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-onnx/resolve/v2.0.6/config.yaml",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "config.yaml",
+     "expectSha256": "2ef334f2d7776edd86ed696296774f87550206c256bfabc597872ad861831589",
+     "expectBytes": 1215
+    }
+   ],
+   "files": [
+    {
+     "path": "model_quant.onnx",
+     "role": "model",
+     "expectSha256": "5289eb2aa3c9af2d7a4284bcfa7c3ceb81d360814ed4203239b6c5d0569da8a1"
+    },
+    {
+     "path": "am.mvn",
+     "role": "cmvn",
+     "expectSha256": "6820fef9687708c4fc3fab2530179c8fcea6262daa25514380056cd8f6eb1754"
+    },
+    {
+     "path": "config.yaml",
+     "role": "config",
+     "expectSha256": "2ef334f2d7776edd86ed696296774f87550206c256bfabc597872ad861831589"
+    }
+   ]
+  },
+  {
+   "id": "vad-yamnet-tflite-v1",
+   "kind": "VAD",
+   "algo": "vad-yamnet",
+   "model": "tflite-v1",
+   "displayName": "Yamnet (LiteRT)",
+   "languages": [],
+   "runtime": "LITERT",
+   "runtimeVersion": "2.3.0",
+   "precision": "int8",
+   "maxChunkSec": 0,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "vad",
+    "family": "YAMNET"
+   },
+   "originalRepo": "https://www.kaggle.com/models/google/yamnet",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://www.kaggle.com/models/google/yamnet",
+   "commercial": "ALLOWED",
+   "compatAlias": null,
+   "note": "Google 공식 TFLite 예제 저장소의 yamnet classification tflite v1(Kaggle google/yamnet tfLite classification-tflite v1 의 1.tflite 와 같은 해시). 내부 int8 MobileNet",
+   "downloads": [
+    {
+     "url": "https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/audio_classification/android/lite-model_yamnet_classification_tflite_1.tflite",
+     "archive": "NONE",
+     "stripPrefix": "",
+     "saveAs": "yamnet.tflite",
+     "expectBytes": 4126810,
+     "expectSha256": "10c95ea3eb9a7bb4cb8bddf6feb023250381008177ac162ce169694d05c317de"
+    }
+   ],
+   "files": [
+    {
+     "path": "yamnet.tflite",
+     "role": "model",
+     "expectSha256": "10c95ea3eb9a7bb4cb8bddf6feb023250381008177ac162ce169694d05c317de"
+    }
+   ]
+  },
+  {
+   "id": "vad-firered-7990aac",
+   "kind": "VAD",
+   "algo": "vad-firered",
+   "model": "7990aac",
+   "displayName": "FireRedVAD (ONNX export)",
+   "languages": [],
+   "runtime": "ORT",
+   "runtimeVersion": "1.30.0",
+   "precision": "fp32",
+   "maxChunkSec": 0,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "vad",
+    "family": "FIRERED"
+   },
+   "originalRepo": "https://huggingface.co/FireRedTeam/FireRedVAD",
+   "license": "Apache-2.0",
+   "licenseUrl": "https://huggingface.co/FireRedTeam/FireRedVAD",
+   "commercial": "ALLOWED",
+   "compatAlias": null,
+   "note": "HF FireRedTeam/FireRedVAD revision 7990aac 를 PC 에서 공식 export_onnx.py 로 변환(tools/export). 고지(Xiaohongshu FireRedTeam) 유지",
+   "downloads": [],
+   "files": [
+    {
+     "path": "fireredvad_vad.onnx",
+     "role": "modelOffline",
+     "bytes": 2392980,
+     "sha256": "4adc9f0120affe96f6f570c9c8672230c670d5b15ec30b4b6a450f316ab4c9ab"
+    },
+    {
+     "path": "fireredvad_stream_vad.onnx",
+     "role": "modelStream",
+     "bytes": 2302864,
+     "sha256": "e3444c6dd25c4a313a7560f517d64f6df6f1c45e3d25fb051863b4e2549ba2e3"
+    },
+    {
+     "path": "cmvn.ark",
+     "role": "cmvn",
+     "bytes": 1311,
+     "sha256": "c87f6f13edf0f0ec7535ddfc9cc3387d9268cb234b70182d566c5e2edf3ca473"
+    }
+   ],
+   "importLocalDir": "tools/export/out/firered"
+  },
+  {
+   "id": "vad-marblenet-v2.0",
+   "kind": "VAD",
+   "algo": "vad-marblenet",
+   "model": "v2.0",
+   "displayName": "MarbleNet v2.0 (ONNX export)",
+   "languages": [],
+   "runtime": "ORT",
+   "runtimeVersion": "1.30.0",
+   "precision": "fp32",
+   "maxChunkSec": 0,
+   "streaming": "FILE_ONLY",
+   "engineConfig": {
+    "type": "vad",
+    "family": "MARBLENET"
+   },
+   "originalRepo": "https://huggingface.co/nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0",
+   "license": "NVIDIA Open Model License",
+   "licenseUrl": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/",
+   "commercial": "ALLOWED",
+   "compatAlias": null,
+   "note": "HF nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0 revision 9d25eb8 를 PC 에서 NeMo 로 export(tools/export). 조건: 라이선스 고지 유지·이용 제한 준수",
+   "downloads": [],
+   "files": [
+    {
+     "path": "frame_vad_multilingual_marblenet_v2.0.onnx",
+     "role": "model",
+     "bytes": 430446,
+     "sha256": "738e1713a45bcf5b1c46195eeb1edb94b960a10f1bf2fbabe5e8973626433739"
+    },
+    {
+     "path": "marblenet_preprocessor.json",
+     "role": "preprocessor",
+     "bytes": 179986,
+     "sha256": "0e821a6ac90279935794d2f3627be1cfe6f98309195418849070093949d207b3"
+    }
+   ],
+   "importLocalDir": "tools/export/out/marblenet"
+  }
+ ]
+}

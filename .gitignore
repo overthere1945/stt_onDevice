@@ -59,3 +59,6 @@ tools/golden/.venv/
 tools/golden/models/
 # 골든 테스트 음원 클립(사용자 음원 파생물, 공개 저장소에 넣지 않음)
 app/src/test/resources/golden/audio/
+# --- 모델 카탈로그 도구 (change(add)-hyungchul-2026-10-10-16:12) ---
+# tools/hash_models.py 가 내려받고 해제하는 모델 캐시(약 15 GB, 공개 저장소에 넣지 않음)
+tools/models_cache/
