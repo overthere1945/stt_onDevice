@@ -91,7 +91,8 @@ private class AnswerEngine(override val spec: ModelSpec, private val answerByEnd
 
 /**
  * 목적: 항상 한 구간을 내는 가짜 VAD
- * 기능: [0.1, 길이-0.1] 한 구간(점수 없음). NONE·SILERO 프리셋 모두 같은 구간을 써서 엔진이 파일당 1번만 호출되게 한다.
+ * 기능: [0.1, 길이-0.1] 한 구간(점수 없음). NONE·SILERO 프리셋 모두 이 같은 가짜 VAD 를 쓰므로 실제 NONE(고정 길이 분할)·Silero 경로는
+ *       검증 대상이 아니다. 이 테스트는 폴더·모델 이름·txt 형식이 PC 평가기와 페어링되는지만 확인한다. 엔진은 파일당 1번만 호출된다.
  * 입력: family(계열)
  */
 private class OneSegmentVad(override val family: VadFamily) : VadEngine {
@@ -123,6 +124,21 @@ class SampleRunExportTest {
 
     /** 목적: 정답지 폴더. 기능: 환경변수 STT_ANSWER_SHEET_DIR 또는 ~/workspace/stt/answer_sheet. 입력: 없음. 출력: 없음. 리턴: File */
     private fun answerSheetDir(): File = File(System.getenv("STT_ANSWER_SHEET_DIR") ?: "${System.getProperty("user.home")}/workspace/stt/answer_sheet") // 기본 위치
+
+    /**
+     * 목적: 앱 모듈 폴더 찾기
+     * 기능: Gradle 은 모듈 폴더(app)에서 테스트를 실행하므로 user.dir 를 쓰되, 프로젝트 루트에서 실행된 경우 app 하위를 쓰고, 둘 다 아니면 실패시킨다.
+     * 입력: 없음
+     * 출력: 모듈 폴더를 못 찾으면 AssertionError
+     * 리턴: 모듈 폴더
+     */
+    // change(add)-hyungchul-2026-10-11-03:05
+    private fun moduleDir(): File {
+        val cwd = File(System.getProperty("user.dir")!!).absoluteFile // 현재 작업 폴더
+        val dir = if (File(cwd, "src/test").isDirectory) cwd else File(cwd, "app") // 모듈 또는 루트 기준
+        assertTrue("앱 모듈 폴더를 찾지 못함: $cwd", File(dir, "src/test").isDirectory) // 확인
+        return dir
+    }
 
     /** 목적: 가짜 모델. 기능: algo "fake", model=id 인 ModelSpec(ko·en 지원). 입력: id. 출력: 없음. 리턴: ModelSpec */
     private fun spec(id: String): ModelSpec = ModelSpec(
@@ -172,7 +188,8 @@ class SampleRunExportTest {
         val events = runner.run(config).toList() // 실행
         assertEquals(RunEvent.Finished(12, 0, 0, 0), events.last()) // 2 모델 × 2 프리셋 × 3 파일 모두 OK
 
-        val outRoot = File("build/sample_run").absoluteFile // app/build/sample_run (Gradle 은 모듈 폴더에서 테스트 실행)
+        val outRoot = File(moduleDir(), "build/sample_run") // app/build/sample_run
+        outRoot.listFiles()?.filter { it.name != "LATEST" }?.forEach { it.deleteRecursively() } // 오래된 샘플 실행 정리(LATEST 만 유지) // change(add)-hyungchul-2026-10-11-03:05
         val dest = File(outRoot, runId) // 내보낼 폴더
         dest.deleteRecursively() // 같은 초에 다시 실행된 경우 대비
         appDirs.runDir(runId).copyRecursively(dest, overwrite = true) // 결과 트리 복사
