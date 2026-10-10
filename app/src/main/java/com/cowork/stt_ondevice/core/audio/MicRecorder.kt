@@ -4,6 +4,8 @@
 //       - AudioRecordSource: AudioRecord(VOICE_RECOGNITION) 16 kHz mono PCM16 으로 연다. 기기가 16 kHz 를 거부하면 기기 기본 샘플레이트로 열고
 //         (조용히 넘어가지 않고 실제 값을 기록·화면에 표시), 저장할 때 PcmConverter 로 16 kHz mono 로 바꾼다. 실제 값은 AudioRecord 가 보고한 값.
 //       - MicRecorder.record: 정지 신호(StateFlow<Boolean>)가 켜질 때까지 블록을 읽어 이어 붙이고, 블록마다 RMS 레벨·누적 프레임 수를 알린다. 끝나면 소스를 해제한다.
+//         change(add)-hyungchul-2026-10-11-04:39 최대 프레임 수(maxFrames)에 닿으면 스스로 멈추고(stoppedByLimit), 버퍼를 늘리다 메모리가 부족하면(OutOfMemoryError)
+//         그때까지 녹음한 것을 돌려주고 멈춘다(stoppedByMemory) — 녹음 손실·크래시 대신 부분 저장.
 //       - MicRecorder.save: 16 kHz mono 로 맞춘 PCM 을 <이름>.wav.part 에 쓰고 이름을 바꿔(스캐너가 반쯤 쓴 파일을 보지 않게) 저장하고,
 //         실제 녹음 형식(샘플레이트·채널·인코딩·변환 여부·길이)을 같은 폴더의 <stem>.info.txt 에 기록한다(spec §6 "실제 format/rate 기록").
 //       - MicRecorder.micFile: 저장 경로 input_sound/<lang>/mic/<yyyyMMdd_HHmmss>.wav (같은 이름이 있으면 _1, _2 …).
@@ -89,18 +91,29 @@ class MicRecorder(private val source: PcmSource, private val io: CoroutineDispat
     /** 실제 채널 수(소스 보고 값). */
     val actualChannels: Int get() = source.channels // 소스 값
 
+    /** change(add)-hyungchul-2026-10-11-04:39 최대 길이(maxFrames)에 닿아 스스로 멈췄는지. */
+    @Volatile var stoppedByLimit: Boolean = false
+        private set
+
+    /** change(add)-hyungchul-2026-10-11-04:39 버퍼를 늘릴 메모리가 없어 그때까지의 녹음으로 멈췄는지. */
+    @Volatile var stoppedByMemory: Boolean = false
+        private set
+
     /**
      * 목적: 정지 신호까지 녹음
      * 기능: io 에서 stop 이 켜지거나 코루틴이 취소될 때까지 블록을 읽어 이어 붙인다. 블록마다 onBlock(RMS 0..1, 누적 프레임 수)을 부른다.
      *       읽기 결과가 음수면 한국어 IOException. 끝나면(정상·오류·취소) 소스를 해제한다.
-     * 입력: stop(정지 신호), onBlock(블록 콜백 — io 스레드에서 불림)
+     *       change(add)-hyungchul-2026-10-11-04:39 누적 프레임이 maxFrames 에 닿으면 멈추고 stoppedByLimit=true(넘친 블록 끝부분은 자름). 버퍼를 늘리다 OutOfMemoryError 가 나면
+     *       그 블록은 버리고 지금까지의 녹음으로 멈추며 stoppedByMemory=true. 버퍼는 maxFrames 분량보다 크게 늘리지 않는다.
+     * 입력: stop(정지 신호), maxFrames(change(add)-hyungchul-2026-10-11-04:39 최대 프레임 수, 기본 제한 없음), onBlock(블록 콜백 — io 스레드에서 불림)
      * 출력: 소스 오류 시 IOException, 취소 시 CancellationException
      * 리턴: 인터리브 PCM16 전체(소스의 실제 형식 그대로)
      */
-    suspend fun record(stop: StateFlow<Boolean>, onBlock: (rms: Float, frames: Long) -> Unit = { _, _ -> }): ShortArray = withContext(io) {
+    suspend fun record(stop: StateFlow<Boolean>, maxFrames: Long = Long.MAX_VALUE, onBlock: (rms: Float, frames: Long) -> Unit = { _, _ -> }): ShortArray = withContext(io) {
         val ch = source.channels.coerceAtLeast(1) // 채널 수(0 방지)
         val buf = ShortArray(maxOf(ch, source.sampleRate / 10 * ch)) // 약 0.1초 블록 버퍼
-        var out = ShortArray(source.sampleRate * ch) // 누적 버퍼(처음 1초 분량, 모자라면 두 배로)
+        val maxSamples = if (maxFrames >= Int.MAX_VALUE.toLong() / ch) Int.MAX_VALUE - 8 else (maxFrames * ch).toInt() // change(add)-hyungchul-2026-10-11-04:39 최대 샘플 수(배열 한계 안)
+        var out = ShortArray(minOf(source.sampleRate * ch, maxSamples)) // 누적 버퍼(처음 1초 분량, 모자라면 두 배로 — 최대 샘플 수까지)
         var size = 0 // 누적 샘플 수
         try {
             while (!stop.value) { // 정지 신호 전까지
@@ -108,10 +121,19 @@ class MicRecorder(private val source: PcmSource, private val io: CoroutineDispat
                 val n = source.read(buf) // 블록 읽기
                 if (n < 0) throw IOException("마이크 읽기 오류(코드 $n)") // 소스 오류
                 if (n == 0) continue // 읽은 것 없음(다시 시도)
-                if (size + n > out.size) out = out.copyOf(maxOf(out.size * 2, size + n)) // 공간 늘리기
-                buf.copyInto(out, size, 0, n) // 이어 붙이기
-                size += n // 누적
+                val take = minOf(n, maxSamples - size) // change(add)-hyungchul-2026-10-11-04:39 최대 길이를 넘는 부분은 자름
+                if (size + take > out.size) { // 공간 늘리기
+                    try {
+                        out = out.copyOf(minOf(maxOf(out.size.toLong() * 2, (size + take).toLong()), maxSamples.toLong()).toInt()) // 두 배(최대 샘플 수까지)
+                    } catch (e: OutOfMemoryError) { // change(add)-hyungchul-2026-10-11-04:39 메모리 부족 — 지금까지의 녹음을 지킴
+                        stoppedByMemory = true // 표시
+                        break // 멈춤(이 블록은 버림)
+                    }
+                }
+                buf.copyInto(out, size, 0, take) // 이어 붙이기
+                size += take // 누적
                 onBlock(rms(buf, n), (size / ch).toLong()) // 레벨·진행 알림
+                if (size >= maxSamples) { stoppedByLimit = true; break } // change(add)-hyungchul-2026-10-11-04:39 최대 길이 도달
             }
         } finally {
             source.release() // 소스 해제(정상·오류·취소 모두)

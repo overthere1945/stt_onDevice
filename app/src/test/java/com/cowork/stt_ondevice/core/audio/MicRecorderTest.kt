@@ -3,20 +3,28 @@
 // 기능: 가짜 PCM 소스(PcmSource)로 (1) stop 신호까지 읽은 블록 길이의 합이 결과 길이와 같고 소스가 해제되는지(recordsUntilStop),
 //       (2) 16 kHz mono 소스는 그대로, 48 kHz stereo 소스는 16 kHz mono 로 변환해 WAV(44바이트 헤더, PCM16)로 저장하고 실제 형식 정보 파일을 남기는지(writesWavAt16kMono),
 //       (3) 저장 경로가 input_sound/<lang>/mic/<yyyyMMdd_HHmmss>.wav 이고 같은 이름이 있으면 _1 을 붙이는지(micFilePath) 확인한다.
+//       change(add)-hyungchul-2026-10-11-04:39 (4) 소스 읽기 오류(음수) → 한국어 IOException + 소스 해제, (5) 취소 → CancellationException + 소스 해제, (6) 최대 프레임 수에서 자동 정지.
 // change(add)-hyungchul-2026-10-11-03:59
 package com.cowork.stt_ondevice.core.audio // 오디오 테스트 패키지
 
+import kotlinx.coroutines.CancellationException // change(add)-hyungchul-2026-10-11-04:39 취소 예외
+import kotlinx.coroutines.Dispatchers // change(add)-hyungchul-2026-10-11-04:39 디스패처
+import kotlinx.coroutines.cancelAndJoin // change(add)-hyungchul-2026-10-11-04:39 취소 후 대기
+import kotlinx.coroutines.delay // change(add)-hyungchul-2026-10-11-04:39 대기
 import kotlinx.coroutines.flow.MutableStateFlow // 정지 신호
+import kotlinx.coroutines.launch // change(add)-hyungchul-2026-10-11-04:39 코루틴 시작
 import kotlinx.coroutines.runBlocking // 블로킹 실행
 import kotlinx.coroutines.withTimeout // 제한 시간
 import org.junit.Assert.assertArrayEquals // 배열 일치
 import org.junit.Assert.assertEquals // 값 일치
 import org.junit.Assert.assertFalse // 거짓
+import org.junit.Assert.assertThrows // change(add)-hyungchul-2026-10-11-04:39 예외 확인
 import org.junit.Assert.assertTrue // 참
 import org.junit.Rule // 규칙
 import org.junit.Test // 테스트
 import org.junit.rules.TemporaryFolder // 임시 폴더
 import java.io.File // 파일
+import java.io.IOException // change(add)-hyungchul-2026-10-11-04:39 입출력 예외
 import java.time.LocalDateTime // 시각 값
 
 // change(add)-hyungchul-2026-10-11-03:59
@@ -139,5 +147,75 @@ class MicRecorderTest {
         assertEquals(File(root, "kr/mic/20261011_123456.wav"), f) // 규칙
         f.parentFile!!.mkdirs(); f.writeBytes(ByteArray(44)) // 같은 이름 파일 만들기
         assertEquals(File(root, "kr/mic/20261011_123456_1.wav"), MicRecorder.micFile(root, "kr", now)) // 접미 붙임
+    }
+
+    // change(add)-hyungchul-2026-10-11-04:39
+    /**
+     * 목적: 끝없이 블록을 주는 가짜 소스(취소·제한 테스트용)
+     * 기능: read 마다 n 샘플(값 7)을 주고 1ms 쉰다. errorAfter 번째 읽기부터는 -3(오류 코드)을 돌려준다.
+     * 입력: n(블록 샘플 수), errorAfter(오류를 낼 읽기 순번, 기본 없음)
+     */
+    private class EndlessSource(private val n: Int, private val errorAfter: Int = Int.MAX_VALUE) : PcmSource {
+        override val sampleRate = 16000 // 16 kHz
+        override val channels = 1 // mono
+        @Volatile var reads = 0 // 읽기 횟수
+        @Volatile var released = false // 해제 여부
+        /** 목적: 블록 읽기 / 입력: buf / 리턴: n 또는 -3 */
+        override fun read(buf: ShortArray): Int {
+            if (++reads >= errorAfter) return -3 // 오류 코드
+            Thread.sleep(1) // 실제 마이크처럼 조금 기다림
+            buf.fill(7, 0, n) // 값 채우기
+            return n // 샘플 수
+        }
+        /** 목적: 해제 / 리턴: 없음 */
+        override fun release() { released = true } // 기록
+    }
+
+    // change(add)-hyungchul-2026-10-11-04:39
+    /**
+     * 목적: 소스 읽기 오류
+     * 기능: 세 번째 읽기에서 -3 이 오면 "마이크 읽기 오류(코드 -3)" IOException 이 나고 소스가 해제된다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun readErrorThrowsAndReleases() {
+        val src = EndlessSource(160, errorAfter = 3) // 세 번째에 오류
+        val e = assertThrows(IOException::class.java) { runBlocking { MicRecorder(src).record(MutableStateFlow(false)) } } // 녹음
+        assertTrue(e.message!!, e.message!!.contains("마이크 읽기 오류(코드 -3)")) // 한국어 사유
+        assertTrue(src.released) // 해제
+    }
+
+    // change(add)-hyungchul-2026-10-11-04:39
+    /**
+     * 목적: 취소 시 소스 해제
+     * 기능: 녹음 중인 코루틴을 취소하면 CancellationException 으로 끝나고(결과 없음) 소스가 해제된다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun cancelReleasesSource() = runBlocking {
+        val src = EndlessSource(160) // 끝없는 소스
+        var thrown: Throwable? = null // 받은 예외
+        val job = launch(Dispatchers.Default) { try { MicRecorder(src).record(MutableStateFlow(false)) } catch (t: Throwable) { thrown = t; throw t } } // 녹음
+        withTimeout(5_000) { while (src.reads < 5) delay(5) } // 몇 블록 읽을 때까지
+        job.cancelAndJoin() // 취소
+        assertTrue(thrown is CancellationException) // 취소로 끝남
+        assertTrue(src.released) // 해제
+    }
+
+    // change(add)-hyungchul-2026-10-11-04:39
+    /**
+     * 목적: 최대 길이 자동 정지
+     * 기능: maxFrames=1000, 블록 160 이면 정지 신호 없이도 정확히 1000 샘플에서 멈추고 stoppedByLimit=true, 소스 해제.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun stopsAtMaxFrames() = runBlocking {
+        val src = EndlessSource(160) // 끝없는 소스
+        val rec = MicRecorder(src) // 녹음기
+        val pcm = withTimeout(5_000) { rec.record(MutableStateFlow(false), maxFrames = 1000) } // 제한 녹음
+        assertEquals(1000, pcm.size) // 정확히 제한 길이(넘친 블록 끝은 자름)
+        assertTrue(rec.stoppedByLimit) // 제한으로 멈춤
+        assertFalse(rec.stoppedByMemory) // 메모리 문제 아님
+        assertTrue(src.released) // 해제
     }
 }

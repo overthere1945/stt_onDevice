@@ -89,6 +89,9 @@ fun MicScreen(
         }
     }
 
+    // change(add)-hyungchul-2026-10-11-04:39 화면 회전 등 구성 변경으로 Activity 가 다시 만들어질 때도 이 onDispose 가 불려 녹음이 멈추고 저장된다 — 의도한 동작이다
+    //   (녹음 도중 화면이 다시 만들어지는 동안 상태가 엇갈리지 않게 단순화. 회전 후에는 다시 "녹음" 을 누르면 새 파일로 녹음).
+    //   시스템 뒤로 가기로 이 화면이 스택에서 빠지면 ViewModel 이 정리되며 onCleared 가 정지 → 저장한다.
     DisposableEffect(Unit) { onDispose { viewModel.stop() } } // 화면을 떠나면 녹음 정지(→ 저장)
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.stop() } // 백그라운드로 가면 녹음 정지(→ 저장)
     LaunchedEffect(s.message) { // 안내 문구

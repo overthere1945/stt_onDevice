@@ -143,16 +143,18 @@ fun ResultsScreen(
                             onCancelExport = viewModel::cancelExport, // 내보내기 취소
                         )
                     }
-                    items(run.combos, key = { c -> "combo-${c.runId}/${c.lang}/${c.combo}" }) { c -> // 조합 행
-                        ComboRow(c, comboOpen = sameCombo(s.openCombo, c), onClick = { if (sameCombo(s.openCombo, c)) viewModel.closeCombo() else viewModel.openCombo(c) }) // 열기/닫기
-                    }
-                    val oc = s.openCombo // 열린 조합
-                    if (oc != null && oc.runId == run.runId) { // 이 run 의 조합이 열려 있으면 파일 목록
-                        if (s.files.isEmpty()) {
-                            item(key = "files-empty-${run.runId}") { Text("파일 목록을 읽는 중이거나 행이 없습니다.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp)) } // 비어 있음
+                    run.combos.forEach { c -> // 조합마다 — change(add)-hyungchul-2026-10-11-04:39 열린 조합의 파일 행을 그 조합 바로 아래에 두려고 조합별 항목으로
+                        val comboOpen = sameCombo(s.openCombo, c) // 열림 여부
+                        item(key = "combo-${c.runId}/${c.lang}/${c.combo}") { // 조합 행(키 규칙 유지)
+                            ComboRow(c, comboOpen = comboOpen, onClick = { if (comboOpen) viewModel.closeCombo() else viewModel.openCombo(c) }) // 열기/닫기
                         }
-                        itemsIndexed(s.files, key = { i, f -> "file-${oc.runId}/${oc.lang}/${oc.combo}/$i/${f.relDir}/${f.file}" }) { _, f -> // 파일 행(중복 행 대비 순번 포함 키)
-                            FileRow(f, onClick = { viewModel.openPreview(f) }) // 미리보기
+                        if (comboOpen) { // 열린 조합이면 바로 아래에 파일 목록
+                            if (s.files.isEmpty()) {
+                                item(key = "files-empty-${c.runId}/${c.lang}/${c.combo}") { Text("파일 목록을 읽는 중이거나 행이 없습니다.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp)) } // 비어 있음
+                            }
+                            itemsIndexed(s.files, key = { i, f -> "file-${c.runId}/${c.lang}/${c.combo}/$i/${f.relDir}/${f.file}" }) { _, f -> // 파일 행(중복 행 대비 순번 포함 키)
+                                FileRow(f, onClick = { viewModel.openPreview(f) }) // 미리보기
+                            }
                         }
                     }
                 }

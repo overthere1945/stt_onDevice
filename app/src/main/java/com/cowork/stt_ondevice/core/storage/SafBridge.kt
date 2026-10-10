@@ -107,13 +107,15 @@ class SafBridge(context: Context) {
      * 목적: 고른 트리의 이름과 최상위 폴더 이름 읽기
      * 기능: 트리 루트 문서의 표시 이름과 그 바로 아래 폴더 이름들을 io 에서 읽는다(언어 폴더 판정용).
      * 입력: treeUri(OpenDocumentTree 결과)
-     * 출력: 읽기 실패 시 IOException(한국어)
+     * 출력: 읽기 실패 시 IOException(한국어 — change(add)-hyungchul-2026-10-11-04:39 SecurityException·IllegalArgumentException 등도 safeIo 로 변환해 크래시 방지)
      * 리턴: SafTreeInfo
      */
     suspend fun inspectTree(treeUri: Uri): SafTreeInfo = withContext(Dispatchers.IO) {
-        val src = SafTreeSource(resolver, treeUri) // SAF 읽기 트리
-        val rootId = DocumentsContract.getTreeDocumentId(treeUri) // 루트 문서 id
-        SafTreeInfo(src.nameOf(rootId), src.children(rootId).filter { it.isDir }.map { it.name }) // 이름 + 최상위 폴더
+        safeIo("고른 폴더를 읽지 못했습니다") { // change(add)-hyungchul-2026-10-11-04:39 예외를 한국어 IOException 으로
+            val src = SafTreeSource(resolver, treeUri) // SAF 읽기 트리
+            val rootId = DocumentsContract.getTreeDocumentId(treeUri) // 루트 문서 id
+            SafTreeInfo(src.nameOf(rootId), src.children(rootId).filter { it.isDir }.map { it.name }) // 이름 + 최상위 폴더
+        }
     }
 
     /**

@@ -364,6 +364,7 @@ class ResultsViewModelTest {
         vm.consumeMessage() // 소비
         vm.export("20261009_131500") { throw java.io.IOException("공간 부족") } // 실패
         assertTrue(vm.state.value.message!!.contains("내보내기 실패: 공간 부족")) // 사유
+        assertTrue(vm.state.value.message!!.contains("PC 평가에 쓰지 마세요")) // change(add)-hyungchul-2026-10-11-04:39 부분 복사 경고
         assertNull(vm.state.value.exportingRunId) // 끝남
     }
 }

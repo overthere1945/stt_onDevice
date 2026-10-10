@@ -385,10 +385,12 @@ class ResultsViewModel(
                 val r = withContext(io) { copy(File(outputRoot, runId)) } // 복사
                 _state.update { it.copy(message = "내보내기 완료: '${r.target}' 폴더에 파일 ${r.copied}개(${r.bytes / 1024} KB)") } // 성공
             } catch (e: CancellationException) {
-                _state.update { it.copy(message = "내보내기를 취소했습니다. 대상에 일부만 복사된 폴더가 남아 있을 수 있습니다") } // 취소
+                _state.update { it.copy(message = "내보내기를 취소했습니다. $PARTIAL_EXPORT_WARNING") } // 취소(change(add)-hyungchul-2026-10-11-04:39 경고 문구 공통화)
                 throw e // 취소는 삼키지 않음
+            } catch (e: IOException) {
+                _state.update { it.copy(message = "내보내기 실패: ${e.message ?: "입출력 오류"} — $PARTIAL_EXPORT_WARNING") } // change(add)-hyungchul-2026-10-11-04:39 입출력 실패(SafBridge 의 한국어 메시지) + 부분 복사 경고
             } catch (e: Exception) {
-                _state.update { it.copy(message = "내보내기 실패: ${e.message ?: e::class.java.simpleName}") } // 실패
+                _state.update { it.copy(message = "내보내기 실패: ${e.message ?: e::class.java.simpleName} — $PARTIAL_EXPORT_WARNING") } // 실패(change(add)-hyungchul-2026-10-11-04:39 부분 복사 경고)
             } finally {
                 _state.update { it.copy(exportingRunId = null) } // 진행 표시 해제
                 exportJob = null // 핸들 정리
@@ -409,6 +411,7 @@ class ResultsViewModel(
 
     companion object {
         private const val PREVIEW_LIMIT_BYTES = 64 * 1024 // 미리보기 최대 바이트
+        const val PARTIAL_EXPORT_WARNING = "대상에 일부만 복사된 폴더가 남았을 수 있습니다(PC 평가에 쓰지 마세요)" // change(add)-hyungchul-2026-10-11-04:39 내보내기 실패·취소 경고
 
         /**
          * 목적: run 목록 만들기
