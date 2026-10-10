@@ -3,6 +3,7 @@
 // 기능: Compose 기반 앱 빌드(minSdk 31, arm64-v8a 전용, Java 17), 16KB 페이지 정렬을 위한 비압축 JNI 패키징,
 //       change(add)-hyungchul-2026-10-10-15:26 CMake 네이티브 빌드(NDK 30.0.16248370, CMake 4.1.2, c++_static)
 //       change(add)-hyungchul-2026-10-10-15:43 LiteRT(Yamnet VAD) 의존성
+//       change(add)-hyungchul-2026-10-10-20:18 commons-compress(tar.bz2·zip 해제) 의존성
 
 plugins {
     alias(libs.plugins.android.application)
@@ -96,6 +97,8 @@ dependencies {
     implementation(libs.onnxruntime.android)
     // change(add)-hyungchul-2026-10-10-15:43: Yamnet VAD(yamnet.tflite) 실행용 LiteRT 런타임 (JVM 단위 테스트에서는 추론 함수를 주입하므로 네이티브를 쓰지 않음)
     implementation(libs.litert)
+    // change(add)-hyungchul-2026-10-10-20:18: 모델 압축(tar.bz2·zip) 안전 해제용 commons-compress (테스트의 압축 fixture 생성에도 사용)
+    implementation(libs.commons.compress)
     testImplementation(libs.junit)
     // change(add)-hyungchul-2026-10-10-11:56: JVM 단위 테스트용 코루틴 테스트 / ONNX Runtime
     testImplementation(libs.kotlinx.coroutines.test)
