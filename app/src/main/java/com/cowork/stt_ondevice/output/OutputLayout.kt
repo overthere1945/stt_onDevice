@@ -84,12 +84,13 @@ object OutputLayout {
 
     /**
      * 목적: 실행 매니페스트 경로
-     * 기능: <runDir>/manifest.json
+     * 기능: <runDir>/run_manifest.json (spec §11 파일명)
      * 입력: runDir(실행 폴더)
      * 출력: 없음
-     * 리턴: manifest.json 파일 경로
+     * 리턴: run_manifest.json 파일 경로
      */
-    fun manifest(runDir: File): File = File(runDir, "manifest.json") // 실행 폴더 바로 아래
+    // change(add)-hyungchul-2026-10-11-01:47: 파일명을 spec §11 대로 run_manifest.json 으로 수정(R32)
+    fun manifest(runDir: File): File = File(runDir, "run_manifest.json") // 실행 폴더 바로 아래
 
     /**
      * 목적: 실행 로그 경로

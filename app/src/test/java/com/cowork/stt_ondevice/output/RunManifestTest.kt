@@ -131,6 +131,24 @@ class RunManifestTest {
         }
     }
 
+    // change(add)-hyungchul-2026-10-11-01:47
+    /** 목적: maxChunkOverride 검증 확인. 기능: NaN·무한대·음수 값과 선택하지 않은 모델 키가 예외인지 본다. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun runConfigValidatesMaxChunkOverride() {
+        val a = ModelCatalog.asr[0] // 선택 모델
+        fun make(o: Map<String, Double>) = RunConfig("20261010_220500", emptyList(), listOf(a), emptyList(), ChunkMode.MERGE, o) // 생성 도우미
+        make(mapOf(a.id to 0.0)) // 0 은 허용(제한 없음)
+        make(mapOf(a.id to 12.5)) // 양수 허용
+        for (o in listOf(mapOf(a.id to Double.NaN), mapOf(a.id to Double.POSITIVE_INFINITY), mapOf(a.id to -1.0), mapOf("not-selected" to 5.0))) { // 잘못된 값들
+            try {
+                make(o) // 잘못된 입력
+                fail("예외가 나야 함: $o") // 예외가 없으면 실패
+            } catch (e: IllegalArgumentException) {
+                assertNotNull(e.message) // 사유 메시지 존재
+            }
+        }
+    }
+
     /** 목적: 프리셋 params 문자열 안정성. 기능: 정확한 문자열과 메타 필드를 비교한다(무한대는 inf). 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
     @Test
     fun presetParamsStringStable() {

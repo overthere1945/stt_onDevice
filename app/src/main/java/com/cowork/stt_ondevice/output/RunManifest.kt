@@ -75,7 +75,7 @@ data class ModelFileEntry(
 // change(add)-hyungchul-2026-10-10-22:05
 /**
  * 목적: manifest 에 남기는 모델 1개의 정보
- * 기능: 결과 폴더 이름(algo/model), 런타임·정밀도, 실효 maxChunkSec, 파일 hash, 라이선스·상업 판정, PC 호환 별칭을 담는다.
+ * 기능: 결과 폴더 이름(algo/model), 런타임·정밀도, 실효 maxChunkSec, 파일 hash, 라이선스·상업 판정, PC 호환 별칭, 로드 시간·로드 오류를 담는다.
  * 입력: 각 필드(아래 주석)
  */
 @Serializable
@@ -92,6 +92,9 @@ data class ModelEntry(
     val licenseUrl: String, // 라이선스 근거 URL
     val commercial: String, // 상업 이용 판정(CommercialStatus 이름)
     val compatAlias: String?, // PC 평가기 폴더 별칭, 없으면 null
+    // change(add)-hyungchul-2026-10-11-01:47: 모델 로드 결과(Task 24 리뷰 지적) — BatchRunner 가 prepare 후 갱신
+    val loadSec: Double? = null, // 모델 로드 시간(초), 아직 로드 안 했거나 실패면 null
+    val loadError: String? = null, // 로드 실패 시 "stage/code: message", 성공·미실행이면 null
 ) {
     companion object {
         /**

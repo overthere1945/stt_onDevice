@@ -100,6 +100,20 @@ data class ChunkJson(
     }
 }
 
+// change(add)-hyungchul-2026-10-11-01:47
+/**
+ * 목적: 엔진 실행 메타(JSON) — 모델 prepare 가 보고한 실제 값
+ * 기능: CSV 의 engine_version/compute_type/workers 를 detail JSON 만으로 다시 만들 수 있게 한다(재개 시 CSV 행 복구).
+ * 입력: runtimeVersion(런타임 버전), backend(실행 장치), precision(가중치 정밀도), threads(실제 스레드 수)
+ */
+@Serializable
+data class EngineMetaJson(
+    val runtimeVersion: String, // 런타임 버전
+    val backend: String, // 실행 장치
+    val precision: String, // 가중치 정밀도
+    val threads: Int, // 스레드 수
+)
+
 // change(add)-hyungchul-2026-10-10-22:05
 /**
  * 목적: 파일별 상세 JSON 스키마
@@ -120,7 +134,7 @@ data class DetailJson(
     val vadReused: Boolean?, // VAD 결과를 캐시에서 재사용했는지, 알 수 없으면 null
     val vadFrameScoresAvailable: Boolean, // ChunkPlanner 가 프레임 점수를 받았는지(false 면 긴 구간은 FORCED 분할)
     val startedAt: String?, // 파일 처리 시작 시각(ISO8601), 미기록 null
-    val audioSec: Double, // 음원 길이(초)
+    val audioSec: Double?, // 음원 길이(초), WAV 를 읽기 전에 실패했으면 null // change(add)-hyungchul-2026-10-11-01:47: nullable 로 변경
     val preprocessSec: Double?, // WAV 로드·변환 시간
     val vadSec: Double?, // VAD 시간(캐시 재사용이면 최초 계산 시간이 아니라 이번에 쓴 시간)
     val loadSec: Double?, // 모델 로드 시간
@@ -132,4 +146,10 @@ data class DetailJson(
     val envStart: EnvSnapshotJson?, // 파일 시작 시점 환경
     val envEnd: EnvSnapshotJson?, // 파일 끝 시점 환경
     val chunks: List<ChunkJson>, // chunk 별 결과
+    // change(add)-hyungchul-2026-10-11-01:47: CSV 행을 detail JSON 만으로 다시 만들기 위한 원본 음원·엔진 정보(기본값 null 은 이전 파일 호환용)
+    val audioBytes: Long? = null, // 원본 파일 크기(바이트)
+    val sampleRate: Int? = null, // 원본 샘플레이트(Hz), 읽기 전 실패면 null
+    val channels: Int? = null, // 원본 채널 수, 읽기 전 실패면 null
+    val detectedLang: String? = null, // 엔진이 감지한 언어(첫 non-null chunk 값), 없으면 null
+    val engine: EngineMetaJson? = null, // 엔진 실행 메타, 모델 로드 전/실패면 null
 )

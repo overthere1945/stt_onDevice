@@ -46,7 +46,7 @@ class OutputLayoutTest {
         val item = InputItem("en", "vLog", "10", File("in/en/vLog/10.wav")) // 영어 항목
         assertEquals(File("run/details/en/$combo/vLog/10.json"), OutputLayout.detail(run, item, combo)) // 상세 JSON
         assertEquals(File("run/vad_segments/SILERO_SAFE/en/vLog/10.json"), OutputLayout.vadSegments(run, "SILERO_SAFE", item)) // VAD 구간 JSON
-        assertEquals(File("run/manifest.json"), OutputLayout.manifest(run)) // 실행 매니페스트
+        assertEquals(File("run/run_manifest.json"), OutputLayout.manifest(run)) // 실행 매니페스트 // change(add)-hyungchul-2026-10-11-01:47: run_manifest.json(R32)
         assertEquals(File("run/_logs/run_20261010_120800.log"), OutputLayout.log(run, "20261010_120800")) // 실행 로그
         assertEquals(File("run/_summary/all_result_20261010_120800.csv"), OutputLayout.summaryCsv(run, "20261010_120800")) // 통합 요약 CSV
     }

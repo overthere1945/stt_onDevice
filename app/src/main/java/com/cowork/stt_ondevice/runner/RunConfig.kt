@@ -11,7 +11,7 @@ import com.cowork.stt_ondevice.vad.VadPreset // VAD 프리셋
 // change(add)-hyungchul-2026-10-10-22:05
 /**
  * 목적: 배치 실행 설정
- * 기능: 실행 순서는 모델(선택 순) → VAD 프리셋 → 파일이다. 생성 시 threads 와 runId 형식을 검증한다.
+ * 기능: 실행 순서는 모델(선택 순) → VAD 프리셋 → 파일이다. 생성 시 threads 와 runId 형식, maxChunkOverride(유한·0 이상·선택 모델 키)를 검증한다.
  * 입력: runId(yyyyMMdd_HHmmss), items(입력 항목), models(선택 순서), presets(VAD 프리셋), chunkMode(묶기 방식),
  *       maxChunkOverride(모델 id → 덮어쓸 maxChunkSec), threads(기본 4, 1 이상), resume(이어하기 여부)
  * 출력: 형식이 틀리면 IllegalArgumentException
@@ -30,6 +30,11 @@ data class RunConfig(
     init {
         require(threads >= 1) { "threads 는 1 이상이어야 합니다: $threads" } // 스레드 하한
         require(RUN_ID_REGEX.matches(runId)) { "runId 는 yyyyMMdd_HHmmss 형식이어야 합니다: $runId" } // 형식 검사
+        // change(add)-hyungchul-2026-10-11-01:47: maxChunkOverride 값·키 검증(Task 24 리뷰 지적)
+        for ((id, sec) in maxChunkOverride) { // 덮어쓰기 항목마다
+            require(sec.isFinite() && sec >= 0.0) { "maxChunkOverride 값은 유한한 0 이상이어야 합니다: $id=$sec" } // NaN·무한대·음수 거부
+            require(models.any { it.id == id }) { "maxChunkOverride 의 키가 선택한 모델 id 가 아닙니다: $id" } // 미선택 모델 키 거부
+        }
     }
 
     /**

@@ -1,6 +1,6 @@
 // 파일명: TranscriptWriter.kt
 // 목적: PC 평가기가 읽는 전사 txt 의 서식 생성과 파일 쓰기
-// 기능: "[전체 텍스트] ... [구간별] ..." 형식 문자열 생성, UTF-8(BOM 없음) 저장, 오류 파일(ERROR.txt) 저장.
+// 기능: "[전체 텍스트] ... [구간별] ..." 형식 문자열 생성, UTF-8(BOM 없음) 원자적 저장, 오류 파일(ERROR.txt) 저장.
 package com.cowork.stt_ondevice.output // 출력 패키지
 
 import java.io.File // 파일
@@ -56,19 +56,19 @@ object TranscriptWriter {
 
     /**
      * 목적: 텍스트 파일 저장
-     * 기능: 부모 폴더를 만들고 UTF-8(BOM 없음)로 덮어쓴다.
+     * 기능: 부모 폴더를 만들고 UTF-8(BOM 없음)로 원자적으로 덮어쓴다(임시 파일 → rename). 크래시해도 반쯤 쓴 txt 가 남지 않는다(R10).
      * 입력: file(저장 경로), content(내용)
-     * 출력: 파일 생성
+     * 출력: 파일 생성, 실패 시 IOException
      * 리턴: 없음
      */
+    // change(add)-hyungchul-2026-10-11-01:47: 원자적 쓰기로 변경(R10 — 재개 시 부분 txt 를 완료로 오인하지 않게)
     fun write(file: File, content: String) {
-        file.parentFile?.mkdirs() // 부모 폴더 생성
-        file.writeBytes(content.toByteArray(Charsets.UTF_8)) // BOM 없이 UTF-8 로 저장
+        AtomicFile.write(file, content.toByteArray(Charsets.UTF_8)) // BOM 없이 UTF-8 로 원자적 저장(부모 폴더도 생성)
     }
 
     /**
      * 목적: 오류 파일 저장
-     * 기능: stage/code/message 를 한 줄씩 적은 <stem>.ERROR.txt 를 만든다(줄바꿈은 공백으로 치환해 줄 구조 유지).
+     * 기능: stage/code/message 를 한 줄씩 적은 <stem>.ERROR.txt 를 원자적으로 만든다(줄바꿈은 공백으로 치환해 줄 구조 유지).
      * 입력: file(저장 경로), stage(실패 단계), code(오류 코드), message(오류 메시지)
      * 출력: 파일 생성
      * 리턴: 없음
