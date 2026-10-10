@@ -63,9 +63,10 @@ class EngineFactoryTest {
     }
 
     /**
-     * 목적: 미구현 런타임 거부 검증
-     * 기능: 구현되지 않은 런타임(ORT·LITERT)을 가진 ASR 스펙은 EngineException(MODEL_LOAD, NOT_IMPLEMENTED) 을 던진다(다른 엔진으로 대체 금지).
-     *       change(add)-hyungchul-2026-10-10-21:41 Vosk 까지 구현되어 카탈로그에는 미구현 ASR 스펙이 없으므로 whisper 스펙의 runtime 만 바꿔 시험한다.
+     * 목적: 미구현 런타임 거부와 카탈로그 ASR 구현 완료 검증
+     * 기능: ① 카탈로그의 모든 ASR 스펙은 EngineFactory.create 가 NOT_IMPLEMENTED 를 던지지 않고 엔진을 만든다(생성만, 네이티브 로드 없음).
+     *       ② 구현되지 않은 런타임(ORT·LITERT)을 가진 ASR 스펙은 EngineException(MODEL_LOAD, NOT_IMPLEMENTED) 을 던진다(다른 엔진으로 대체 금지).
+     *       change(add)-hyungchul-2026-10-10-21:41 Vosk 까지 구현되어 카탈로그에는 미구현 ASR 스펙이 없으므로 ②는 whisper 스펙의 runtime 만 바꿔 시험한다.
      * 입력: 없음
      * 출력: 없음(실패 시 AssertionError)
      * 리턴: 없음
@@ -73,8 +74,12 @@ class EngineFactoryTest {
     @Test
     fun otherRuntimesThrowNotImplemented() {
         val dir = tmp.newFolder("m") // 모델 폴더
-        val specs = listOf(Runtime.ORT, Runtime.LITERT).map { ModelCatalog.byId("whispercpp-tiny").copy(runtime = it) } // change(add)-hyungchul-2026-10-10-21:41 미구현 런타임 ASR 스펙
-        assertTrue("카탈로그의 모든 ASR 런타임이 구현되어야 함", ModelCatalog.all.none { it.kind == ModelKind.ASR && it.runtime in setOf(Runtime.ORT, Runtime.LITERT) }) // change(add)-hyungchul-2026-10-10-21:41 카탈로그 ASR 은 모두 구현됨
+        val asr = ModelCatalog.all.filter { it.kind == ModelKind.ASR } // change(add)-hyungchul-2026-10-10-21:41 카탈로그 ASR 스펙들
+        assertTrue("카탈로그에 ASR 스펙이 있어야 함", asr.isNotEmpty()) // 대상 존재
+        for (spec in asr) { // 스펙마다
+            EngineFactory.create(spec, dir).close() // 생성만(prepare 안 함) — NOT_IMPLEMENTED 등 어떤 EngineException 도 나오면 실패
+        }
+        val specs = listOf(Runtime.ORT, Runtime.LITERT).map { ModelCatalog.byId("whispercpp-tiny").copy(runtime = it) } // 미구현 런타임 ASR 스펙
         for (spec in specs) { // 스펙마다
             val e = assertThrows(EngineException::class.java) { EngineFactory.create(spec, dir) } // 예외 확인
             assertEquals("${spec.id}: stage", "MODEL_LOAD", e.stage) // 단계

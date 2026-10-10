@@ -58,8 +58,8 @@
 //        adb shell am instrument -w -e class com.cowork.stt_ondevice.NativeSmokeTest com.cowork.stt_ondevice.test/androidx.test.runner.AndroidJUnitRunner
 //        로 실행하면 다시 넣지 않아도 됨)
 //       change(add)-hyungchul-2026-10-10-21:41 Vosk 엔진 테스트(4 스레드 요청, 음원 앞 0–20 s, 결과 text·inferSec·PrepareInfo 를 logcat 에 남김):
-//       - voskKoTranscribes: vosk-small-ko-0.22, kr/customer/01.wav → 한글 포함. PrepareInfo(런타임 0.3.75·CPU·카탈로그 정밀도 fp32·실제 스레드 1) 확인
-//       - voskEnTranscribes: vosk-small-en-us-0.15, en/Customer_Service/01.wav → 라틴 문자 포함
+//       - voskKoTranscribes: vosk-small-ko-0.22, kr/customer/01.wav → 한글 포함 + 정답지 앞쪽 발화 단어 1개 이상 + 뒤쪽 발화 단어 1개 이상(끝점 결과 누적 확인). PrepareInfo(런타임 0.3.75·CPU·카탈로그 정밀도 fp32·실제 스레드 1) 확인
+//       - voskEnTranscribes: vosk-small-en-us-0.15, en/Customer_Service/01.wav → 라틴 문자 포함 + 정답지 앞쪽·뒤쪽 발화 단어 각 1개 이상
 //       각 모델은 models/<id>/ 아래 카탈로그 path 그대로 있어야 하고(파일마다 SHA-256 = 카탈로그 확인), 없으면 그 테스트만 건너뜀(assume).
 //       넣는 법(installDebug 뒤): tools/models_cache/<id>/x0/vosk-model-.../ 의 카탈로그 파일만
 //         adb shell mkdir -p $P/models/<id>/{am,conf,graph/phones,ivector}
@@ -590,6 +590,8 @@ class NativeSmokeTest {
     fun sherpaZipformerKoTranscribes() {
         val (ko) = sherpaRun("sherpa-zipformer-ko-2024-06-24", "kr/customer/01.wav" to "ko") // 한국어 전사
         assertTrue("한글이 없음: ${ko.text}", hasHangul(ko.text)) // 한글 포함
+        assertContainsAnyOf("ko 앞쪽 발화", ko.text, listOf("안녕하세요", "혹시", "이번주", "이번 주")) // change(add)-hyungchul-2026-10-10-21:41 정답지 첫 문장(0–5 s) 단어 — 끝점 누적이 깨져 마지막 발화만 남으면 실패
+        assertContainsAnyOf("ko 뒤쪽 발화", ko.text, listOf("다행", "정말", "네요")) // change(add)-hyungchul-2026-10-10-21:41 정답지 3번째 문장(15 s 이후) 단어
         assertEquals(ko.rawText.trim().replace(Regex("\\s+"), " "), ko.text) // text = 원문 공백 정리
         Log.i(TAG, "sherpa VersionInfo: version=${VersionInfo.version}, gitSha1=${VersionInfo.gitSha1}, onnxruntime=${VersionInfo.onnxruntimeVersion}") // 버전 기록
     }
@@ -735,6 +737,18 @@ class NativeSmokeTest {
 
     // change(add)-hyungchul-2026-10-10-21:41
     /**
+     * 목적: 텍스트에 기대 단어 중 하나가 들어 있는지 확인
+     * 기능: 대소문자 무시로 words 중 하나라도 text 에 포함되면 통과(엔진 오인식 여지를 고려해 핵심 단어 여러 개 중 하나).
+     * 입력: label(실패 메시지용), text(전사 결과), words(후보 단어들)
+     * 출력: 하나도 없으면 AssertionError
+     * 리턴: 없음
+     */
+    private fun assertContainsAnyOf(label: String, text: String, words: List<String>) {
+        assertTrue("$label: $words 중 하나도 없음 — text=$text", words.any { text.contains(it, ignoreCase = true) }) // 포함 여부
+    }
+
+    // change(add)-hyungchul-2026-10-10-21:41
+    /**
      * 목적: Vosk small KO 가 기기에서 한국어를 전사하는지 확인
      * 기능: voskRun(kr 0–20 s) → 한글 포함.
      * 입력: 없음
@@ -759,6 +773,8 @@ class NativeSmokeTest {
     fun voskEnTranscribes() {
         val en = voskRun("vosk-small-en-us-0.15", "en/Customer_Service/01.wav", "en") // 영어 전사
         assertTrue("영문이 없음: ${en.text}", hasLatin(en.text)) // 라틴 문자 포함
+        assertContainsAnyOf("en 앞쪽 발화", en.text, listOf("hello", "reserve", "table for four")) // change(add)-hyungchul-2026-10-10-21:41 정답지 첫 문장 단어 — 끝점 누적이 깨지면 실패
+        assertContainsAnyOf("en 뒤쪽 발화", en.text, listOf("wonderful", "advance", "order", "dinner")) // change(add)-hyungchul-2026-10-10-21:41 정답지 3번째 문장 단어
     }
 
     private companion object {

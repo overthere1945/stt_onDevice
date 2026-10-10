@@ -4,11 +4,11 @@
 //       transcribe — 언어 검사 → 준비 확인 → chunk 마다 새 Recognizer(model, 16000f)를 만들어 PCM16(PcmConverter.floatToPcm16)을
 //                    4000 샘플 블록으로 acceptWaveForm(ShortArray, n) 로 흘려 넣고, 블록 사이마다 중단 요청을 확인한다.
 //                    acceptWaveForm 이 true(발화 끝점)를 돌려주면 그때까지의 결과(getResult)를 모아 두고, 마지막에 getFinalResult 의 text 를 이어 붙인다
-//                    (끝점마다 모으지 않으면 앞 발화가 버려진다). Recognizer 는 finally 에서 항상 close.
+//                    (끝점마다 모으지 않으면 앞 발화가 버려진다). 이 입력·누적 단계는 VoskDecoder 로 분리되어 JVM 단위 테스트가 고정한다. Recognizer 는 use 로 항상 close.
 //                    ChunkText(text = 발화별 text 를 공백으로 이은 것, rawText = 같은 값, detectedLang = null, inferSec).
 //       cancel — 중단 플래그를 켠다. 블록(0.25 s 분량)마다 확인하므로 중단 지연은 블록 1개 처리 시간 수준이다.
 //       close — 새 작업 거부 → 중단 요청 → 진행 중 전사·로드가 끝나기를 기다린 뒤 Model 을 1회만 close(반복 호출 안전).
-//       잠금 lock 1개가 로드·전사·해제를 직렬화한다(sherpa 의 SherpaEngineCore 와 같은 순서: 전사 시작 때 중단 플래그를 먼저 지우고 그 다음 closed 확인 →
+//       잠금 lock 1개가 로드·전사·해제를 직렬화한다(SherpaEngineCore(engine/sherpa/SherpaEngineSupport.kt)와 같은 규칙 — 한쪽을 고치면 다른 쪽도 확인할 것. 순서: 전사 시작 때 중단 플래그를 먼저 지우고 그 다음 closed 확인 →
 //       그 사이에 온 close 는 반드시 NOT_PREPARED 로 막힘). sherpa 용 코드는 메시지가 sherpa 전용이라 공유하지 않고 같은 규칙만 이 파일에 따로 구현했다.
 //       Vosk 는 스레드 수 설정이 없어 PrepareInfo.threads 는 실제 값 1 이다(측정/실제 값 원칙). 실행 장치는 CPU, 정밀도는 카탈로그 값.
 // change(add)-hyungchul-2026-10-10-21:41
@@ -113,7 +113,7 @@ class VoskEngine(
      * 기능: 언어 검사 → 준비 확인 → Dispatchers.Default 에서 잠금을 잡고 ① 중단 플래그 지움 ② 모델·closed 다시 확인 ③ 예외 매핑 안에서 recognize 실행.
      *       ①을 ②보다 먼저 해서, 그 사이에 close 가 와도 ②에서 거부된다(중단 요청 소실 없음).
      * 입력: chunk(16 kHz mono float 샘플), lang(언어 코드, spec.languages 안이어야 함)
-     * 출력: EngineException(TRANSCRIBE, UNSUPPORTED_LANGUAGE/NOT_PREPARED/ABORTED/OOM/NATIVE_ERROR)
+     * 출력: EngineException(TRANSCRIBE, UNSUPPORTED_LANGUAGE/NOT_PREPARED/ABORTED/OOM/NATIVE_LIB_MISSING/NATIVE_ERROR)
      * 리턴: ChunkText(text, rawText = text, detectedLang = null, inferSec)
      */
     override suspend fun transcribe(chunk: AudioChunk, lang: String): ChunkText {
@@ -133,6 +133,8 @@ class VoskEngine(
                     throw e // 재던짐
                 } catch (e: OutOfMemoryError) { // 메모리 부족
                     throw EngineException("TRANSCRIBE", "OOM", "전사 중 메모리 부족(chunk ${chunk.index})", e) // OOM 코드
+                } catch (e: LinkageError) { // 전사 중 네이티브 심볼/라이브러리 문제(Recognizer 생성·호출 시 JNA 링크 실패)
+                    throw EngineException("TRANSCRIBE", "NATIVE_LIB_MISSING", "Vosk 네이티브 라이브러리 오류(chunk ${chunk.index}): ${e.message}", e) // 누락 .so 코드
                 } catch (e: IOException) { // Recognizer 생성 실패
                     throw EngineException("TRANSCRIBE", "NATIVE_ERROR", "Vosk 전사 실패(chunk ${chunk.index}): ${e.message}", e) // 일반 실패
                 } catch (e: RuntimeException) { // 결과 JSON 파싱 실패 등
@@ -144,31 +146,21 @@ class VoskEngine(
 
     /**
      * 목적: Recognizer 하나로 chunk 전체 인식
-     * 기능: Recognizer(model, 16000f) 생성 → PCM16 변환 → 4000 샘플 블록마다 중단 확인 후 acceptWaveForm, true(끝점)이면 getResult 의 text 를 모음 →
-     *       getFinalResult 의 text 를 모아 공백으로 이음. Recognizer 는 finally 에서 close.
+     * 기능: Recognizer(model, 16000f) 생성 → PCM16 변환 → VoskDecoder.decode(블록 입력·끝점 결과 누적·중단 확인)에 맡김. Recognizer 는 use 로 항상 close.
      * 입력: m(Vosk 모델), chunk(오디오)
      * 출력: 중단 요청 시 EngineException(TRANSCRIBE, ABORTED), 결과 JSON 이 깨졌으면 SerializationException
      * 리턴: 인식 텍스트(발화 사이 공백 1칸, 아무것도 없으면 "")
      */
     private fun recognize(m: Model, chunk: AudioChunk): String {
         val pcm = PcmConverter.floatToPcm16(chunk.samples) // float → PCM16
-        val parts = ArrayList<String>() // 발화별 text 모음
         Recognizer(m, SAMPLE_RATE).use { rec -> // chunk 전용 새 인식기(= chunk 별 초기화), 끝나면 close
-            val block = ShortArray(BLOCK_SAMPLES) // 입력 블록 버퍼(재사용)
-            var off = 0 // 다음 블록 시작 위치
-            while (off < pcm.size) { // 블록마다
-                checkCancel(chunk) // 블록 전 중단 확인
-                val n = minOf(BLOCK_SAMPLES, pcm.size - off) // 이번 블록 샘플 수(마지막은 짧을 수 있음)
-                System.arraycopy(pcm, off, block, 0, n) // 블록 버퍼에 복사
-                if (rec.acceptWaveForm(block, n)) { // 발화 끝점 → 확정 결과
-                    VoskResult.text(rec.result).let { if (it.isNotEmpty()) parts.add(it) } // 확정 text 모으기
-                }
-                off += n // 다음 블록
+            val stream = object : VoskStream { // Recognizer 를 최소 인터페이스로 감싸기
+                override fun accept(block: ShortArray, n: Int) = rec.acceptWaveForm(block, n) // 블록 입력
+                override fun result(): String = rec.result // 확정 발화 결과
+                override fun finalResult(): String = rec.finalResult // 마무리 결과
             }
-            checkCancel(chunk) // 마무리 전 중단 확인
-            VoskResult.text(rec.finalResult).let { if (it.isNotEmpty()) parts.add(it) } // 남은 발화 flush
+            return VoskDecoder.decode(pcm, stream, BLOCK_SAMPLES) { checkCancel(chunk) } // 블록·마무리 전 중단 확인
         }
-        return parts.joinToString(" ") // 발화 사이 공백 1칸
     }
 
     /**

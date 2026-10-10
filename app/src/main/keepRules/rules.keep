@@ -10,6 +10,10 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
-# change(add)-hyungchul-2026-10-10-21:41 Vosk(Task 22): JNA 가 libvosk.so 심볼과 Structure/Callback 필드를 리플렉션으로 찾으므로 JNA 와 Vosk 클래스를 R8 이 지우거나 이름을 바꾸지 않게 유지
+# change(add)-hyungchul-2026-10-10-21:41 Vosk(Task 22) 방어용 규칙.
+#   JNA 는 libvosk.so 심볼과 Structure/Callback 필드를 리플렉션으로 찾으므로 R8 이 이름을 바꾸거나 지우면 안 된다.
+#   다만 현재 app/build.gradle.kts 의 release optimization.packageScope 가 androidx/kotlin/kotlinx 로 한정되어 있어
+#   R8 이 org.vosk / com.sun.jna 를 처리하지 않는다 → 이 규칙은 지금은 효과가 없고, packageScope 를 넓힐 때를 대비한 방어용이다.
+#   release 빌드의 실제 동작(JNA 로 libvosk 호출)은 아직 기기에서 검증하지 않았다(Task 31 에서 검증 예정).
 -keep class com.sun.jna.** { *; }
 -keep class org.vosk.** { *; }

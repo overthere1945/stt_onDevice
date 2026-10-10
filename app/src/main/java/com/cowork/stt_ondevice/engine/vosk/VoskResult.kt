@@ -8,8 +8,8 @@ package com.cowork.stt_ondevice.engine.vosk // Vosk 엔진 패키지
 import kotlinx.serialization.json.Json // kotlinx 직렬화 JSON
 import kotlinx.serialization.json.JsonNull // JSON null 값
 import kotlinx.serialization.json.JsonPrimitive // JSON 기본값(문자열 등)
-import kotlinx.serialization.json.jsonObject // 요소 → 객체
 import kotlinx.serialization.json.contentOrNull // 기본값 → 문자열 또는 null
+import kotlinx.serialization.json.jsonObject // 요소 → 객체
 
 // change(add)-hyungchul-2026-10-10-21:41
 /**

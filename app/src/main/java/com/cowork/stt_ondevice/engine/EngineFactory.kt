@@ -1,11 +1,11 @@
 // 파일명: EngineFactory.kt
 // 목적: ModelSpec 의 런타임에 맞는 AsrEngine 구현을 만드는 단일 진입점
-// 기능: WHISPER_CPP → WhisperCppEngine(모델 폴더의 role "model" 파일). 아직 구현하지 않은 런타임(sherpa-onnx·Vosk, Task 21·22 에서 채움)은
+// 기능: WHISPER_CPP → WhisperCppEngine(모델 폴더의 role "model" 파일). ASR 엔진이 없는 런타임(ORT·LITERT 등 VAD 용)은
 //       EngineException("MODEL_LOAD","NOT_IMPLEMENTED") — 다른 엔진으로 조용히 대체하지 않는다.
 //       change(add)-hyungchul-2026-10-10-20:57 SHERPA_OFFLINE → SherpaOfflineEngine, SHERPA_ONLINE → SherpaStreamingEngine(모델 폴더 전체, 파일은 role 로 찾음).
 //         설정 불일치(whisper 스펙에 WhisperConfig 아님, sherpa 스펙에 맞지 않는 SherpaConfig)는 EngineException("MODEL_LOAD","CONFIG_MISMATCH").
-//         남은 미구현 런타임은 Vosk(Task 22).
-//       change(add)-hyungchul-2026-10-10-21:41 VOSK → VoskEngine(모델 폴더 전체). 이제 모든 ASR 런타임이 구현되어 NOT_IMPLEMENTED 는 ORT·LITERT 등 ASR 이 아닌 런타임 값에만 남는다.
+//         (당시 남은 미구현 런타임은 Vosk 였으나 아래 21:41 변경으로 구현됨.)
+//       change(add)-hyungchul-2026-10-10-21:41 VOSK → VoskEngine(모델 폴더 전체). 카탈로그의 모든 ASR 스펙(whisper·sherpa·Vosk)이 구현되어 NOT_IMPLEMENTED 는 ORT·LITERT 등 ASR 엔진이 없는 런타임 값에만 남는다.
 //         VoskConfig 가 아닌 스펙은 VoskEngine 생성자가 CONFIG_MISMATCH 로 거부한다.
 //       엔진 생성만 하며 모델 로드(네이티브 호출)는 prepare() 에서 한다.
 // change(add)-hyungchul-2026-10-10-20:35

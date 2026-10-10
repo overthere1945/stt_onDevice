@@ -111,6 +111,7 @@ internal object SherpaEngineSupport {
  * 입력: spec(모델 메타, 메시지용), release(인식기 해제 동작)
  * 출력: 해당 없음
  */
+// change(add)-hyungchul-2026-10-10-21:41 참고: engine/vosk/VoskEngine.kt 가 같은 잠금·중단 규칙을 따로 구현함 — 이 규칙(전사 시작 때 플래그 먼저 지움 → closed 확인, 1회 해제)을 바꾸면 그쪽도 확인할 것
 internal class SherpaEngineCore<R : Any>(
     private val spec: ModelSpec, // 모델 메타
     private val release: (R) -> Unit, // 인식기 해제 동작
