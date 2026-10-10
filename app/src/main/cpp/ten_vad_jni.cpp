@@ -4,11 +4,13 @@
 //       processAll — floor(N/hop) 개 프레임을 순서대로 ten_vad_process 해 프레임별 확률 float[] 반환(잔여 샘플 버림)
 //       destroy — ten_vad_destroy 후 구조체 해제
 // change(add)-hyungchul-2026-10-10-15:26
+// change(add)-hyungchul-2026-10-10-20:35: throwJava 를 공용 헤더 jni_util.h 로 이동
 
 #include <jni.h>     // JNI 타입·함수
 #include <cstdint>   // int16_t, intptr_t
 #include <new>       // std::nothrow
 #include <vector>    // 버퍼
+#include "jni_util.h" // change(add)-hyungchul-2026-10-10-20:35 공용 JNI 헬퍼(throwJava)
 
 #include "ten_vad.h" // TEN VAD C API (third_party/ten-vad/include, tools/fetch_native_deps.sh 로 받음)
 
@@ -23,17 +25,8 @@ struct TenVadHolder {
     size_t hop = 0;                    // 프레임 이동 샘플 수
 };
 
-/**
- * 목적: Java 예외 던지기
- * 기능: 클래스 이름으로 예외 클래스를 찾아 메시지와 함께 ThrowNew 한다(호출 후 즉시 반환해야 함).
- * 입력: env(JNI 환경), cls(예외 클래스 이름), msg(메시지 UTF-8)
- * 출력: Java 쪽 예외 대기 상태
- * 리턴: 없음
- */
-void throwJava(JNIEnv *env, const char *cls, const char *msg) {
-    jclass c = env->FindClass(cls); // 예외 클래스 조회
-    if (c != nullptr) env->ThrowNew(c, msg); // 예외 설정
-}
+// change(add)-hyungchul-2026-10-10-20:35: 중복이던 throwJava 정의를 jni_util.h(stt::throwJava)로 옮기고 이 파일에서는 같은 이름으로 가져다 씀
+using stt::throwJava; // 공용 예외 헬퍼
 
 } // namespace
 

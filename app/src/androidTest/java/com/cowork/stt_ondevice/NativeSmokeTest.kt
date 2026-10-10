@@ -29,6 +29,18 @@
 //         for f in app/src/test/resources/golden/scores_YAMNET_*.json; do adb push $f $P/golden/; done
 //         adb shell chmod -R a+rwX $P/input_sound $P/golden $P/models
 //         ./gradlew :app:connectedDebugAndroidTest
+//       change(add)-hyungchul-2026-10-10-20:35 whisper.cpp(JNI) 테스트:
+//       - whisperTinyTranscribes: models/whispercpp-tiny/ggml-tiny.bin(SHA-256 = 카탈로그) 로 kr/customer/01.wav 0–20 s 를 ko 전사 →
+//         한글이 들어 있는 비어 있지 않은 텍스트, PrepareInfo(버전 1.9.5·CPU·f16)·로드/추론 시간·텍스트를 logcat 에 남김.
+//         en/Customer_Service/01.wav 가 있으면 같은 모델로 0–20 s en 전사 결과도 logcat 에 남김(라틴 문자 포함 확인).
+//       - abortStopsWithinOneSecond: tiny 모델로 0–30 s 전사를 별도 스레드에서 시작, 500 ms 뒤 cancel →
+//         1 s 안에 EngineException(TRANSCRIBE, ABORTED) 로 끝나는지, 그 뒤 같은 엔진으로 0–5 s 전사가 정상인지 확인.
+//         base 가 있으면 같은 측정을 하고 시간은 logcat 기록만(인코딩 중 취소는 인코딩 종료까지 기다리는 whisper.cpp 동작 때문).
+//       tiny 모델이 없으면 두 테스트는 건너뜀(assume). 넣는 법(installDebug 뒤, chmod 전):
+//         adb shell mkdir -p $P/models/whispercpp-tiny $P/models/whispercpp-base $P/input_sound/en/Customer_Service
+//         adb push tools/models_cache/whispercpp-tiny/dl0/ggml-tiny.bin $P/models/whispercpp-tiny/ggml-tiny.bin
+//         adb push tools/models_cache/whispercpp-base/dl0/ggml-base.bin $P/models/whispercpp-base/ggml-base.bin
+//         adb push ~/workspace/stt/input_sound/en/Customer_Service/01.wav $P/input_sound/en/Customer_Service/01.wav
 // change(add)-hyungchul-2026-10-10-15:26
 package com.cowork.stt_ondevice // 앱 루트 패키지(계측 테스트)
 
@@ -56,6 +68,16 @@ import java.io.File // 파일 접근
 import com.cowork.stt_ondevice.vad.HangoverParams // change(add)-hyungchul-2026-10-10-15:43 YAMNET 프리셋 파라미터
 import com.cowork.stt_ondevice.vad.post.SimpleHangover // change(add)-hyungchul-2026-10-10-15:43 골든 점수 → 구간(비교용)
 import java.security.MessageDigest // change(add)-hyungchul-2026-10-10-15:43 모델 SHA-256
+import com.cowork.stt_ondevice.engine.EngineException // change(add)-hyungchul-2026-10-10-20:35 엔진 오류
+import com.cowork.stt_ondevice.engine.EngineFactory // change(add)-hyungchul-2026-10-10-20:35 엔진 생성
+import com.cowork.stt_ondevice.model.ModelCatalog // change(add)-hyungchul-2026-10-10-20:35 모델 카탈로그(SHA-256)
+import com.cowork.stt_ondevice.model.ModelSpec // change(add)-hyungchul-2026-10-10-20:35 모델 메타
+import com.cowork.stt_ondevice.segment.AudioChunk // change(add)-hyungchul-2026-10-10-20:35 엔진 입력 chunk
+import com.cowork.stt_ondevice.segment.SourceSpan // change(add)-hyungchul-2026-10-10-20:35 원본 구간 매핑
+import com.cowork.stt_ondevice.segment.SplitMethod // change(add)-hyungchul-2026-10-10-20:35 분할 방식
+import kotlinx.coroutines.runBlocking // change(add)-hyungchul-2026-10-10-20:35 suspend 함수 동기 실행
+import java.util.concurrent.atomic.AtomicLong // change(add)-hyungchul-2026-10-10-20:35 스레드 간 종료 시각
+import java.util.concurrent.atomic.AtomicReference // change(add)-hyungchul-2026-10-10-20:35 스레드 간 결과 전달
 
 // change(add)-hyungchul-2026-10-10-15:26
 /**
@@ -280,6 +302,172 @@ class NativeSmokeTest {
         }
         assertTrue("클립 있는 Yamnet 골든을 하나도 비교하지 못함", checked > 0) // 실제로 비교했는지
         assertTrue("${failures.size}/$checked 불일치\n" + failures.joinToString("\n"), failures.isEmpty()) // 전부 통과
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:35
+    /**
+     * 목적: 기기에 넣은 whisper 모델 폴더 찾기
+     * 기능: models/<id>/<role "model" 파일> 이 있으면 SHA-256 이 카탈로그 값과 같은지 확인하고 (스펙, 모델 폴더)를 돌려준다.
+     * 입력: id(카탈로그 모델 id)
+     * 출력: 해시 불일치 시 AssertionError
+     * 리턴: 파일이 있으면 Pair(spec, 폴더), 없으면 null
+     */
+    private fun installedWhisper(id: String): Pair<ModelSpec, File>? {
+        val spec = ModelCatalog.byId(id) // 카탈로그 스펙
+        val dir = File(filesDir, "models/$id") // 카탈로그 배치(models/<id>/)
+        val entry = spec.files.single { it.role == "model" } // 모델 파일 항목
+        val f = File(dir, entry.path) // 모델 파일
+        if (!f.isFile) return null // 없음
+        val sha = sha256(f) // 기기 파일 해시
+        assertEquals("$id SHA-256", entry.sha256, sha) // 카탈로그와 같은 파일인지
+        return spec to dir // 반환
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:35
+    /**
+     * 목적: 파일 SHA-256(스트리밍)
+     * 기능: 1 MiB 버퍼로 읽으며 해시한다(큰 모델을 한 번에 메모리에 올리지 않음).
+     * 입력: f(파일)
+     * 출력: 없음
+     * 리턴: 소문자 16진 64자
+     */
+    private fun sha256(f: File): String {
+        val md = MessageDigest.getInstance("SHA-256") // 해시기
+        f.inputStream().use { input -> // 파일 열기
+            val buf = ByteArray(1 shl 20) // 1 MiB 버퍼
+            while (true) { // 끝까지
+                val n = input.read(buf) // 읽기
+                if (n < 0) break // 파일 끝
+                md.update(buf, 0, n) // 해시 갱신
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) } // 16진 문자열
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:35
+    /**
+     * 목적: 음원 앞부분을 chunk 로 만들기
+     * 기능: WAV 를 16 kHz mono float 로 바꾸고 앞 sec 초만 잘라 원본 매핑 1개짜리 AudioChunk 로 만든다.
+     * 입력: rel(input_sound 기준 상대 경로), sec(자를 길이, 초)
+     * 출력: 파일이 없으면 AssertionError
+     * 리턴: AudioChunk(index 0)
+     */
+    private fun chunkOf(rel: String, sec: Int): AudioChunk {
+        val f = File(filesDir, "input_sound/$rel") // 음원 경로
+        assertTrue("음원 없음: ${f.absolutePath} — adb push 로 먼저 넣어야 함", f.isFile) // 존재 확인
+        val all = PcmConverter.toMono16k(WavReader.read(f)).samples // 16 kHz mono float
+        val samples = all.copyOf(minOf(all.size, sec * 16000)) // 앞 sec 초
+        return AudioChunk(0, samples, listOf(SourceSpan(0.0, samples.size / 16000.0, 0.0)), SplitMethod.NONE) // chunk
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:35
+    /**
+     * 목적: whisper.cpp tiny 가 기기에서 한국어(가능하면 영어도)를 전사하는지 확인
+     * 기능: 모델 SHA-256 확인 → EngineFactory → prepare(4 스레드) → kr/customer/01.wav 0–20 s ko 전사 → 한글 포함 비어 있지 않음.
+     *       PrepareInfo(버전 1.9.5, CPU, f16, 4)를 확인하고, 로드·추론 시간과 텍스트를 logcat 에 남긴다.
+     *       en/Customer_Service/01.wav 가 있으면 0–20 s en 전사 결과(라틴 문자 포함)도 남긴다. 모델이 없으면 건너뜀(assume).
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun whisperTinyTranscribes() {
+        val installed = installedWhisper("whispercpp-tiny") // 기기 모델
+        assumeTrue("기기에 whispercpp-tiny 모델 없음 — 건너뜀", installed != null) // 없으면 건너뜀
+        val (spec, dir) = installed!! // 스펙·폴더
+        EngineFactory.create(spec, dir).use { engine -> // 엔진 생성
+            val info = runBlocking { engine.prepare(4) } // 모델 로드
+            Log.i(TAG, "whisper tiny prepare: $info") // 준비 결과 기록
+            assertEquals("1.9.5", info.runtimeVersion) // 릴리스 태그 버전
+            assertEquals("CPU", info.backend) // CPU 전용
+            assertEquals("f16", info.precision) // 파일 이름 기준 정밀도
+            assertEquals(4, info.threads) // 스레드 수
+            val ko = runBlocking { engine.transcribe(chunkOf("kr/customer/01.wav", 20), "ko") } // 한국어 0–20 s 전사
+            Log.i(TAG, "whisper tiny ko 0–20 s: inferSec=${"%.3f".format(ko.inferSec)}, text=${ko.text}") // 결과 기록
+            assertTrue("한국어 전사가 비어 있음", ko.text.isNotBlank()) // 비어 있지 않음
+            assertTrue("한글이 없음: ${ko.text}", ko.text.any { it in '\uAC00'..'\uD7A3' }) // 한글 음절 포함
+            assertEquals(ko.text, ko.rawText) // whisper 는 원문 = 텍스트
+            assertEquals(null, ko.detectedLang) // 언어 고정이라 감지 언어 없음
+            val enFile = File(filesDir, "input_sound/en/Customer_Service/01.wav") // 영어 음원(선택)
+            if (enFile.isFile) { // 있으면 영어도 기록
+                val en = runBlocking { engine.transcribe(chunkOf("en/Customer_Service/01.wav", 20), "en") } // 영어 0–20 s 전사
+                Log.i(TAG, "whisper tiny en 0–20 s: inferSec=${"%.3f".format(en.inferSec)}, text=${en.text}") // 결과 기록
+                assertTrue("영어 전사에 라틴 문자가 없음: ${en.text}", en.text.any { it in 'a'..'z' || it in 'A'..'Z' }) // 라틴 문자 포함
+            } else { // 없으면 기록만
+                Log.i(TAG, "영어 음원 없음(${enFile.absolutePath}) — en 전사 생략") // 생략 기록
+            }
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:35
+    /**
+     * 목적: 전사 도중 cancel 했을 때 멈추기까지 걸린 시간 측정(1 회)
+     * 기능: 0–30 s 전사를 별도 스레드에서 시작하고 500 ms 뒤 cancel → 스레드 종료까지 시간을 잰다.
+     *       결과가 EngineException(TRANSCRIBE, ABORTED) 인지, 그 뒤 같은 엔진으로 0–5 s 전사가 정상인지(중단 플래그가 풀리는지) 확인한다.
+     *       500 ms 안에 전사가 이미 끝났으면 중단을 검증할 수 없으므로 실패로 알린다.
+     * 입력: spec(모델 스펙), dir(모델 폴더)
+     * 출력: 위 조건 불만족 시 AssertionError
+     * 리턴: cancel → 전사 스레드 종료까지 걸린 시간(ms)
+     */
+    private fun measureAbortMs(spec: ModelSpec, dir: File): Double {
+        val chunk30 = chunkOf("kr/customer/01.wav", 30) // 0–30 s chunk
+        EngineFactory.create(spec, dir).use { engine -> // 엔진 생성
+            runBlocking { engine.prepare(4) } // 모델 로드
+            val result = AtomicReference<Any?>(null) // 전사 결과 또는 예외
+            val doneAt = AtomicLong(0L) // 전사 스레드 종료 시각(ns)
+            val worker = Thread { // 전사 스레드
+                try { // 결과 저장
+                    result.set(runBlocking { engine.transcribe(chunk30, "ko") }) // 30 s 전사
+                } catch (t: Throwable) { // 예외 저장
+                    result.set(t) // 예외 결과
+                } finally { // 종료 시각
+                    doneAt.set(System.nanoTime()) // 기록
+                }
+            }
+            val startAt = System.nanoTime() // 시작 시각
+            worker.start() // 전사 시작
+            Thread.sleep(500) // 500 ms 대기
+            assertTrue("500 ms 안에 전사가 끝나 중단을 검증할 수 없음(${spec.id}): ${result.get()}", worker.isAlive) // 아직 진행 중이어야 함
+            val cancelAt = System.nanoTime() // 취소 시각
+            engine.cancel() // 중단 요청
+            worker.join(30_000) // 최대 30 s 대기(실패 판단용)
+            assertTrue("${spec.id}: cancel 뒤 30 s 가 지나도 전사 스레드가 끝나지 않음", !worker.isAlive) // 종료 확인
+            val stopMs = (doneAt.get() - cancelAt) / 1e6 // 중단 소요(ms)
+            Log.i(TAG, "${spec.id} abort: 시작→취소 ${"%.0f".format((cancelAt - startAt) / 1e6)} ms, 취소→종료 ${"%.1f".format(stopMs)} ms, 결과 ${result.get()}") // 기록
+            val r = result.get() // 결과
+            assertTrue("${spec.id}: 중단 결과가 EngineException 이 아님: $r", r is EngineException) // 예외 종류
+            assertEquals("TRANSCRIBE", (r as EngineException).stage) // 단계
+            assertEquals("ABORTED", r.code) // 코드
+            val again = runBlocking { engine.transcribe(chunkOf("kr/customer/01.wav", 5), "ko") } // 중단 뒤 재사용
+            Log.i(TAG, "${spec.id} 중단 뒤 0–5 s: inferSec=${"%.3f".format(again.inferSec)}, text=${again.text}") // 기록
+            assertTrue("${spec.id}: 중단 뒤 전사가 비어 있음", again.text.isNotBlank()) // 플래그가 풀렸는지
+            return stopMs // 중단 소요 반환
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:35
+    /**
+     * 목적: cancel(abort_callback)이 진행 중 전사를 1 s 안에 멈추는지 확인
+     * 기능: tiny 로 measureAbortMs → ≤ 1000 ms 확인.
+     *       base 가 있으면 같은 측정을 하되 시간은 logcat 기록만 한다(ABORTED·재사용은 확인):
+     *       whisper.cpp v1.9.5 는 abort_callback 을 인코더 그래프(conv·encoder·cross) 전체가 끝난 뒤와 디코더 호출마다만 확인하므로
+     *       인코딩 중 취소하면 그 인코딩이 끝날 때까지 기다린다 — 중단 지연 상한 = 모델의 30 s 인코딩 시간(보고서 참조).
+     *       tiny 모델이 없으면 건너뜀(assume).
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun abortStopsWithinOneSecond() {
+        val tiny = installedWhisper("whispercpp-tiny") // tiny 모델
+        assumeTrue("기기에 whispercpp-tiny 모델 없음 — 건너뜀", tiny != null) // 없으면 건너뜀
+        val tinyMs = measureAbortMs(tiny!!.first, tiny.second) // tiny 측정
+        assertTrue("tiny 취소→종료 ${tinyMs} ms > 1000 ms", tinyMs <= 1000.0) // 1 s 이내
+        val base = installedWhisper("whispercpp-base") // base 모델(선택)
+        if (base != null) { // 있으면 측정·기록
+            val baseMs = measureAbortMs(base.first, base.second) // base 측정
+            Log.i(TAG, "whispercpp-base 취소→종료 ${"%.1f".format(baseMs)} ms (1 s 기준은 tiny 에만 적용, 인코딩 중 취소 시 인코딩 종료까지 대기)") // 기록
+        }
     }
 
     private companion object {

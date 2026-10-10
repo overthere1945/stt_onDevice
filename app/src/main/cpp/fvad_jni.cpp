@@ -4,11 +4,13 @@
 //       fvad_new → fvad_set_mode → fvad_set_sample_rate(16000) → floor(N/L) 프레임 fvad_process → fvad_free 를 한 번에 수행하고
 //       프레임별 voiced 여부를 boolean[] 로 돌려준다(L = 16·frameMs, 잔여 샘플 버림).
 // change(add)-hyungchul-2026-10-10-15:26
+// change(add)-hyungchul-2026-10-10-20:35: throwJava 를 공용 헤더 jni_util.h 로 이동
 
 #include <jni.h>    // JNI 타입·함수
 #include <cstdint>  // int16_t
 #include <memory>   // unique_ptr(자동 해제)
 #include <vector>   // 버퍼
+#include "jni_util.h" // change(add)-hyungchul-2026-10-10-20:35 공용 JNI 헬퍼(throwJava)
 
 extern "C" {
 #include "fvad.h"   // libfvad C API (third_party/libfvad/include)
@@ -18,17 +20,8 @@ namespace {
 
 constexpr int kSampleRate = 16000; // 입력 샘플레이트(Hz), 앱 오디오는 항상 16 kHz
 
-/**
- * 목적: Java 예외 던지기
- * 기능: 클래스 이름으로 예외 클래스를 찾아 메시지와 함께 ThrowNew 한다(호출 후 즉시 반환해야 함).
- * 입력: env(JNI 환경), cls(예외 클래스 이름, 예: "java/lang/IllegalStateException"), msg(메시지 UTF-8)
- * 출력: Java 쪽 예외 대기 상태
- * 리턴: 없음
- */
-void throwJava(JNIEnv *env, const char *cls, const char *msg) {
-    jclass c = env->FindClass(cls); // 예외 클래스 조회
-    if (c != nullptr) env->ThrowNew(c, msg); // 예외 설정(조회 실패면 FindClass 가 이미 예외를 설정함)
-}
+// change(add)-hyungchul-2026-10-10-20:35: 중복이던 throwJava 정의를 jni_util.h(stt::throwJava)로 옮기고 이 파일에서는 같은 이름으로 가져다 씀
+using stt::throwJava; // 공용 예외 헬퍼
 
 /**
  * 목적: Fvad 인스턴스 자동 해제용 삭제자

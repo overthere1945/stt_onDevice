@@ -2,6 +2,7 @@
 # 파일명: tools/fetch_native_deps.sh
 # 목적: 저장소에 넣지 않는(gitignore) 외부 네이티브 의존성을 정해진 버전으로 내려받아 SHA-256 을 검사하고 빌드 경로에 놓는다.
 # 기능: 1) libfvad git 서브모듈 초기화(커밋은 상위 저장소가 고정)
+#          change(add)-hyungchul-2026-10-10-20:35 + whisper.cpp git 서브모듈(태그 v1.9.5) 초기화
 #       2) TEN VAD(TEN-framework/ten-vad, 커밋 고정)의 Android arm64-v8a 공식 빌드 libten_vad.so, 헤더 ten_vad.h, LICENSE
 #          → app/src/main/cpp/third_party/ten-vad/{lib/arm64-v8a, include, .}
 #       3) sherpa-onnx v1.13.8 sherpa-onnx-static-link-onnxruntime-1.13.8.aar → app/libs/ (Task 21 에서 사용, 지금은 의존성에 넣지 않음)
@@ -70,6 +71,8 @@ fetch() {
 # 1) libfvad 서브모듈(상위 저장소가 고정한 커밋으로 체크아웃)
 git -C "${ROOT}" submodule update --init app/src/main/cpp/third_party/libfvad # 서브모듈 초기화
 echo "OK(서브모듈) libfvad $(git -C "${ROOT}/app/src/main/cpp/third_party/libfvad" rev-parse HEAD)" # 체크아웃된 커밋 표시
+git -C "${ROOT}" submodule update --init app/src/main/cpp/third_party/whisper.cpp # change(add)-hyungchul-2026-10-10-20:35 whisper.cpp 서브모듈(태그 v1.9.5 커밋) 초기화
+echo "OK(서브모듈) whisper.cpp $(git -C "${ROOT}/app/src/main/cpp/third_party/whisper.cpp" rev-parse HEAD)" # change(add)-hyungchul-2026-10-10-20:35 체크아웃된 커밋 표시
 
 # 2) TEN VAD 공식 Android 빌드와 헤더·라이선스
 fetch "${TEN_RAW}/lib/Android/arm64-v8a/libten_vad.so" "${TEN_DIR}/lib/arm64-v8a/libten_vad.so" "${TEN_SO_SHA}" # arm64 공유 라이브러리
