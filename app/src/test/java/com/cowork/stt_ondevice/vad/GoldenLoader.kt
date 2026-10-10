@@ -3,6 +3,7 @@
 // 기능: 골든 1건 읽기(load), 계열별 구간 골든 전체 읽기(allFor), 계열 파일 수 세기(countFilesFor),
 //       구간 목록 비교(assertSegmentsClose)를 제공한다. JSON 형식은 tools/golden/README_한국어.md §5 를 따른다.
 //       모르는 키는 무시한다(JsonObject 로 필요한 키만 꺼냄, R13).
+//       change(add)-hyungchul-2026-10-10-13:56 모델 추론 정합용 점수 골든 읽기(loadScores, Task 12) 추가.
 package com.cowork.stt_ondevice.vad // VAD 테스트 패키지
 
 import kotlinx.serialization.json.Json // kotlinx JSON 파서
@@ -53,6 +54,22 @@ data class GoldenBlock(
     val frames: Int, // 블록 프레임 수(점수 개수)
     val waveSamples: Int, // 블록 파형 샘플 수
     val isFinal: Boolean, // is_final 인자
+)
+
+// change(add)-hyungchul-2026-10-10-13:56
+/**
+ * 목적: 모델 추론 정합용 점수 골든 `golden/scores_<family>_<clipStem>.json` 1건의 메모리 표현(Task 12)
+ * 기능: 원본 Python 이 실제로 쓴 프레임 점수(Silero 확률 / pyannote 집계 speech 점수 / FSMN sil prob)와
+ *       pyannote 프레임 중앙 시각, 전체 샘플 수를 담는다(tools/golden/README_한국어.md §5.2).
+ */
+data class GoldenScores(
+    val name: String, // 파일 이름(확장자 제외)
+    val clip: String, // 클립 파일명(.wav)
+    val family: String, // 계열 문자열(SILERO / PYANNOTE / FSMN)
+    val hopSec: Double?, // 프레임 간격(초)
+    val frameScores: FloatArray, // 프레임 점수(float32 비트 단위 복원)
+    val frameTimesSec: DoubleArray?, // pyannote 만: 프레임 중앙 시각(초)
+    val totalSamples: Int, // 입력 전체 샘플 수 N
 )
 
 // change(add)-hyungchul-2026-10-10-13:04
@@ -112,6 +129,32 @@ object GoldenLoader {
                 intArrayOf(a[0].jsonPrimitive.content.toInt(), a[1].jsonPrimitive.content.toInt()) // 정수 쌍
             },
         )
+    }
+
+    // change(add)-hyungchul-2026-10-10-13:56
+    /**
+     * 목적: 모델 추론 정합용 점수 골든 1건 읽기(Task 12)
+     * 기능: golden/scores_<family>_<clipStem>.json 을 읽어 점수·시각·전체 샘플 수를 꺼내고 family 가 일치하는지 확인한다.
+     * 입력: family(계열 문자열, 예: "SILERO"), clipStem(클립 이름에서 .wav 를 뺀 것)
+     * 출력: 파일이 없거나 필수 키가 없으면 예외
+     * 리턴: GoldenScores
+     */
+    fun loadScores(family: String, clipStem: String): GoldenScores {
+        val name = "scores_${family}_$clipStem" // 파일 이름 규칙
+        val res = javaClass.classLoader!!.getResource("$DIR/$name.json") // 클래스패스 리소스 찾기
+            ?: throw IllegalArgumentException("점수 골든 파일 없음: $DIR/$name.json") // 없으면 바로 실패
+        val obj = json.parseToJsonElement(res.readText()).jsonObject // JSON 객체로 파싱
+        val g = GoldenScores( // 필요한 키만 꺼내 조립
+            name = name, // 파일 이름
+            clip = obj.str("clip")!!, // 클립 파일명(필수)
+            family = obj.str("family")!!, // 계열(필수)
+            hopSec = obj.num("hopSec")?.toDouble(), // 프레임 간격
+            frameScores = obj.arr("frameScores")!!.toFloatArray(), // 점수(필수)
+            frameTimesSec = obj.arr("frameTimesSec")?.let { a -> DoubleArray(a.size) { a[it].jsonPrimitive.content.toDouble() } }, // pyannote 시각
+            totalSamples = obj.num("totalSamples")!!.toInt(), // 전체 샘플 수(필수)
+        )
+        assertEquals("JSON family 불일치: $name", family, g.family) // 파일 이름과 내용의 계열 일치
+        return g // 결과
     }
 
     /**

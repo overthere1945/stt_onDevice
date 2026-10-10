@@ -22,6 +22,9 @@ import kotlin.math.ln // 자연로그(math.log)
  *   T = 전체 프레임 수, S = min(T, 6000), 블록 시작 o = range(0, T, S). 변수 step(처음 S)에 대해 o + step ≥ T − 1 이면
  *   step = T − o, is_final = True, 아니면 is_final = False. 블록 [o, o + step) 을 같은 인스턴스로 처리한다.
  *   T % 6000 == 1(T > 6000)이면 원본처럼 마지막 프레임 1 개 블록이 리셋된 상태기계로 한 번 더 처리된다(그 결과 시각은 0 기준).
+ *   change(add)-hyungchul-2026-10-10-13:56 원본은 이 재처리 블록을 ONNX 로 다시 추론하며(직전 블록 out_cache 를 이어 받으므로
+ *   점수가 첫 추론과 조금 다름), apply 의 blockSilProb 로 그 재추론 점수를 넘길 수 있다(null 이면 전역 silProb[T−1] 재사용 = 기존 동작).
+ *   프리셋(sil_to_speech 150 ms)에서는 1 프레임 블록이 구간을 만들 수 없어 결과는 재처리 점수와 무관하다.
  *   블록 파형으로 다시 계산한 dB 는 전역 dB 와 같은 값이 이어지므로(이웃 블록 파형이 240 샘플 겹침, tools/golden/README_한국어.md §6.3)
  *   전역 frameDb 의 블록 구간을 그대로 쓴다.
  *
@@ -91,17 +94,30 @@ object FsmnStateMachine {
      *       `vad_scorer(scores, 블록 파형, is_final, max_end_sil, online=False)`(L130–136)를 부른 결과를 이어 붙인다(L139–141).
      *       max_end_sil 은 생성자 인자가 없으므로 config 의 max_end_silence_time(L79–81)이다.
      * 입력: silProb(전체 프레임 sil prob = logits[0][t][0], 길이 T), frameDb(전체 프레임 dB, 길이 T,
-     *       `10·log10(Σ x[160t+i]² + 1e-6)`, x 는 −1~1 파형), p(FsmnParams)
-     * 출력: 없음
+     *       `10·log10(Σ x[160t+i]² + 1e-6)`, x 는 −1~1 파형), p(FsmnParams),
+     *       blockSilProb(change(add)-hyungchul-2026-10-10-13:56 선택: blockPlan(T) 의 블록마다 ONNX 가 낸 sil prob(블록 길이와 같은 배열).
+     *       null 이면 블록마다 전역 silProb 의 [offset, offset + frames) 를 쓴다(기존 동작). T % 6000 == 1 재처리 블록의 재추론 점수를 넘기는 용도)
+     * 출력: blockSilProb 의 블록 수·길이가 blockPlan 과 다르면 IllegalArgumentException
      * 리턴: 원본 반환 순서의 SpeechSegment 목록(초 = ms / 1000)
      */
-    fun apply(silProb: FloatArray, frameDb: FloatArray, p: FsmnParams): List<SpeechSegment> {
+    fun apply(silProb: FloatArray, frameDb: FloatArray, p: FsmnParams, blockSilProb: List<FloatArray>? = null): List<SpeechSegment> {
         require(silProb.size == frameDb.size) { "sil prob 수(${silProb.size}) ≠ dB 수(${frameDb.size})" } // 길이 불일치는 호출 오류
+        val plan = blockPlan(silProb.size) // change(add)-hyungchul-2026-10-10-13:56 블록 분할(한 번 계산)
+        if (blockSilProb != null) { // change(add)-hyungchul-2026-10-10-13:56 블록별 점수가 주어졌으면 형태 확인
+            require(blockSilProb.size == plan.size) { "blockSilProb 블록 수(${blockSilProb.size}) ≠ blockPlan 블록 수(${plan.size})" } // 블록 수 일치
+            plan.forEachIndexed { i, b -> // 블록마다
+                require(blockSilProb[i].size == b.frames) { "blockSilProb[$i] 길이(${blockSilProb[i].size}) ≠ 블록 프레임 수(${b.frames})" } // 길이 일치
+            }
+        }
         val vad = E2EVad(p) // vad_bin L101: 파형마다 새 E2EVadModel
         val maxEndSil = p.maxEndSilenceTime // vad_bin L79–81: max_end_sil = config max_end_silence_time
         val msSegments = mutableListOf<LongArray>() // [start_ms, end_ms] 누적
-        for (b in blockPlan(silProb.size)) { // 블록마다(같은 인스턴스)
-            msSegments += vad.call(silProb, frameDb, b.offset, b.frames, b.isFinal, maxEndSil) // L130–141
+        plan.forEachIndexed { i, b -> // 블록마다(같은 인스턴스) — change(add)-hyungchul-2026-10-10-13:56 블록 점수 선택 추가
+            if (blockSilProb == null) { // 기존 동작: 전역 sil prob 의 블록 구간
+                msSegments += vad.call(silProb, frameDb, b.offset, b.frames, b.isFinal, maxEndSil, scoreBase = b.offset) // L130–141
+            } else { // 블록별 ONNX 출력(블록 첫 프레임 = 인덱스 0)
+                msSegments += vad.call(blockSilProb[i], frameDb, b.offset, b.frames, b.isFinal, maxEndSil, scoreBase = 0) // L130–141
+            }
         }
         return msSegments.map { SpeechSegment(it[0] / 1000.0, it[1] / 1000.0) } // ms → 초(골든 expected 와 같은 ms/1000)
     }
@@ -230,17 +246,18 @@ object FsmnStateMachine {
         private var idxPreChunk = 0 // L249: 이전 블록들의 프레임 수 합
         private val decibel = ArrayList<Double>() // L251: 누적 프레임 dB
         private var nnEvalBlockSize = 0 // L57/L322: 현재 블록 프레임 수
-        private var scores: FloatArray = FloatArray(0) // L324: self.scores 의 원본 배열(전역 sil prob)
-        private var scoresBase = 0 // 현재 블록 scores[0][0] 의 전역 인덱스
+        private var scores: FloatArray = FloatArray(0) // L324: self.scores 의 원본 배열(전역 sil prob 또는 블록별 sil prob)
+        private var scoresBase = 0 // 현재 블록 scores[0][0] 의 sil 배열 인덱스(전역 배열이면 블록 offset, 블록 배열이면 0)
 
         /**
          * 목적: E2EVadModel.__call__(L501–552) 포팅(online=False)
          * 기능: dB·점수 누적 → is_final 이면 DetectLastFrames, 아니면 DetectCommonFrames → 반환 대상 구간 수집 → is_final 이면 전체 리셋.
-         * 입력: sil(전역 sil prob), db(전역 dB), offset(블록 시작 전역 프레임), frames(블록 프레임 수), isFinal, maxEndSil(ms)
+         * 입력: sil(sil prob 배열), db(전역 dB), offset(블록 시작 전역 프레임), frames(블록 프레임 수), isFinal, maxEndSil(ms),
+         *       scoreBase(change(add)-hyungchul-2026-10-10-13:56 블록 첫 프레임의 sil 배열 인덱스: 전역 배열이면 offset, 블록 배열이면 0)
          * 출력: 상태 갱신
          * 리턴: 이번 호출이 반환한 [start_ms, end_ms] 목록
          */
-        fun call(sil: FloatArray, db: FloatArray, offset: Int, frames: Int, isFinal: Boolean, maxEndSil: Int): List<LongArray> {
+        fun call(sil: FloatArray, db: FloatArray, offset: Int, frames: Int, isFinal: Boolean, maxEndSil: Int, scoreBase: Int): List<LongArray> {
             maxEndSilFrameCntThresh = maxEndSil - speechToSilTimeThres // L509
             // L510–511: ComputeDecibel(L301–318) — 블록 파형의 프레임 dB = 전역 dB 의 [offset, offset + frames) (클래스 설명 참고)
             for (t in offset until offset + frames) decibel += db[t].toDouble() // 누적 dB 에 블록 dB 추가
@@ -248,7 +265,7 @@ object FsmnStateMachine {
             nnEvalBlockSize = frames // L322: nn_eval_block_size = scores.shape[1]
             frmCnt += frames // L323: 전체 프레임 수 누적
             scores = sil // L324: self.scores = scores (블록 시작 = scoresBase)
-            scoresBase = offset // 블록 첫 프레임의 전역 인덱스
+            scoresBase = scoreBase // 블록 첫 프레임의 sil 배열 인덱스(change(add)-hyungchul-2026-10-10-13:56 호출자가 지정)
             if (!isFinal) detectCommonFrames() else detectLastFrames() // L513–516
             val segmentBatch = mutableListOf<LongArray>() // L519
             if (outputDataBuf.isNotEmpty()) { // L520

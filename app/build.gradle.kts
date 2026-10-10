@@ -74,10 +74,20 @@ dependencies {
     // change(add)-hyungchul-2026-10-10-11:56: 코루틴 / 직렬화
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    // change(add)-hyungchul-2026-10-10-13:56: ORT 기반 VAD(Silero·pyannote·FSMN)용 ONNX Runtime 안드로이드 AAR (arm64-v8a libonnxruntime.so 포함)
+    implementation(libs.onnxruntime.android)
     testImplementation(libs.junit)
     // change(add)-hyungchul-2026-10-10-11:56: JVM 단위 테스트용 코루틴 테스트 / ONNX Runtime
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.onnxruntime.jvm)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+}
+
+// change(add)-hyungchul-2026-10-10-13:56
+// JVM 단위 테스트 런타임 클래스패스(debugUnitTestRuntimeClasspath / releaseUnitTestRuntimeClasspath)에서는
+// onnxruntime-android(AAR, 안드로이드용 .so 만 포함)를 빼고 testImplementation 의 JVM onnxruntime(같은 1.30.0, 같은 ai.onnxruntime API)을 쓴다.
+// 앱 컴파일·APK 패키징 클래스패스에는 영향 없음(이름이 "UnitTestRuntimeClasspath" 로 끝나는 설정에만 적용).
+configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
+    exclude(group = "com.microsoft.onnxruntime", module = "onnxruntime-android") // 안드로이드 AAR 제외
 }

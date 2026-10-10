@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive // 요소 → 기본값 변환
 import org.junit.Assert.assertEquals // 값 일치 검증
 import org.junit.Assert.assertNotEquals // 값 불일치 검증
 import org.junit.Assert.assertNotNull // null 아님 검증
+import org.junit.Assert.assertThrows // 예외 검증(change(add)-hyungchul-2026-10-10-13:56)
 import org.junit.Assert.assertTrue // 참 검증
 import org.junit.Test // JUnit4 테스트 표시
 
@@ -207,5 +208,35 @@ class FsmnStateMachineTest {
         )
         assertEquals("", runHand(500, emptyList(), emptyList(), base)) // (5)
         assertEquals(emptyList<SpeechSegment>(), FsmnStateMachine.apply(FloatArray(0), FloatArray(0), base)) // 빈 입력
+    }
+
+    // change(add)-hyungchul-2026-10-10-13:56
+    /**
+     * 목적: 블록별 sil prob 지정(blockSilProb, Task 12 FsmnVad 용)이 재처리 블록에 실제로 쓰이는지 검증
+     * 기능: 위 (1b) 입력(T = 6001, sil_to_speech 10 ms)에서
+     *       (a) blockSilProb = null → 기존 결과(마지막 프레임 sil 0.05 재사용 → 재처리 블록이 [0, 10] 추가)
+     *       (b) 재처리 블록 점수를 0.95(무음)로 지정 → [0, 10] 이 사라짐(재추론 점수가 실제로 쓰임)
+     *       (c) 블록마다 전역 sil prob 조각을 그대로 넘기면 (a) 와 같음
+     *       (d) 블록 수·블록 길이가 blockPlan 과 다르면 IllegalArgumentException
+     * 입력: 없음
+     * 출력: 없음
+     * 리턴: 없음
+     */
+    @Test
+    fun blockSilProbOverridesReprocessBlock() {
+        val p = (VadPresets.byId("FSMN_DEFAULT").params as FsmnParams).copy(silToSpeechTimeThres = 10) // (1b) 파라미터
+        val sil = FloatArray(6001) { 0.95f } // 기본 무음 확률
+        (100 until 900).forEach { sil[it] = 0.05f } // 음성 구간 1
+        (5990 until 6001).forEach { sil[it] = 0.05f } // 음성 구간 2(마지막 프레임 포함)
+        val db = FloatArray(6001) // dB 0
+        fun ms(r: List<SpeechSegment>) = r.joinToString { "[${Math.round(it.startSec * 1000)}, ${Math.round(it.endSec * 1000)}]" } // ms 문자열
+        assertEquals("[600, 9300], [59500, 60010], [0, 10]", ms(FsmnStateMachine.apply(sil, db, p))) // (a) 기존 동작
+        val plan = FsmnStateMachine.blockPlan(6001) // [(0, 6001, final), (6000, 1, final)]
+        val slices = plan.map { b -> sil.copyOfRange(b.offset, b.offset + b.frames) } // 블록별 전역 조각
+        assertEquals("[600, 9300], [59500, 60010], [0, 10]", ms(FsmnStateMachine.apply(sil, db, p, slices))) // (c) 조각 그대로 = 기존
+        val override = listOf(slices[0], floatArrayOf(0.95f)) // 재처리 블록만 무음 점수
+        assertEquals("[600, 9300], [59500, 60010]", ms(FsmnStateMachine.apply(sil, db, p, override))) // (b) 재추론 점수 사용
+        assertThrows(IllegalArgumentException::class.java) { FsmnStateMachine.apply(sil, db, p, listOf(slices[0])) } // (d) 블록 수 불일치
+        assertThrows(IllegalArgumentException::class.java) { FsmnStateMachine.apply(sil, db, p, listOf(slices[0], FloatArray(2))) } // (d) 블록 길이 불일치
     }
 }

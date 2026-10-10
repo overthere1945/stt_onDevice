@@ -48,6 +48,8 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 # change(add)-hyungchul-2026-10-10-11:56: JVM 단위 테스트용 ONNX Runtime (안드로이드용 onnxruntime-android 는 해당 Task 에서 추가)
 onnxruntime-jvm = { group = "com.microsoft.onnxruntime", name = "onnxruntime", version.ref = "onnxruntime" }
+# change(add)-hyungchul-2026-10-10-13:56: 앱(안드로이드) 런타임용 ONNX Runtime AAR (Task 12 ORT 기반 VAD). JVM 단위 테스트에서는 build.gradle.kts 에서 제외하고 onnxruntime-jvm 을 쓴다
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 # change(add)-hyungchul-2026-10-10-11:56: 이후 Task 에서 사용할 라이브러리 (카탈로그 선언만, 아직 의존성 미추가)
 vosk-android = { group = "com.alphacephei", name = "vosk-android", version.ref = "vosk" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
