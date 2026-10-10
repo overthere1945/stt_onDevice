@@ -15,6 +15,10 @@ object VadPresets {
     // 설명: SHERPA·WS 원본은 스트리밍 iterator 이지만 본 앱은 동일 파라미터를 get_speech_timestamps 로 적용한다.
     private const val SILERO_ITERATOR_NOTE = "원본은 스트리밍 iterator 로직이다. 본 앱은 동일 파라미터를 get_speech_timestamps 알고리즘으로 적용한다." // 공통 주의
     private const val PYA2_NOTE = "pyannote/segmentation(2.x) 모델 카드 값이다. 본 앱의 segmentation-3.0 출력에 적용하는 참고값이다." // pyannote 2.x 주의
+    // change(add)-hyungchul-2026-10-10-15:43 Task 16: android-vad v2.0.10 Yamnet 과 본 앱 구현의 차이(tools/golden/README_한국어.md 9 절)
+    private const val YAMNET_NOTE = "hop 243 샘플(15.1875 ms, android-vad FRAME_SIZE_243), 창 = 그 프레임까지의 최근 0.975 s(시작은 0 채움)라 구간 끝이 발화보다 최대 약 1 s 늦을 수 있다. " +
+        "android-vad 는 Speech 가 521 클래스 중 최고점이고 점수 > threshold 일 때만 음성이지만 본 앱은 Speech 점수 ≥ threshold 로 판정한다. " +
+        "시작/종료 확정은 android-vad 카운터(정수 나눗셈 2 프레임 초과) 대신 프로젝트 공통 SimpleHangover(연속 2 프레임)를 쓴다." // Yamnet 주의
 
     // FSMN 기본값(funasr/fsmn-vad config.yaml)
     private val fsmnDefault = FsmnParams( // FSMN_DEFAULT 파라미터
@@ -87,9 +91,10 @@ object VadPresets {
             "NeMo 그대로: 마지막(패딩) 프레임 확률 때문에 파일 끝에 짧은 구간이 생기거나 끝이 오디오 길이를 넘을 수 있음(앱의 ChunkPlanner 가 오디오 범위로 자름). 학습 데이터에 한국어 없음.",
         ),
         // ---- Yamnet ----
-        VadPreset("YAMNET_NORMAL", VadFamily.YAMNET, HangoverParams(0.3f, 30, 30), "android-vad Yamnet 매핑(NORMAL)"),
-        VadPreset("YAMNET_AGGRESSIVE", VadFamily.YAMNET, HangoverParams(0.5f, 30, 30), "android-vad Yamnet 매핑(AGGRESSIVE)"),
-        VadPreset("YAMNET_VERY_AGGRESSIVE", VadFamily.YAMNET, HangoverParams(0.85f, 30, 30), "android-vad Yamnet 매핑(VERY_AGGRESSIVE)"),
+        // change(add)-hyungchul-2026-10-10-15:43 Task 16: android-vad 와의 차이를 note 로 명시
+        VadPreset("YAMNET_NORMAL", VadFamily.YAMNET, HangoverParams(0.3f, 30, 30), "android-vad Yamnet 매핑(NORMAL)", YAMNET_NOTE),
+        VadPreset("YAMNET_AGGRESSIVE", VadFamily.YAMNET, HangoverParams(0.5f, 30, 30), "android-vad Yamnet 매핑(AGGRESSIVE)", YAMNET_NOTE),
+        VadPreset("YAMNET_VERY_AGGRESSIVE", VadFamily.YAMNET, HangoverParams(0.85f, 30, 30), "android-vad Yamnet 매핑(VERY_AGGRESSIVE)", YAMNET_NOTE),
         // ---- NONE ----
         VadPreset("NONE", VadFamily.NONE, NoneParams, "VAD 없음 기준선", "엔진 maxChunkSec 고정 길이로 분할한다."),
     )

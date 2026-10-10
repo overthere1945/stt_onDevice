@@ -29,6 +29,8 @@ change(add)-hyungchul-2026-10-10-12:52 수정 라운드 1(R14): 클립 길이를
 | `gen_maxspeech.py` | 손작성 확률 3종 × (SILERO_SHERPA window 512, TEN_SHERPA window 256) — max_speech 분할 분기 골든 |
 | `gen_fbank.py` | `fbank_*`, `lfr_cmvn_*`, `fsmn_am.mvn` 복사 |
 | `verify_golden.py` | 계획서 Step 4 검증 + hop·프레임 수 규칙·totalSamples·손작성 골든 분할 확인 |
+| `gen_yamnet.py` | (change(add)-hyungchul-2026-10-10-15:43) Yamnet Speech 점수 골든 `scores_YAMNET_kr_customer_01_20s_plus77.json` (9절, 별도 venv `.venv-yamnet`) |
+| `requirements-yamnet.txt` / `requirements-yamnet.lock.txt` | (change(add)-hyungchul-2026-10-10-15:43) `gen_yamnet.py` 전용 의존성(ai-edge-litert 2.3.0, numpy, soundfile) / 실제 설치 버전 |
 
 ## 2. 재현 방법
 
@@ -330,3 +332,77 @@ warm_up 이 0 이 아니면 Inference step 도 달라지므로(`step = warm_up[0
 - pyannote 골든은 fp32 `model.onnx` 기준이다. 앱이 `model.int8.onnx` 를 쓰면 점수 정합(≤ 1e-3)은 보장되지 않는다.
 - FSMN 다중 블록의 `T % 6000 == 1` 특이 경로(6.3 절 6항)는 골든으로 검증하지 않는다.
 - max_speech 분할은 손작성 확률로만 검증한다(실제 음원에서는 발생하지 않음).
+
+## 9. Yamnet (`gen_yamnet.py`) — change(add)-hyungchul-2026-10-10-15:43 (Task 16)
+
+### 9.1 재현
+
+```bash
+cd /home/hyungchul/AndroidStudioProjects/STT_OnDevice
+python3 -m venv tools/golden/.venv-yamnet
+tools/golden/.venv-yamnet/bin/pip install -r tools/golden/requirements-yamnet.lock.txt
+# 모델·클래스 표를 새 빈 폴더 tools/golden/models/yamnet/ 에 받는다(9.2 표). Kaggle tar.gz 의 1.tflite 를 yamnet.tflite 로 둔다.
+tools/golden/.venv-yamnet/bin/python -I tools/golden/gen_yamnet.py
+```
+
+- 기존 `.venv`(torch 등)와 섞지 않으려고 별도 venv 를 쓴다. ai-edge-litert 2.3.0 = 앱 LiteRT(`com.google.ai.edge.litert:litert:2.3.0`)와 같은 버전.
+- 결정적: 기본 옵션(XNNPACK), 스레드 1·4·기본 모두 같은 점수(확인함). XNNPACK 을 끄면(내장 커널) 1317 중 282 프레임이 1 단계 이상 달라진다.
+
+### 9.2 다운로드 출처·SHA-256·라이선스 (`tools/golden/models/yamnet/`, gitignore)
+
+| 대상 | URL | 저장 이름 | SHA-256 | 라이선스 |
+|---|---|---|---|---|
+| Yamnet TFLite(공식, Kaggle `google/yamnet` tfLite `classification-tflite` v1) | https://www.kaggle.com/api/v1/models/google/yamnet/tfLite/classification-tflite/1/download (→ `yamnet-tflite-classification-tflite-v1.tar.gz`) | `kaggle_yamnet-tflite-classification-tflite-v1.tar.gz` | `1b971b2132760273a5fb8f5dc504e86783b27853bb3135d555ae06f1e1e365f3` | Apache-2.0 (Kaggle 모델 페이지 instance licenseName "Apache 2.0") |
+| └ **사용 파일** (tar 안 `1.tflite`, 4126810 B) | (위 압축 안) | `yamnet.tflite` | `10c95ea3eb9a7bb4cb8bddf6feb023250381008177ac162ce169694d05c317de` | 위와 같음 |
+| (대조) android-vad v2.0.10 번들 모델 | https://raw.githubusercontent.com/gkonovalov/android-vad/1b006d0aaf8fa269986a8c95a196055550c9b877/yamnet/src/main/assets/yamnet.tflite | (받아 해시만 비교 후 삭제) | `10c95ea3…05c317de` — **Kaggle 공식 파일과 완전히 같음** | 번들 `LICENSE` = Apache-2.0(tensorflow/models) |
+| 클래스 표 | https://raw.githubusercontent.com/tensorflow/models/34a21326906b9574fa11c4d6d0a5c534ff039267/research/audioset/yamnet/yamnet_class_map.csv (이 파일의 마지막 변경 커밋 dfffd62, 2019-11-21) | `yamnet_class_map.csv` (→ `app/src/test/resources/yamnet/` 로 복사, 커밋) | `cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2` | Apache-2.0 (tensorflow/models) |
+
+- 모델 입출력(ai-edge-litert 로 확인): 입력 `waveform_binary` float32 `[15600]`, 출력 float32 `[1, 521]`.
+  내부는 float 전처리(RFFT2D·COMPLEX_ABS·LOG) → QUANTIZE → **int8** MobileNet → LOGISTIC → DEQUANTIZE. 그래서 **점수는 k/256 값만 가진다**
+  (골든 클립 1317 프레임에 서로 다른 값 25개).
+- tflite 끝에 붙은 zip(메타데이터 연관 파일) `yamnet_label_list.txt` 521 줄이 CSV `display_name` 521 개와 완전히 같고 index 0 = `Speech`
+  (`gen_yamnet.py` 가 매번 assert). 안드로이드 `java.util.zip.ZipFile` 은 앞에 모델 바이트가 붙은 zip 을 거부하므로 기기 테스트는 SHA-256 으로 같은 파일인지 본다.
+
+### 9.3 android-vad(gkonovalov/android-vad v2.0.10, MIT) Yamnet 동작 — 원본 읽기
+
+태그 `2.0.10` = 커밋 `1b006d0aaf8fa269986a8c95a196055550c9b877`.
+
+- `yamnet/src/main/java/com/konovalov/vad/yamnet/VadYamnet.kt`
+  (https://github.com/gkonovalov/android-vad/blob/1b006d0aaf8fa269986a8c95a196055550c9b877/yamnet/src/main/java/com/konovalov/vad/yamnet/VadYamnet.kt)
+  - `TensorAudio.create(16 kHz, 15600)` 링버퍼 1개, `AudioClassifier.createFromFileAndOptions(.., "yamnet.tflite", maxResults 1)`.
+  - `classifyAudio(...)` 마다 `tensor.load(audioData)` 후 `classifier.classify(tensor)`: 받은 프레임(FRAME_SIZE 샘플)을 링버퍼에 넣고
+    **가장 최근 15600 샘플(시작 직후에는 앞이 0)** 을 한 번 분류한다. ⇒ hop = 프레임 크기, 창 = 0.975 s.
+  - `getResult`: 최고점 1개 클래스(maxResults 1) 중 `score > threshold` 이면 그 label, 아니면 "Silence".
+    `threshold()`: NORMAL 0.3, AGGRESSIVE 0.5, VERY_AGGRESSIVE 0.85, 그 외 0.
+  - `isContinuousVoice(label, event)`: `maxSpeechFramesCount = getFramesCount(16000, frameSize, speechDurationMs)`
+    (`utils/AudioUtils.kt`: `durationMs / (frameSize / (sampleRate / 1000))`, 정수 나눗셈 → 243 이면 `30 / 15 = 2`).
+    label 이 같으면 speech 카운트 증가(최대 max+1), 카운트 > max 이면 silence 카운트 0·음성 반환.
+    다르면 silence 카운트 증가, silence 카운트 > max 이면 speech 카운트 0·무음, 아니고 speech 카운트 > max 이면 아직 음성 유지.
+- `config/FrameSize.kt`: `FRAME_SIZE_243(243), 487, 731, 975` — 한 번에 넣는 샘플 수(hop). README 권장값 243, NORMAL, silence 30 ms, speech 30 ms.
+- `tensorflow-lite-task-audio:0.4.4` 의 `TensorAudio`(tflite-support v0.4.4 = 커밋 133228616ca14e1b64c03f6a0ea8610f41a60783,
+  https://github.com/tensorflow/tflite-support/blob/v0.4.4/tensorflow_lite_support/java/src/java/org/tensorflow/lite/support/audio/TensorAudio.java):
+  `load(short[])` 는 `src * 1.f / Short.MAX_VALUE`(**÷32767**), `FloatRingBuffer` 는 0 으로 시작해 오래된 것 → 최근 순으로 꺼낸다.
+
+### 9.4 본 앱 재현 방식(`YamnetVad.kt`)과 골든
+
+- hop = **243 샘플(15.1875 ms)** 로 고정(FRAME_SIZE_243). 프레임 수 = `floor(N/243)`(잔여 버림).
+  프레임 i 의 창 = 원본 int16 `[(i+1)·243 − 15600, (i+1)·243)`, 음수 위치 0, 값 = `float32(int16) / float32(32767)`.
+  프레임 i 시각 = `i × 243/16000` s(그 프레임 시작; 판정은 그 프레임 끝까지의 0.975 s 를 본다 → 구간 끝이 실제 발화 끝보다 최대 ~1 s 늦을 수 있음).
+- 프레임 점수 = 출력 index 0(Speech) 점수. 구간 = **SimpleHangover**(6.5 절, threshold, speech 30 ms, silence 30 ms → 필요 프레임 ceil(30/15.1875) = 2).
+- `golden/scores_YAMNET_kr_customer_01_20s_plus77.json`: 5.2 절 점수 형식 + `totalSamples` 320077, `windowSamples` 15600, `hopSamples` 243,
+  `classIndex` 0, `numClasses` 521, `inputScale` 32767, `hopSec` 0.0151875. 프레임 1317, Speech 점수 0.00390625..0.99609375.
+- **android-vad 와 다른 점**(컨트롤러 판정: 프로젝트 공통 SimpleHangover 유지, 프리셋 note 에 명시):
+  1. 음성 프레임 판정: android-vad = "최고점 클래스가 Speech 이고 점수 > threshold", 본 앱 = "Speech 점수 ≥ threshold".
+     골든 클립에서 판정이 다른 프레임: NORMAL 0/1317, AGGRESSIVE 9/1317(본 앱 1150 vs android-vad 1141), VERY_AGGRESSIVE 0/1317.
+  2. 시작·종료 확정 규칙: android-vad 는 정수 나눗셈 2 프레임을 "초과"(3 번째부터)하고 speech 카운트를 무음 확정 때까지 유지(연속 아님),
+     본 앱은 연속 2 프레임(SimpleHangover). 구간 시작 위치도 SimpleHangover 정의(연속의 첫 프레임)를 따른다.
+  3. 입력: android-vad 의 16-bit PCM 경로(÷32767)를 재현했다. float 입력 경로(`×32767` 후 절삭)는 쓰지 않는다.
+
+### 9.5 기기 검증 결과(Galaxy S22 Ultra SM-S908N, Android 16 — S25 Ultra 아님)
+
+- `NativeSmokeTest.yamnetMatchesGoldenScores`: 1317 프레임 중 1316 프레임 비트 일치, 1 프레임(#1154) 기기 0.9921875 / 골든 0.98828125
+  (양자화 1 단계 = 1/256 차이). YAMNET 3 프리셋 구간은 기기 점수·골든 점수에서 완전히 같음.
+  int8 모델이라 차이는 0 또는 1/256 의 배수뿐이어서 1e-3 기준은 1 프레임만 달라도 실패한다 →
+  기준을 "값이 다른 프레임 ≤ 1 %, 최대 차이 ≤ 1/256" 로 두었다(보고서 우려사항).
+- `yamnetRuns`: 20 s(1316 프레임) 프리셋당 약 1.76 s(프레임당 약 1.3 ms, LiteRT 기본 옵션).
+

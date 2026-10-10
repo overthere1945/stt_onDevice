@@ -39,6 +39,15 @@ JSON 은 주석을 달 수 없으므로 이 문서와 위 문서가 설명을 �
 change(add)-hyungchul-2026-10-10-14:54 R17: `FIRERED_FIRERED_STREAM_*`(클립 4 + 손작성 1)는 smooth_window 5(FireRedVAD stream 기본값,
 `params.smooth_window_size` 5, `effectiveSmoothWindow` 5)로 다시 만들었다.
 
+### Yamnet 점수 골든 (change(add)-hyungchul-2026-10-10-15:43, Task 16)
+
+| 파일 | 개수 | 내용 |
+|---|---|---|
+| `scores_YAMNET_kr_customer_01_20s_plus77.json` | 1 | PC ai-edge-litert 2.3.0 으로 실행한 yamnet.tflite 의 프레임별 Speech(index 0) 점수(hop 243 샘플 = 0.0151875 s, 1317 프레임, `expected: null`). 추가 키 `totalSamples`, `windowSamples`(15600), `hopSamples`(243), `classIndex`(0), `numClasses`(521), `inputScale`(32767) |
+
+생성·창 구성·android-vad 원본 읽기는 **[tools/golden/README_한국어.md](../../../../../tools/golden/README_한국어.md)** 9 절을 본다.
+JVM 테스트에서는 쓰지 않고 기기 테스트 `NativeSmokeTest.yamnetMatchesGoldenScores` 가 기기 LiteRT 점수와 비교한다(모델이 int8 이라 점수는 1/256 단위).
+
 ## firered_cmvn.ark 출처·라이선스
 
 - 출처 URL: https://huggingface.co/FireRedTeam/FireRedVAD/resolve/7990aaccc6b7aec1e527743bd30201f2c4a03b8c/VAD/cmvn.ark (`Stream-VAD/cmvn.ark` 와 동일 파일)

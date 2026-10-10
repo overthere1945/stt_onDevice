@@ -1,0 +1,11 @@
+# 파일명: requirements-yamnet.txt
+# 목적: Yamnet 점수 골든 도구(gen_yamnet.py) 전용 Python 의존성 — 기존 .venv(torch 등)와 섞지 않으려고 별도 venv 를 쓴다
+# 기능: python3 -m venv tools/golden/.venv-yamnet && tools/golden/.venv-yamnet/bin/pip install -r tools/golden/requirements-yamnet.txt
+#       실제 설치된 정확한 버전은 requirements-yamnet.lock.txt 에 고정한다.
+# change(add)-hyungchul-2026-10-10-15:43
+# LiteRT Python 런타임 — 앱의 LiteRT 안드로이드 런타임(com.google.ai.edge.litert:litert 2.3.0)과 같은 버전
+ai-edge-litert==2.3.0
+# 수치 배열
+numpy
+# 골든 클립 WAV 읽기(golden_common.load_clip)
+soundfile

@@ -154,6 +154,13 @@ class VadPresetsTest {
         assertEquals(30, y.silenceMs) // silence
         assertEquals(0.3f, (VadPresets.byId("YAMNET_NORMAL").params as HangoverParams).threshold, 0f) // normal
         assertEquals(0.5f, (VadPresets.byId("YAMNET_AGGRESSIVE").params as HangoverParams).threshold, 0f) // aggressive
+        // change(add)-hyungchul-2026-10-10-15:43 Task 16: android-vad 와의 차이(hop 243·Speech 최고점 조건·카운트 규칙)를 note 에 명시
+        for (id in listOf("YAMNET_NORMAL", "YAMNET_AGGRESSIVE", "YAMNET_VERY_AGGRESSIVE")) { // Yamnet 3 프리셋
+            val note = VadPresets.byId(id).note // 주의 문구
+            assertTrue("$id note: hop 243", note.contains("243")) // hop 표기
+            assertTrue("$id note: 최고점 조건 차이", note.contains("최고점")) // 판정 차이 표기
+            assertTrue("$id note: SimpleHangover", note.contains("SimpleHangover")) // 후처리 표기
+        }
 
         val none = VadPresets.byId("NONE") // 기준선
         assertEquals(VadFamily.NONE, none.family) // 계열

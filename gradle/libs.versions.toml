@@ -25,6 +25,8 @@ vosk = "0.3.75"
 jna = "5.18.1"
 # commons-compress: Maven Central 최신 안정판(2026-10-10 조회)으로 고정
 commonsCompress = "1.28.0"
+# change(add)-hyungchul-2026-10-10-15:43: LiteRT(구 TensorFlow Lite) — Google Maven 최신 안정판(2026-10-10 조회, 2.3.0) 고정. Yamnet VAD 실행용
+litert = "2.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -54,6 +56,8 @@ onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime
 vosk-android = { group = "com.alphacephei", name = "vosk-android", version.ref = "vosk" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
+# change(add)-hyungchul-2026-10-10-15:43: Yamnet VAD 용 LiteRT 안드로이드 런타임(org.tensorflow.lite.Interpreter, arm64 libLiteRt.so·liblitert_jni.so 포함)
+litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
