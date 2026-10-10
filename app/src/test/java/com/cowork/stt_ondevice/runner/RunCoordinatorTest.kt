@@ -3,6 +3,7 @@
 // 기능: - 시작 수락/거부(거부 사유 문구·기존 실행 유지), 토큰 불일치·1회성 꺼내기, 서비스 시작 실패 → Failed·대기 슬롯 비움
 //       - 실행 Job: 정상 종료 → Finished(진행 상태 반영), 본문 시작 전 사용자 취소 → Cancelled + 정리 콜백(onRunFinishing·onRunEnded) 보장,
 //         실행 중 사용자 취소 → Cancelled, 사용자 취소가 아닌 취소(범위 취소) → Failed, 흐름 예외·시작 준비(onRunStarting) 예외 → Failed + 정리 보장
+//       change(add)-hyungchul-2026-10-11-03:31 진행 화면용 Running.errorCount(ERROR 완료 수)·startedAtMs(시작 시각) 반영
 //       Android 의존 없음(가짜 RunHost, 가상 시간 TestScope).
 // change(add)-hyungchul-2026-10-11-03:00
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
@@ -87,10 +88,10 @@ class RunCoordinatorTest {
      */
     @Test
     fun startAcceptedThenRejectedWhileRunning() {
-        val c = RunCoordinator() // 상태기계
+        val c = RunCoordinator { 1234L } // 상태기계(고정 시계) // change(add)-hyungchul-2026-10-11-03:31 시작 시각 고정
         assertEquals(RunUiState.Idle, c.events.value) // 처음은 Idle
         assertNotNull(c.requestStart(config("20261011_030000"))) // 수락
-        assertEquals(RunUiState.Running("20261011_030000"), c.events.value) // 즉시 Running
+        assertEquals(RunUiState.Running("20261011_030000", startedAtMs = 1234L), c.events.value) // 즉시 Running(시작 시각 기록) // change(add)-hyungchul-2026-10-11-03:31
         assertNull(c.requestStart(config("20261011_030001"))) // 거부
         val s = c.events.value as RunUiState.Running // 상태
         assertEquals("20261011_030000", s.runId) // 기존 실행 유지
@@ -276,5 +277,35 @@ class RunCoordinatorTest {
         assertEquals(RunUiState.Failed("20261011_030000", "SecurityException: WAKE_LOCK 없음"), c.events.value) // Failed
         assertFalse("runFlow" in host.calls) // 흐름을 만들지 않음
         assertEquals(listOf("finishing", "ended"), host.calls.takeLast(2)) // 정리 실행
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:31
+    /**
+     * 목적: 진행 화면용 오류 수 집계
+     * 기능: ItemDone 중 status=ERROR 만 Running.errorCount 를 1씩 올리고(OK·NO_MATCH 는 그대로), 시작 시각(startedAtMs)은 유지된다.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun itemDoneCountsErrors() {
+        val scope = TestScope() // 가상 시간 범위
+        val c = RunCoordinator { 5000L } // 고정 시계
+        val cfg = config("20261011_030000") // 설정
+        c.requestStart(cfg) // 수락
+        val seen = mutableListOf<Int>() // 항목 완료 직후 오류 수
+        val host = FakeHost({ flow {
+            emit(RunEvent.ItemDone("combo", item, "ERROR")) // 오류 1
+            seen += (c.events.value as RunUiState.Running).errorCount // 관찰
+            emit(RunEvent.ItemDone("combo", item, "OK")) // 정상
+            seen += (c.events.value as RunUiState.Running).errorCount // 관찰
+            emit(RunEvent.ItemDone("combo", item, "ERROR")) // 오류 2
+            seen += (c.events.value as RunUiState.Running).errorCount // 관찰
+            assertEquals(5000L, (c.events.value as RunUiState.Running).startedAtMs) // 시작 시각 유지
+            emit(RunEvent.Finished(1, 0, 2, 0)) // 종료
+        } })
+        c.launch(scope, cfg, host, StandardTestDispatcher(scope.testScheduler)) // 실행
+        scope.advanceUntilIdle() // 끝까지
+        assertEquals(listOf(1, 1, 2), seen) // ERROR 만 셈
     }
 }

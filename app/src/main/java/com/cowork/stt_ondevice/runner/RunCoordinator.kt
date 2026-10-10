@@ -7,6 +7,7 @@
 //         (기본 시작 모드면 본문 시작 전 취소 시 본문·finally 가 모두 건너뛰어져 상태가 Running 에 고착되고 서비스가 멈추지 않는다).
 //       - 최종 상태: 정상 종료 Finished, 사용자 취소(RunHandle.cancelByUser) Cancelled, 그 밖의 취소(서비스 범위 취소 등)와 예외는 Failed.
 //       - RunHost: 서비스가 구현하는 콜백(실행 흐름 생성·깨우기 잠금·알림·로그·메인 스레드 종료 처리).
+//       - change(add)-hyungchul-2026-10-11-03:31 진행 화면용으로 Running.startedAtMs(시작 수락 시각)와 errorCount(ERROR 완료 항목 수)를 채운다.
 // change(add)-hyungchul-2026-10-11-03:00
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
@@ -84,8 +85,9 @@ internal class RunHandle(val runId: String, val job: Job, private val userCancel
 /**
  * 목적: 실행 상태기계
  * 기능: 파일 머리말 참조. 프로세스 안에서 하나만 쓴다(RunService companion 이 보유).
+ * 입력: change(add)-hyungchul-2026-10-11-03:31 clock(시작 수락 시 Running.startedAtMs 에 넣을 벽시계 ms, 기본 System.currentTimeMillis)
  */
-internal class RunCoordinator {
+internal class RunCoordinator(private val clock: () -> Long = System::currentTimeMillis) { // change(add)-hyungchul-2026-10-11-03:31 시작 시각용 벽시계(테스트에서 교체)
     private val lock = Any() // 대기 슬롯 보호
     private var pending: PendingStart? = null // 시작 대기 중인 설정(lock 으로 보호)
     private val state = MutableStateFlow<RunUiState>(RunUiState.Idle) // 화면 상태(쓰기용)
@@ -108,7 +110,7 @@ internal class RunCoordinator {
                 cur.copy(rejectedStart = rejectMessage(cur.runId, config.runId)) // 거부 사유
             } else { // 실행 없음
                 accepted = true // 수락
-                RunUiState.Running(config.runId) // 즉시 실행 중(중복 시작 차단)
+                RunUiState.Running(config.runId, startedAtMs = clock()) // 즉시 실행 중(중복 시작 차단) // change(add)-hyungchul-2026-10-11-03:31 시작 시각 기록
             }
         }
         if (!accepted) return null // 거부
@@ -190,7 +192,7 @@ internal class RunCoordinator {
                             updateRunning(runId) { it.copy(progress = ev) } // 진행률 반영
                             host.onProgress(ev) // 잠금 연장·알림
                         }
-                        is RunEvent.ItemDone -> updateRunning(runId) { it.copy(lastItem = ev) } // 최근 완료 항목
+                        is RunEvent.ItemDone -> updateRunning(runId) { it.copy(lastItem = ev, errorCount = it.errorCount + if (ev.status == "ERROR") 1 else 0) } // 최근 완료 항목 // change(add)-hyungchul-2026-10-11-03:31 ERROR 수 누적
                         is RunEvent.Finished -> terminal = RunUiState.Finished(runId, ev) // 정상 종료 집계
                     }
                 }

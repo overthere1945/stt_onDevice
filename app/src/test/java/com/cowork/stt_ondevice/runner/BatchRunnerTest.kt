@@ -23,6 +23,7 @@ import com.cowork.stt_ondevice.model.Runtime // 런타임
 import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식
 import com.cowork.stt_ondevice.model.VoskConfig // 엔진 설정(가짜용)
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
+import com.cowork.stt_ondevice.output.InputEntry // change(add)-hyungchul-2026-10-11-03:31 manifest 입력 항목
 import com.cowork.stt_ondevice.output.OutputLayout // 출력 경로 규칙
 import com.cowork.stt_ondevice.output.RunManifest // 실행 manifest
 import com.cowork.stt_ondevice.output.STT_CSV_HEADER // PC CSV 헤더
@@ -309,6 +310,7 @@ class BatchRunnerTest {
         assertNotNull(m.finishedAt) // 종료 기록
         assertNull(m.inFlight) // 진행 중 없음
         assertEquals(0.5, m.models[0].loadSec!!, 0.0) // 모델 로드 시간 기록
+        assertEquals(listOf(InputEntry("kr", "customer", "01.wav")), m.inputs) // change(add)-hyungchul-2026-10-11-03:31 입력 항목 기록(이어하기 복원용)
         assertEquals(RunEvent.Finished(1, 0, 0, 0), events.last()) // 종료 이벤트
         assertTrue(events.first() is RunEvent.Progress) // 첫 이벤트는 진행률
     }
@@ -494,6 +496,22 @@ class BatchRunnerTest {
             assertNotNull(e.message) // 사유
         }
         assertEquals("{ 깨진 json", mf.readText()) // 여전히 유지
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:31
+    /** 목적: 입력 구성이 다른 이어하기 거부. 기능: 1회차 파일 2개 중 1개 후 중단 → 파일 1개만 담은 resume 은 예외(입력 구성 다름), 엔진 추가 생성 없음. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun resumeWithDifferentInputsFails() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        runner().run(config(listOf(spec("m1")), listOf("SILERO"), files)).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // 1개 후 중단
+        val before = created.size // 지금까지 만든 엔진 수
+        try {
+            runner().run(config(listOf(spec("m1")), listOf("SILERO"), files.take(1), resume = true)).toList() // 파일 1개로 이어하기 시도
+            fail("입력 구성이 다른 이어하기는 예외여야 함") // 예외가 없으면 실패
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message!!.contains("입력 파일")) // 한국어 사유
+        }
+        assertEquals(before, created.size) // 엔진 추가 생성 없음
     }
 
     /** 목적: VAD 사용 불가 처리. 기능: SILERO 생성 실패 → SILERO 조합 항목 전부 ERROR(VAD, VAD_UNAVAILABLE), 다른 계열 프리셋은 정상, 생성 시도는 계열당 1회. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */

@@ -24,6 +24,7 @@ import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
 import com.cowork.stt_ondevice.output.DeviceInfoJson // 기기 JSON
 import com.cowork.stt_ondevice.output.ErrorJson // 오류 JSON
+import com.cowork.stt_ondevice.output.InputEntry // change(add)-hyungchul-2026-10-11-03:31 manifest 입력 항목
 import com.cowork.stt_ondevice.output.ModelEntry // manifest 모델 항목
 import com.cowork.stt_ondevice.output.OutputLayout // 출력 경로 규칙
 import com.cowork.stt_ondevice.output.PresetEntry // manifest 프리셋 항목
@@ -209,6 +210,7 @@ class BatchRunner(
      * 목적: manifest 열기
      * 기능: 새 실행이면 manifest 가 없는지 확인하고 새로 쓴다. 이어하기면 읽어서(실패 시 예외) runId·앱 버전·모델(id 순서, 실효 maxChunk, runtimeVersion, precision,
      *       파일 hash)·프리셋(id, params)·chunk 모드·스레드가 같은지 확인하고 resume=true, finishedAt=null 로 다시 쓴다(inFlight 는 정리를 위해 유지).
+     *       change(add)-hyungchul-2026-10-11-03:31 기존 manifest 에 입력 목록(inputs)이 있으면 그것도 같아야 한다(없던 이전 파일은 검사하지 않음).
      * 입력: config(실행 설정), runDir(실행 폴더)
      * 출력: 조건 위반 시 IllegalStateException(기존 파일은 건드리지 않음)
      * 리턴: 저장된 manifest
@@ -220,6 +222,7 @@ class BatchRunner(
             models = config.models.map { ModelEntry.from(it, config.maxChunkFor(it)) }, presets = config.presets.map(PresetEntry::from), // 모델·프리셋
             chunkMode = config.chunkMode.name, maxChunkOverride = config.maxChunkOverride, threads = config.threads, resume = config.resume, // 실행 옵션
             inputRoot = dirs.inputSound.absolutePath, unsupported = emptyList(), // 입력 루트·미지원
+            inputs = config.items.map(InputEntry::from), // change(add)-hyungchul-2026-10-11-03:31 입력 파일 목록(화면 이어하기 복원용)
         )
         if (!config.resume) { // 새 실행
             check(!file.exists()) { "이미 run_manifest.json 이 있는 run 폴더에는 새 실행을 시작할 수 없습니다(이어하려면 resume=true): ${file.absolutePath}" } // 덮어쓰기 금지
@@ -237,6 +240,7 @@ class BatchRunner(
         }
         check(old.presets.map { it.id to it.params } == fresh.presets.map { it.id to it.params }) { "이어하기 실패: VAD 프리셋 구성이 이전 실행과 다릅니다" } // 프리셋
         check(old.chunkMode == fresh.chunkMode && old.threads == fresh.threads) { "이어하기 실패: chunk 모드·스레드 수가 이전 실행과 다릅니다" } // 실행 옵션
+        if (old.inputs != null) check(old.inputs == fresh.inputs) { "이어하기 실패: 입력 파일 구성(목록·순서)이 이전 실행과 다릅니다" } // change(add)-hyungchul-2026-10-11-03:31 입력 구성(기록된 경우만 — 이전 파일은 null)
         val resumed = old.copy(resume = true, finishedAt = null) // 이어하기 표시
         resumed.write(file) // 저장
         return resumed // 이어하기 manifest

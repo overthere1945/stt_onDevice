@@ -3,6 +3,7 @@
 // 기능: 기기·앱 빌드·모델(hash/라이선스/런타임)·VAD 프리셋 값·UNSUPPORTED 목록·진행 중 항목을 JSON 으로 남긴다.
 //       도메인 타입(DeviceInfo/ModelSpec/VadPreset)은 @Serializable 이 아니므로 미러 타입(DeviceInfoJson/ModelEntry/PresetEntry)과 from() 변환기를 둔다.
 //       측정·확인하지 못한 값은 null (AppJson 의 explicitNulls 로 JSON 에 null 이 명시된다).
+//       change(add)-hyungchul-2026-10-11-03:31 입력 파일 목록(inputs, InputEntry)도 남겨 결과 화면의 이어하기가 같은 입력을 복원할 수 있게 한다.
 package com.cowork.stt_ondevice.output // 출력 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -203,6 +204,30 @@ data class PresetEntry(
     }
 }
 
+// change(add)-hyungchul-2026-10-11-03:31
+/**
+ * 목적: manifest 에 기록하는 입력 파일 1건
+ * 기능: 입력 루트(inputRoot) 기준 위치를 언어 폴더·상대 폴더·파일명(확장자 포함)으로 남긴다. 이어하기 때 inputRoot/<lang>/<relDir>/<file> 로 되찾는다.
+ * 입력: lang(언어 폴더명 kr/en), relDir(상대 폴더, '/' 구분, 최상위면 빈 문자열), file(파일명)
+ */
+@Serializable
+data class InputEntry(
+    val lang: String, // 언어 폴더명
+    val relDir: String, // 상대 폴더
+    val file: String, // 파일명(확장자 포함)
+) {
+    companion object {
+        /**
+         * 목적: 입력 항목 → 기록 항목 변환
+         * 기능: InputItem 의 lang·relDir·파일명을 옮긴다.
+         * 입력: item(입력 항목)
+         * 출력: 없음
+         * 리턴: InputEntry
+         */
+        fun from(item: InputItem): InputEntry = InputEntry(item.lang, item.relDir, item.file.name) // 값 복사
+    }
+}
+
 // change(add)-hyungchul-2026-10-10-22:05
 /**
  * 목적: run_manifest.json 전체 스키마
@@ -231,6 +256,9 @@ data class RunManifest(
     //   재개 시 남아 있으면 그 단계에서 프로세스가 죽은 것으로 보고 ResumeReconciler 가 CRASH_OR_KILLED 로 정리한다.
     val inFlight: String? = null, // 진행 단계 표시(위 3종), 없으면 null
     val finishedAt: String? = null, // 실행 종료 시각, 끝나지 않았으면 null
+    // change(add)-hyungchul-2026-10-11-03:31: 실행에 넣은 입력 파일 목록(설정 순서) — 결과 화면의 "이어하기"가 같은 입력으로 RunConfig 를 복원하는 데 쓴다.
+    //   이 필드가 없던 이전 파일은 null(입력 목록을 알 수 없어 화면 이어하기 불가 — 다른 입력으로 대체하지 않음).
+    val inputs: List<InputEntry>? = null, // 입력 항목 목록, 기록 안 된 이전 파일이면 null
 ) {
     /**
      * 목적: manifest 원자적 저장
