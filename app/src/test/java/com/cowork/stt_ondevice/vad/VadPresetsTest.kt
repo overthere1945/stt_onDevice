@@ -137,7 +137,11 @@ class VadPresetsTest {
         val fs = VadPresets.byId("FIRERED_STREAM").params as FireRedParams // FireRed stream
         assertEquals(FireRedMode.STREAM, fs.mode) // 모드
         assertEquals(0.5f, fs.threshold, 0f) // th
-        assertEquals(0, fs.smoothWindow) // smooth 없음
+        // change(add)-hyungchul-2026-10-10-14:54 R17: FireRedVAD stream 공식 기본값(smooth_window_size 5)으로 정정
+        assertEquals(5, fs.smoothWindow) // smooth 5(공식 기본)
+        assertTrue(VadPresets.byId("FIRERED_STREAM").source.contains("FireRedVAD stream 기본값")) // 근거 표기
+        val nemoNote = VadPresets.byId("MARBLENET_NEMO").note // MarbleNet 주의 문구
+        assertTrue(nemoNote.contains("마지막(패딩) 프레임") && nemoNote.contains("한국어")) // R18 주의 문구 존재
         assertEquals(8, fs.minSpeechFrames) // min speech
         assertEquals(5, fs.padStartFrames) // pad start
 

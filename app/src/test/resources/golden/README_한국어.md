@@ -33,8 +33,11 @@ JSON 은 주석을 달 수 없으므로 이 문서와 위 문서가 설명을 �
 | `marblenet_mel_<clipStem>.json` | 4 | NeMo log-mel(프레임×80) 앞 50 프레임 + 끝 4 프레임(`tailFrames`) |
 | `marblenet_preprocessor.json` | 1 | NeMo 전처리 설정 원문·실효값·hann 창 400 값·mel 필터뱅크 80×257 (`expected: null`) |
 
-주의: MarbleNet 의 마지막 출력 프레임은 패딩 영역이며(확률 0.45888966), NeMo 동작 그대로라 합성 클립에도 끝 구간 `[7.80, 8.20]` 이 있다
-(tools/export README 7.4 절).
+주의: MarbleNet 의 마지막 출력 프레임은 패딩 영역이며(확률 0.45888966), NeMo 동작 그대로라 합성 클립에도 끝 구간 `[7.80, 8.20]` 이 있고
+구간 끝이 오디오 길이를 넘을 수 있다(tools/export README 7.4 절). 컨트롤러 판정(R18)으로 골든은 NeMo 그대로 유지하며, 앱에서는 ChunkPlanner 가 오디오 범위로 자른다.
+
+change(add)-hyungchul-2026-10-10-14:54 R17: `FIRERED_FIRERED_STREAM_*`(클립 4 + 손작성 1)는 smooth_window 5(FireRedVAD stream 기본값,
+`params.smooth_window_size` 5, `effectiveSmoothWindow` 5)로 다시 만들었다.
 
 ## firered_cmvn.ark 출처·라이선스
 

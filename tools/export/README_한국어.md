@@ -167,8 +167,12 @@ min_silence_frame 20, merge_silence_frame 0, extend_speech_frame 0, chunk_max_fr
 
 ### 6.4 FIRERED_STREAM 후처리 — `fireredvad/core/stream_vad_postprocessor.py` `StreamVadPostprocessor.process_one_frame` → `FireRedStreamVad.results_to_timestamps`
 
-프리셋(VadPresets.kt): threshold 0.5, **smooth_window 0**, pad_start 5, min_speech 8, max_speech 2000, min_silence 20.
-실효값: `smooth_window_size = max(1, 0) = 1`(평활 없음), `pad_start_frame = max(1, 5) = 5`(골든 `params.effective*` 에 기록).
+프리셋(VadPresets.kt): threshold 0.5, **smooth_window 5**, pad_start 5, min_speech 8, max_speech 2000, min_silence 20.
+change(add)-hyungchul-2026-10-10-14:54 R17: smooth_window 를 0 → **5(FireRedVAD stream 기본값)** 로 정정하고 골든을 다시 만들었다
+(`FireRedStreamVadConfig`·`bin/stream_vad.py` CLI·`examples/inference_stream_vad.sh` 모두 5).
+실효값: `smooth_window_size = max(1, 5) = 5`, `pad_start_frame = max(5, 5) = 5`(골든 `params.effective*` 에 기록).
+평활: deque 이동 평균 — 프레임마다 `window_sum += p`, 창 길이가 5 를 넘으면 가장 오래된 값을 빼고(`window_sum −= left`), 평활 확률 = `window_sum / len(window)`
+(처음 4 프레임은 1~4 개 평균). **누적합을 더하고 빼는 방식(double) 그대로** 옮겨야 비트 단위로 같다(매번 5 개를 다시 더하면 ulp 차이 가능).
 
 - 프레임 번호 frame_cnt 는 1부터. `is_speech = (평활 확률 ≥ 0.5)`. 상태 SILENCE/POSSIBLE_SPEECH/SPEECH/POSSIBLE_SILENCE 와 speech_cnt·silence_cnt·
   hit_max_speech·last_speech_start/end_frame 을 쓰는 공식 코드를 **문자 그대로** 옮길 것(분기 순서·카운터 증가 위치가 결과에 영향).
@@ -178,7 +182,7 @@ min_silence_frame 20, merge_silence_frame 0, extend_speech_frame 0, chunk_max_fr
 - 구간 변환: 시작 = `max(0, speech_start_frame − 1)`, 끝 = `max(0, speech_end_frame − 1)`(0-based), 끝 이벤트 없이 끝나면 끝 = `T − 1`.
   초 = 프레임 / 100(곱이 아니라 나눗셈). dur 로 자르지 않는다. 끝은 무음 20 프레임째 프레임이다.
 - 골든 `events` = 시작/끝 이벤트 프레임 `[frame_idx, isStart, isEnd, speech_start_frame, speech_end_frame]`(1-based),
-  `expectedFrames` = 0-based (시작, 끝). 손작성 `synthetic_firered_long` 으로 max_speech 강제 분할을 골든화했다(`[[95,2099],[2100,4099],[4100,4506]]`).
+  `expectedFrames` = 0-based (시작, 끝). 손작성 `synthetic_firered_long` 으로 max_speech 강제 분할을 골든화했다(`[[97,2101],[2102,4101],[4102,4508]]`).
 - `frameScores` 는 같은 입력의 반올림 전 확률이다(`StreamVadFrameResult.raw_prob` 는 `round(·,3)` 표시값이라 쓰지 않았다).
 
 ### 6.5 결과 요약(구간 수) 과 ONNX 확률 사용 시 동일성
@@ -191,6 +195,7 @@ min_silence_frame 20, merge_silence_frame 0, extend_speech_frame 0, chunk_max_fr
 | kr 70 s | 19 | 32 |
 
 ONNX 확률(`scores_FIRERED*_*.json`)을 같은 공식 후처리에 넣어도 8 조합 모두 구간이 같았다(`sameSegmentsWithOnnxProbs: true`).
+(R17 smooth 5 재생성 후 STREAM 구간 수는 그대로이고 경계가 0.01~0.03 s 늦어졌다. 예: kr 20 s 첫 구간 2.04–2.94 → 2.06–2.96)
 
 ## 7. MarbleNet (Frame_VAD_Multilingual_MarbleNet_v2.0)
 
@@ -268,15 +273,18 @@ min_duration_on 0.2, min_duration_off 0.2, filter_speech_first True) + `shift_le
   4 클립 모두 이 프레임 확률이 **0.45888966(> onset 0.3)** 이다. NeMo 공식 경로는 모든 출력 프레임을 그대로 후처리하므로
   - 합성 클립(끝 2 s 디지털 무음)에서도 가짜 구간 `[7.80, 8.20]` 이 생기고,
   - 구간 끝이 오디오 길이를 넘는다(20 s+77 클립 끝 20.20 s > 20.0048 s, 70 s 클립 70.20 s).
-- 골든은 NeMo 동작을 그대로 담았다. Kotlin 은 골든과 맞추려면 같은 프레임을 그대로 써야 한다. 유효 출력 프레임만 쓰거나(`j < ceil(seqLen/2)`)
-  끝을 오디오 길이로 자르는 것은 **NeMo 와 다른 동작**이므로 별도 결정이 필요하다(이번 작업에서는 바꾸지 않음).
+- 골든은 NeMo 동작을 그대로 담았다. Kotlin 은 골든과 맞추려면 같은 프레임을 그대로 써야 한다.
+- change(add)-hyungchul-2026-10-10-14:54 R18 컨트롤러 판정: **NeMo 동작 그대로 유지**(골든 변경 없음). 앱 `VadPresets.kt` MARBLENET_NEMO note 에
+  "NeMo 그대로: 마지막(패딩) 프레임 확률 때문에 파일 끝에 짧은 구간이 생기거나 끝이 오디오 길이를 넘을 수 있음(앱의 ChunkPlanner 가 오디오 범위로 자름).
+  학습 데이터에 한국어 없음." 을 넣었다. 오디오 길이 초과분은 `ChunkPlanner` 의 1단계 clamp(`minOf(seg.endSec, durationSec)`)가 자른다.
+  파일 끝 짧은 가짜 구간 자체는 남는다(합성 클립 [7.80, 8.20] → clamp 후 [7.80, 8.0077]).
 
 ## 8. 골든 JSON 형식(`app/src/test/resources/golden/`, 공통 형식은 tools/golden README 5절)
 
 | 파일 | 개수 | 내용 |
 |---|---|---|
 | `FIRERED_FIRERED_OFFLINE_<clip>.json` | 4 + 손작성 1 | hop 0.010, `frameScores` = 공식 PyTorch 오프라인 확률, `expected` = `detect()` 구간(초, 3자리). 추가: `totalSamples`, `durSec`, `expectedFrames`([시작, 끝) 프레임), `stages`(6.3 절 2~7 단계 프레임 구간), `minAbsSmoothedMinusThreshold`, `splitApplied`, `sameSegmentsWithOnnxProbs`, `params` |
-| `FIRERED_FIRERED_STREAM_<clip>.json` | 4 + 손작성 1 | hop 0.010, `frameScores` = 공식 PyTorch 스트리밍 확률, `expected` = `detect_full()` 구간. 추가: `expectedFrames`(0-based), `events`, `params`(+ `effectiveSmoothWindow` 1, `effectivePadStartFrame` 5) |
+| `FIRERED_FIRERED_STREAM_<clip>.json` | 4 + 손작성 1 | hop 0.010, `frameScores` = 공식 PyTorch 스트리밍 확률, `expected` = `detect_full()` 구간. 추가: `expectedFrames`(0-based), `events`, `params`(+ `effectiveSmoothWindow` 5, `effectivePadStartFrame` 5) |
 | `MARBLENET_MARBLENET_NEMO_<clip>.json` | 4 | hop 0.02, `frameScores` = NeMo fp32 확률, `expected` = NeMo 후처리 (start, end) float32. 추가: `seqLen`, `processedFrames`, `expectedDur`, `binarized`, `filtered`, `params`, `perArgsFloat`, `sameSegmentsWithOnnxProbs`, `officialFileRoute` |
 | `scores_FIRERED_<clip>.json` | 4 | **오프라인 ONNX**(`fireredvad_vad.onnx`) 확률, `expected: null`, `model`, `torchMaxAbsDiff` |
 | `scores_FIRERED_STREAM_<clip>.json` | 4 | **스트리밍 ONNX**(`fireredvad_stream_vad.onnx`) 확률(두 모델이라 파일을 나눔) |
@@ -294,7 +302,8 @@ min_duration_on 0.2, min_duration_off 0.2, filter_speech_first True) + `shift_le
 
 ## 9. 한계·주의(요약)
 
-- FIRERED_STREAM 프리셋의 smoothWindow 0 은 공식 기본값(데이터클래스·CLI·예제 스크립트 모두 5)과 다르다. 골든은 지시대로 VadPresets.kt 값(0)으로 만들었다.
-- MarbleNet 마지막 패딩 프레임 문제(7.4 절)와 한국어 미학습(5절)은 앱 결과 해석에 영향을 준다.
+- (R17 해결) FIRERED_STREAM smoothWindow 는 공식 기본값 5 로 정정했고 STREAM 골든 5개(클립 4 + 손작성 1)를 다시 만들었다.
+- MarbleNet 마지막 패딩 프레임 동작(7.4 절)은 R18 판정대로 NeMo 그대로 유지한다. 끝 초과분은 ChunkPlanner 가 자르지만 파일 끝 짧은 구간은 남을 수 있다.
+  MarbleNet 학습 데이터에 한국어가 없다(5절). 두 내용은 VadPresets.kt MARBLENET_NEMO note 에도 있다.
 - NeMo 3.0.0 strict 복원 실패를 strict=False + 텐서 전수 비교로 우회했다(7.1 절). 모델 카드 Runtime(2.3.0)으로는 실행하지 않았다.
 - 기기(S25 Ultra)에서의 ONNX 실행·수치 비교는 이 작업 범위가 아니며 수행하지 않았다.

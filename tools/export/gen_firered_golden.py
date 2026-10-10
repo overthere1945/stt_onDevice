@@ -44,7 +44,8 @@ TOOL = (f"fireredvad {ef.FIRERED_COMMIT[:7]} (github FireRedTeam/FireRedVAD) + H
 # FireRedParams(mode, threshold, smoothWindow, minSpeech, maxSpeech, minSilence, mergeSilence, extend, padStart)
 FIRERED_OFFLINE = dict(smooth_window_size=5, speech_threshold=0.4, min_speech_frame=20, max_speech_frame=2000,  # 오프라인
                        min_silence_frame=20, merge_silence_frame=0, extend_speech_frame=0)  # vad.py 예시 값과 동일
-FIRERED_STREAM = dict(smooth_window_size=0, speech_threshold=0.5, pad_start_frame=5, min_speech_frame=8,  # 스트리밍(smoothWindow 0)
+# change(add)-hyungchul-2026-10-10-14:54 R17: smooth_window_size 0 → 5(FireRedStreamVadConfig 기본값, VadPresets.kt 정정과 동일)
+FIRERED_STREAM = dict(smooth_window_size=5, speech_threshold=0.5, pad_start_frame=5, min_speech_frame=8,  # 스트리밍(FireRedStreamVadConfig 기본)
                       max_speech_frame=2000, min_silence_frame=20)  # stream_vad.py 값
 CHUNK_MAX_FRAME = 30000  # 공식 기본값(300 s). 골든 클립은 모두 이보다 짧아 분할 없음
 
@@ -218,7 +219,7 @@ def main():
     str_cfg = FireRedStreamVadConfig(use_gpu=False, chunk_max_frame=CHUNK_MAX_FRAME, **FIRERED_STREAM)  # 스트리밍 설정
     off = FireRedVad.from_pretrained(os.path.join(ef.MODEL_ROOT, "VAD"), off_cfg)  # 공식 오프라인 VAD
     stv = FireRedStreamVad.from_pretrained(os.path.join(ef.MODEL_ROOT, "Stream-VAD"), str_cfg)  # 공식 스트리밍 VAD
-    assert stv.postprocessor.smooth_window_size == 1 and stv.postprocessor.pad_start_frame == 5, "스트리밍 실효값 확인"  # max(1,0)=1, max(1,5)=5
+    assert stv.postprocessor.smooth_window_size == 5 and stv.postprocessor.pad_start_frame == 5, "스트리밍 실효값 확인"  # max(1,5)=5, max(5,5)=5
     sess_off = ef.session(os.path.join(ef.FIRERED_OUT, "fireredvad_vad.onnx"))  # 오프라인 ONNX
     sess_str = ef.session(os.path.join(ef.FIRERED_OUT, "fireredvad_stream_vad.onnx"))  # 스트리밍 ONNX(캐시 없음)
     cmvn_stats = kaldiio.load_mat(CMVN_ARK)  # (2, 81) float64 통계

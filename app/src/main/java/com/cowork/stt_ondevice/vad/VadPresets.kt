@@ -74,12 +74,18 @@ object VadPresets {
             "FIRERED_OFFLINE", VadFamily.FIRERED,
             FireRedParams(FireRedMode.OFFLINE, 0.4f, 5, 20, 2000, 20, 0, 0, 0), "fireredvad vad.py",
         ),
+        // change(add)-hyungchul-2026-10-10-14:54 R17: smoothWindow 0 → 5(FireRedStreamVadConfig·CLI·예제 스크립트 공통 기본값)
         VadPreset(
             "FIRERED_STREAM", VadFamily.FIRERED,
-            FireRedParams(FireRedMode.STREAM, 0.5f, 0, 8, 2000, 20, 0, 0, 5), "fireredvad stream_vad.py",
+            FireRedParams(FireRedMode.STREAM, 0.5f, 5, 8, 2000, 20, 0, 0, 5), "fireredvad stream_vad.py (FireRedVAD stream 기본값: FireRedStreamVadConfig)",
+            "smooth_window_size 5 는 FireRedVAD stream 기본값(FireRedStreamVadConfig, bin/stream_vad.py CLI, 예제 스크립트 공통)이다.",
         ),
         // ---- MarbleNet ----
-        VadPreset("MARBLENET_NEMO", VadFamily.MARBLENET, NemoParams(0.3f, 0.3f, 0.2, 0.2, 0.2, 0.2, true), "NeMo frame_vad_infer_postprocess.yaml"),
+        // change(add)-hyungchul-2026-10-10-14:54 R18: NeMo 마지막(패딩) 프레임 동작·한국어 미학습 주의 문구
+        VadPreset(
+            "MARBLENET_NEMO", VadFamily.MARBLENET, NemoParams(0.3f, 0.3f, 0.2, 0.2, 0.2, 0.2, true), "NeMo frame_vad_infer_postprocess.yaml",
+            "NeMo 그대로: 마지막(패딩) 프레임 확률 때문에 파일 끝에 짧은 구간이 생기거나 끝이 오디오 길이를 넘을 수 있음(앱의 ChunkPlanner 가 오디오 범위로 자름). 학습 데이터에 한국어 없음.",
+        ),
         // ---- Yamnet ----
         VadPreset("YAMNET_NORMAL", VadFamily.YAMNET, HangoverParams(0.3f, 30, 30), "android-vad Yamnet 매핑(NORMAL)"),
         VadPreset("YAMNET_AGGRESSIVE", VadFamily.YAMNET, HangoverParams(0.5f, 30, 30), "android-vad Yamnet 매핑(AGGRESSIVE)"),
