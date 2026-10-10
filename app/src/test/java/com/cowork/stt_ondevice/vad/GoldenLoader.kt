@@ -40,6 +40,8 @@ data class Golden(
     // change(add)-hyungchul-2026-10-10-13:25 FSMN 정밀 비교용 추가 키(Task 9)
     val expectedMs: List<LongArray>? = null, // FSMN 만: 원본 ms 정수 구간 [start, end]
     val blocks: List<GoldenBlock>? = null, // FSMN 만: funasr_onnx 블록 호출 기록(호출 순서)
+    // change(add)-hyungchul-2026-10-10-13:43 WEBRTC·TEN_DEFAULT 정밀 비교용 추가 키(Task 10)
+    val expectedFrames: List<IntArray>? = null, // WEBRTC·TEN_DEFAULT 만: 기대 구간 프레임 인덱스 [시작, 끝(배타)]
 )
 
 // change(add)-hyungchul-2026-10-10-13:25
@@ -104,6 +106,11 @@ object GoldenLoader {
                 val a = b.jsonArray // [프레임 수, 파형 샘플 수, is_final]
                 GoldenBlock(a[0].jsonPrimitive.content.toInt(), a[1].jsonPrimitive.content.toInt(), a[2].jsonPrimitive.content.toBooleanStrict()) // 원소 변환
             },
+            // change(add)-hyungchul-2026-10-10-13:43 WEBRTC·TEN_DEFAULT 프레임 인덱스 구간(없으면 null)
+            expectedFrames = obj.arr("expectedFrames")?.map { p -> // 프레임 구간
+                val a = p.jsonArray // [시작, 끝(배타)]
+                intArrayOf(a[0].jsonPrimitive.content.toInt(), a[1].jsonPrimitive.content.toInt()) // 정수 쌍
+            },
         )
     }
 
@@ -118,6 +125,19 @@ object GoldenLoader {
     fun allFor(family: String): List<Golden> =
         fileNamesFor(family).map { load(it) } // 이름 목록을 차례로 읽음
             .onEach { assertEquals("JSON family 불일치: ${it.name}", family, it.family) } // 파일 이름과 JSON 내용의 계열이 같아야 함
+
+    // change(add)-hyungchul-2026-10-10-13:43
+    /**
+     * 목적: 한 계열 안의 특정 프리셋 구간 골든만 읽기(TEN 처럼 한 계열에 프리셋이 여럿일 때 TEN_SHERPA 와 섞이지 않게 함)
+     * 기능: 파일 이름이 "<family>_<presetId>_" 로 시작하는 JSON 을 이름순으로 모두 읽고, JSON 의 family·presetId 가 일치하는지 확인한다.
+     * 입력: family(계열 문자열, 예: "TEN"), presetId(프리셋 id, 예: "TEN_DEFAULT")
+     * 출력: 없음
+     * 리턴: Golden 목록(파일 이름순)
+     */
+    fun allForPreset(family: String, presetId: String): List<Golden> =
+        fileNamesFor("${family}_$presetId").map { load(it) } // "<family>_<presetId>_" 접두어 파일을 차례로 읽음
+            .onEach { assertEquals("JSON family 불일치: ${it.name}", family, it.family) } // 계열 일치 확인
+            .onEach { assertEquals("JSON presetId 불일치: ${it.name}", presetId, it.presetId) } // 프리셋 일치 확인
 
     /**
      * 목적: 테스트가 골든을 빠뜨리지 않았는지 대조할 기준 개수 제공
