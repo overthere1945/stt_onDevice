@@ -32,7 +32,11 @@ internal fun sha1Hex(bytes: ByteArray): String =
  */
 internal object CsvRowBuilder {
 
-    private val WHITESPACE = Regex("(?U)\\s+") // 유니코드 공백류 연속(NBSP·U+3000 포함, Python str 의 \s·split 과 동일) // change(add)-hyungchul-2026-10-11-02:14
+    // change(add)-hyungchul-2026-10-11-02:40: "(?U)\\s+" 는 안드로이드(ICU 정규식)에서 PatternSyntaxException(UNICODE_CHARACTER_CLASS 미지원)이라
+    //   기기에서 이 object 초기화가 실패해 모든 항목의 CSV 쓰기가 ExceptionInInitializerError 로 실행 전체를 멈췄다(Task 27 기기 테스트에서 발견).
+    //   JVM·ICU 공통으로 같은 결과가 나오도록 Python str.isspace() 집합을 문자 클래스로 직접 적는다:
+    //   \t \n \u000B \f \r, \u001C–\u001F(정보 구분자), 공백, \u0085(NEL), \u00A0(NBSP), \u1680, \u2000–\u200A, \u2028, \u2029, \u202F, \u205F, \u3000
+    private val WHITESPACE = Regex("[\\t\\n\\u000B\\f\\r\\u001C-\\u001F \\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+") // 유니코드 공백류 연속(Python str 의 \s·split 과 동일) // change(add)-hyungchul-2026-10-11-02:40
 
     /**
      * 목적: PC one_line 과 같은 한 줄 정리

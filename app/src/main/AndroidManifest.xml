@@ -2,6 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- change(add)-hyungchul-2026-10-11-02:40: 배치 실행 포그라운드 서비스(RunService)용 권한
+         FOREGROUND_SERVICE: 포그라운드 서비스 실행 / FOREGROUND_SERVICE_SPECIAL_USE: Android 14+ specialUse 유형(dataSync 는 Android 15+ 에서 24시간당 6시간 제한)
+         POST_NOTIFICATIONS: Android 13+ 진행·결과 알림 표시(런타임 요청은 화면 담당, 거부돼도 실행은 계속)
+         WAKE_LOCK: 실행 중 화면 꺼짐 상태에서 CPU 유지(PARTIAL_WAKE_LOCK)
+         (FOREGROUND_SERVICE·WAKE_LOCK 은 LiteRT 가 병합해 오던 권한이지만 이제 앱이 직접 쓰므로 명시 — Ruling R21) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- change(add)-hyungchul-2026-10-10-11:56: android:name=".App" 로 커스텀 Application 등록 -->
     <application
         android:name=".App"
@@ -23,6 +33,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- change(add)-hyungchul-2026-10-11-02:40: 배치 실행 포그라운드 서비스(외부 비공개).
+             foregroundServiceType="specialUse" + PROPERTY_SPECIAL_USE_FGS_SUBTYPE(용도 설명, Play 심사용 자유 문자열) -->
+        <service
+            android:name=".runner.RunService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="on-device STT benchmark batch" />
+        </service>
     </application>
 
 </manifest>

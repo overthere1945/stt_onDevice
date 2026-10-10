@@ -71,6 +71,7 @@ class RunnerHelpersTest {
         assertEquals("7", row["chars"]) // 공백 포함 7자(Python len 과 같음)
         assertEquals("3", row["words"]) // 3어절
         assertEquals("안녕 세계 끝", CsvRowBuilder.oneLine("안녕  세계 끝")) // 연속·em space 도 정리
+        assertEquals("a b c d e", CsvRowBuilder.oneLine("a\u000Bb\u001Cc\u0085d\u202Fe")) // VT·정보 구분자·NEL·좁은 NBSP 도 Python split 처럼 공백 // change(add)-hyungchul-2026-10-11-02:40
     }
 
     /** 목적: 오류 매핑 확인. 기능: LinkageError 는 격리(코드 구분), 취소·그 밖의 Error 는 null(전파). 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
