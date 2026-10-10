@@ -1,6 +1,7 @@
 // 파일명: NativeSmokeTest.kt (기기 계측 테스트)
 // 목적: 실제 기기에서 libstt_native.so(libfvad JNI)·libten_vad.so 가 로드·동작하는지, 네이티브 판정이 골든과 맞는지 검증
 //       change(add)-hyungchul-2026-10-10-15:43 + LiteRT(libLiteRt.so·liblitert_jni.so)로 yamnet.tflite 가 동작하는지, 점수가 PC 골든과 맞는지 검증
+//       change(add)-hyungchul-2026-10-10-20:57 + sherpa-onnx(libsherpa-onnx-jni.so) 오프라인·스트리밍 엔진이 카탈로그 모델로 전사하는지 검증
 // 기능: - fvadDetectsSpeechInClip: 사용자 음원 kr/customer/01.wav 앞 20 s 를 WebRTC 3 프리셋으로 처리해 구간 1개 이상, 점수 0/1 확인
 //       - tenVadReturnsProbabilities: 같은 20 s 를 TEN 2 프리셋으로 처리해 확률 개수 floor(N/256), 값 [0,1], 구간 1개 이상 확인
 //       - nativeMatchesGoldenClips: 기기에 골든 클립(WAV)·JSON 이 있으면 WEBRTC_*·TEN_* 골든마다 네이티브 결과를 골든과 비교
@@ -41,6 +42,21 @@
 //         adb push tools/models_cache/whispercpp-tiny/dl0/ggml-tiny.bin $P/models/whispercpp-tiny/ggml-tiny.bin
 //         adb push tools/models_cache/whispercpp-base/dl0/ggml-base.bin $P/models/whispercpp-base/ggml-base.bin
 //         adb push ~/workspace/stt/input_sound/en/Customer_Service/01.wav $P/input_sound/en/Customer_Service/01.wav
+//       change(add)-hyungchul-2026-10-10-20:57 sherpa-onnx 엔진 테스트(모두 4 스레드, 음원 앞 0–20 s, 결과 text·inferSec·PrepareInfo 를 logcat 에 남김):
+//       - sherpaZipformerKoTranscribes: sherpa-zipformer-ko-2024-06-24, kr → 한글 포함. sherpa 버전 1.13.8·CPU·int8 확인, 정적 onnxruntime 버전 기록
+//       - sherpaZipformerEnTranscribes: sherpa-zipformer-en-2023-06-26, en → 라틴 문자 포함
+//       - sherpaStreamingZipformerKo: sherpa-zipformer-streaming-ko-2024-06-16(0.1 s 블록 스트리밍), kr → 한글 포함
+//       - sherpaSenseVoice: sherpa-sensevoice-small-int8-2024-07-17, kr·en → rawText 는 고정 언어 태그(<|ko|>/<|en|>)로 시작하고 태그 3개 이상,
+//         text 에는 태그 없음(SenseVoiceText.clean(rawText) 와 같음)
+//       - sherpaQwen3Transcribes: sherpa-qwen3asr-0.6b-int8-2026-03-25, kr(스트림 옵션 language=Korean) → 한글 포함
+//       - sherpaOmnilingual300mV2: sherpa-omnilingual-ctc300m-v2-int8-2026-02-05, kr → 비어 있지 않음
+//       - sherpaOmnilingualOptional: ctc300m-v1·ctc1b-v2 가 기기에 있으면 kr 결과만 기록(단언은 비어 있지 않음)
+//       각 모델은 models/<id>/ 아래 카탈로그 path 그대로 있어야 하고(파일마다 SHA-256 = 카탈로그 확인), 없으면 그 테스트만 건너뜀(assume).
+//       넣는 법(installDebug 뒤): 모델마다 tools/models_cache/<id>/x0/<압축 상위 폴더>/ 의 카탈로그 파일만
+//         adb shell mkdir -p $P/models/<id>/tokenizer ; adb push <파일> $P/models/<id>/<카탈로그 path>
+//       (connectedDebugAndroidTest 는 끝나면 앱을 지우므로 큰 모델은 installDebug + installDebugAndroidTest 후
+//        adb shell am instrument -w -e class com.cowork.stt_ondevice.NativeSmokeTest com.cowork.stt_ondevice.test/androidx.test.runner.AndroidJUnitRunner
+//        로 실행하면 다시 넣지 않아도 됨)
 // change(add)-hyungchul-2026-10-10-15:26
 package com.cowork.stt_ondevice // 앱 루트 패키지(계측 테스트)
 
@@ -78,6 +94,9 @@ import com.cowork.stt_ondevice.segment.SplitMethod // change(add)-hyungchul-2026
 import kotlinx.coroutines.runBlocking // change(add)-hyungchul-2026-10-10-20:35 suspend 함수 동기 실행
 import java.util.concurrent.atomic.AtomicLong // change(add)-hyungchul-2026-10-10-20:35 스레드 간 종료 시각
 import java.util.concurrent.atomic.AtomicReference // change(add)-hyungchul-2026-10-10-20:35 스레드 간 결과 전달
+import com.cowork.stt_ondevice.engine.ChunkText // change(add)-hyungchul-2026-10-10-20:57 전사 결과
+import com.cowork.stt_ondevice.engine.sherpa.SenseVoiceText // change(add)-hyungchul-2026-10-10-20:57 SenseVoice 태그 정리
+import com.k2fsa.sherpa.onnx.VersionInfo // change(add)-hyungchul-2026-10-10-20:57 sherpa 네이티브 버전 정보
 
 // change(add)-hyungchul-2026-10-10-15:26
 /**
@@ -467,6 +486,183 @@ class NativeSmokeTest {
         if (base != null) { // 있으면 측정·기록
             val baseMs = measureAbortMs(base.first, base.second) // base 측정
             Log.i(TAG, "whispercpp-base 취소→종료 ${"%.1f".format(baseMs)} ms (1 s 기준은 tiny 에만 적용, 인코딩 중 취소 시 인코딩 종료까지 대기)") // 기록
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: 기기에 넣은 모델 폴더 찾기(파일 여러 개)
+     * 기능: models/<id>/ 아래에 스펙의 모든 파일이 있으면 각 SHA-256 이 카탈로그 값과 같은지 확인하고 (스펙, 모델 폴더)를 돌려준다.
+     * 입력: id(카탈로그 모델 id)
+     * 출력: 해시 불일치 시 AssertionError
+     * 리턴: 모든 파일이 있으면 Pair(spec, 폴더), 하나라도 없으면 null
+     */
+    private fun installedModel(id: String): Pair<ModelSpec, File>? {
+        val spec = ModelCatalog.byId(id) // 카탈로그 스펙
+        val dir = File(filesDir, "models/$id") // 카탈로그 배치(models/<id>/)
+        if (spec.files.any { !File(dir, it.path).isFile }) return null // 하나라도 없으면 없음
+        for (entry in spec.files) { // 파일마다
+            assertEquals("$id/${entry.path} SHA-256", entry.sha256, sha256(File(dir, entry.path))) // 카탈로그와 같은 파일인지
+        }
+        return spec to dir // 반환
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: sherpa 모델 하나로 여러 음원 전사(공통 절차)
+     * 기능: 모델이 없으면 건너뜀(assume) → EngineFactory → prepare(4) → PrepareInfo 확인(버전 1.13.8, CPU, 카탈로그 정밀도, 4 스레드) →
+     *       (상대 경로, 언어) 마다 앞 sec 초 전사 → 비어 있지 않음 확인, 로드·추론 시간·텍스트를 logcat 에 남긴다.
+     * 입력: id(카탈로그 모델 id), inputs(input_sound 기준 상대 경로 to 언어 코드 목록), sec(자를 길이, 기본 20 s)
+     * 출력: 실패 시 AssertionError
+     * 리턴: 입력 순서대로의 ChunkText 목록
+     */
+    private fun sherpaRun(id: String, vararg inputs: Pair<String, String>, sec: Int = 20): List<ChunkText> {
+        val installed = installedModel(id) // 기기 모델
+        assumeTrue("기기에 $id 모델 없음 — 건너뜀", installed != null) // 없으면 건너뜀
+        val (spec, dir) = installed!! // 스펙·폴더
+        EngineFactory.create(spec, dir).use { engine -> // 엔진 생성
+            val info = runBlocking { engine.prepare(4) } // 모델 로드
+            Log.i(TAG, "$id prepare: $info") // 준비 결과 기록
+            assertEquals("1.13.8", info.runtimeVersion) // sherpa 릴리스 버전
+            assertEquals("CPU", info.backend) // CPU 전용
+            assertEquals(spec.precision, info.precision) // 카탈로그 정밀도
+            assertEquals(4, info.threads) // 스레드 수
+            return inputs.map { (rel, lang) -> // 음원마다
+                val r = runBlocking { engine.transcribe(chunkOf(rel, sec), lang) } // 0–sec 초 전사
+                Log.i(TAG, "$id $lang 0–$sec s: inferSec=${"%.3f".format(r.inferSec)}, text=${r.text}") // 정리본 기록
+                Log.i(TAG, "$id $lang 0–$sec s rawText=${r.rawText}") // 원문 기록
+                assertTrue("$id $lang 전사가 비어 있음", r.text.isNotBlank()) // 비어 있지 않음
+                assertEquals(null, r.detectedLang) // 언어 고정/감지 정보 없음
+                r // 결과
+            }
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /** 한글 음절이 하나라도 있는지. */
+    private fun hasHangul(s: String) = s.any { it in '\uAC00'..'\uD7A3' } // 한글 음절 범위
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /** 라틴 문자가 하나라도 있는지. */
+    private fun hasLatin(s: String) = s.any { it in 'a'..'z' || it in 'A'..'Z' } // 영문자
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: sherpa 오프라인 zipformer(한국어)가 기기에서 전사하는지 확인
+     * 기능: sherpaRun(kr 0–20 s) → 한글 포함, rawText 공백 정리 = text. sherpa 에 정적 링크된 onnxruntime 버전도 기록한다.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError, 모델 없으면 건너뜀)
+     * 리턴: 없음
+     */
+    @Test
+    fun sherpaZipformerKoTranscribes() {
+        val (ko) = sherpaRun("sherpa-zipformer-ko-2024-06-24", "kr/customer/01.wav" to "ko") // 한국어 전사
+        assertTrue("한글이 없음: ${ko.text}", hasHangul(ko.text)) // 한글 포함
+        assertEquals(ko.rawText.trim().replace(Regex("\\s+"), " "), ko.text) // text = 원문 공백 정리
+        Log.i(TAG, "sherpa VersionInfo: version=${VersionInfo.version}, gitSha1=${VersionInfo.gitSha1}, onnxruntime=${VersionInfo.onnxruntimeVersion}") // 버전 기록
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: sherpa 오프라인 zipformer(영어)가 기기에서 전사하는지 확인
+     * 기능: sherpaRun(en 0–20 s) → 라틴 문자 포함. 영어 음원이 없으면 실패(adb push 안내).
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError, 모델 없으면 건너뜀)
+     * 리턴: 없음
+     */
+    @Test
+    fun sherpaZipformerEnTranscribes() {
+        val (en) = sherpaRun("sherpa-zipformer-en-2023-06-26", "en/Customer_Service/01.wav" to "en") // 영어 전사
+        assertTrue("라틴 문자가 없음: ${en.text}", hasLatin(en.text)) // 영문 포함
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: sherpa 스트리밍 zipformer(한국어)가 0.1 s 블록 스트리밍으로 전사하는지 확인
+     * 기능: sherpaRun(kr 0–20 s) → 한글 포함.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError, 모델 없으면 건너뜀)
+     * 리턴: 없음
+     */
+    @Test
+    fun sherpaStreamingZipformerKo() {
+        val (ko) = sherpaRun("sherpa-zipformer-streaming-ko-2024-06-16", "kr/customer/01.wav" to "ko") // 스트리밍 전사
+        assertTrue("한글이 없음: ${ko.text}", hasHangul(ko.text)) // 한글 포함
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: SenseVoice 가 언어 고정(ko/en)으로 전사하고 원문 태그를 보존하는지 확인
+     * 기능: 같은 엔진으로 kr → en 순서로 전사(두 번째에 setConfig 로 언어 변경) →
+     *       rawText 는 고정 언어 태그로 시작하고 "<|" 태그가 3개 이상(lang/emotion/event), text 에는 태그가 없고 clean(rawText) 와 같음.
+     *       ko 는 한글, en 은 라틴 문자 포함.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError, 모델 없으면 건너뜀)
+     * 리턴: 없음
+     */
+    @Test
+    fun sherpaSenseVoice() {
+        val (ko, en) = sherpaRun( // 두 언어 전사
+            "sherpa-sensevoice-small-int8-2024-07-17",
+            "kr/customer/01.wav" to "ko", "en/Customer_Service/01.wav" to "en",
+        )
+        for ((r, tag) in listOf(ko to "<|ko|>", en to "<|en|>")) { // 언어별 확인
+            assertTrue("rawText 가 $tag 로 시작하지 않음: ${r.rawText}", r.rawText.startsWith(tag)) // 고정 언어 태그
+            assertTrue("rawText 태그가 3개 미만: ${r.rawText}", Regex("""<\|[^|]*\|>""").findAll(r.rawText).count() >= 3) // lang/emotion/event
+            assertTrue("text 에 태그가 남음: ${r.text}", !r.text.contains("<|")) // 정리본에 태그 없음
+            assertEquals(SenseVoiceText.clean(r.rawText), r.text) // 정리 규칙 일치
+        }
+        assertTrue("한글이 없음: ${ko.text}", hasHangul(ko.text)) // 한국어
+        assertTrue("라틴 문자가 없음: ${en.text}", hasLatin(en.text)) // 영어
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: Qwen3-ASR 0.6B 가 한국어 고정(language=Korean)으로 전사하는지 확인
+     * 기능: sherpaRun(kr 0–20 s) → 한글 포함. 이어서 최대 chunk 길이(maxChunkSec 30 s)로 한 번 더 전사해
+     *       KV 캐시 1024·생성 512 설정에서 결과가 나오는지 확인하고 시간·텍스트를 기록한다(잘림 여부는 텍스트 끝을 보고 판단).
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError, 모델 없으면 건너뜀)
+     * 리턴: 없음
+     */
+    @Test
+    fun sherpaQwen3Transcribes() {
+        val (ko) = sherpaRun("sherpa-qwen3asr-0.6b-int8-2026-03-25", "kr/customer/01.wav" to "ko") // 한국어 전사
+        assertTrue("한글이 없음: ${ko.text}", hasHangul(ko.text)) // 한글 포함
+        val (ko30) = sherpaRun("sherpa-qwen3asr-0.6b-int8-2026-03-25", "kr/customer/01.wav" to "ko", sec = 30) // 30 s chunk
+        assertTrue("30 s 전사에 한글이 없음: ${ko30.text}", hasHangul(ko30.text)) // 한글 포함
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: Omnilingual CTC 300M v2 가 한국어 음원을 전사하는지 확인
+     * 기능: sherpaRun(kr 0–20 s) → 비어 있지 않음(언어 지정 필드가 없는 모델이라 문자 종류는 단언하지 않고 기록만).
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError, 모델 없으면 건너뜀)
+     * 리턴: 없음
+     */
+    @Test
+    fun sherpaOmnilingual300mV2() {
+        val (ko) = sherpaRun("sherpa-omnilingual-ctc300m-v2-int8-2026-02-05", "kr/customer/01.wav" to "ko") // 한국어 전사
+        Log.i(TAG, "omnilingual 300M v2 한글 포함=${hasHangul(ko.text)}") // 문자 종류 기록
+    }
+
+    // change(add)-hyungchul-2026-10-10-20:57
+    /**
+     * 목적: 선택 모델(Omnilingual 300M v1, 1B v2) 기록
+     * 기능: 기기에 있는 것만 kr 0–20 s 전사해 결과를 남긴다(없으면 기록만). 둘 다 없으면 건너뜀(assume).
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun sherpaOmnilingualOptional() {
+        val ids = listOf("sherpa-omnilingual-ctc300m-v1-int8-2025-11-12", "sherpa-omnilingual-ctc1b-v2-int8-2026-02-05") // 선택 모델
+        val present = ids.filter { File(filesDir, "models/$it").isDirectory } // 기기에 폴더가 있는 것
+        assumeTrue("선택 Omnilingual 모델이 기기에 없음 — 건너뜀", present.isNotEmpty()) // 없으면 건너뜀
+        for (id in present) { // 있는 것마다
+            val (ko) = sherpaRun(id, "kr/customer/01.wav" to "ko") // 한국어 전사(파일이 덜 있으면 assume 로 건너뜀)
+            Log.i(TAG, "$id 한글 포함=${hasHangul(ko.text)}") // 문자 종류 기록
         }
     }
 

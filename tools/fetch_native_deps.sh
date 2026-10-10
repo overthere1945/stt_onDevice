@@ -5,7 +5,8 @@
 #          change(add)-hyungchul-2026-10-10-20:35 + whisper.cpp git 서브모듈(태그 v1.9.5) 초기화
 #       2) TEN VAD(TEN-framework/ten-vad, 커밋 고정)의 Android arm64-v8a 공식 빌드 libten_vad.so, 헤더 ten_vad.h, LICENSE
 #          → app/src/main/cpp/third_party/ten-vad/{lib/arm64-v8a, include, .}
-#       3) sherpa-onnx v1.13.8 sherpa-onnx-static-link-onnxruntime-1.13.8.aar → app/libs/ (Task 21 에서 사용, 지금은 의존성에 넣지 않음)
+#       3) sherpa-onnx v1.13.8 sherpa-onnx-static-link-onnxruntime-1.13.8.aar → app/libs/
+#          change(add)-hyungchul-2026-10-10-20:57 Task 21: app/build.gradle.kts 의 ExtractSherpaJniTask 가 이 AAR 에서 arm64 libsherpa-onnx-jni.so 만 꺼내 쓴다(classes.jar 는 안 씀)
 #       - 이미 있고 해시가 맞으면 다시 받지 않는다. 받은 파일은 매번 새 빈 임시 폴더에 두고 해시가 맞을 때만 목적지로 옮긴다.
 #       - 해시가 다르면 아무것도 덮어쓰지 않고 exit 1(다른 버전으로 조용히 대체하지 않음).
 # 사용법: tools/fetch_native_deps.sh   (저장소 어디에서 실행해도 됨, curl·sha256sum·git 필요)

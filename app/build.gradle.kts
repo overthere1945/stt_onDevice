@@ -4,6 +4,12 @@
 //       change(add)-hyungchul-2026-10-10-15:26 CMake 네이티브 빌드(NDK 30.0.16248370, CMake 4.1.2, c++_static)
 //       change(add)-hyungchul-2026-10-10-15:43 LiteRT(Yamnet VAD) 의존성
 //       change(add)-hyungchul-2026-10-10-20:18 commons-compress(tar.bz2·zip 해제) 의존성
+//       change(add)-hyungchul-2026-10-10-20:57 sherpa-onnx v1.13.8 AAR 에서 arm64 JNI(libsherpa-onnx-jni.so)만 꺼내 APK 에 넣는 작업(ExtractSherpaJniTask)
+//         — Kotlin API 는 소스(app/src/main/java/com/k2fsa/sherpa/onnx/)로 복사해 쓰므로 AAR 의 classes.jar 는 쓰지 않는다
+//           (둘 다 넣으면 같은 클래스가 두 번 정의되어 R8 이 "Type ... is defined multiple times" 로 실패, 보고서 참조)
+
+import java.security.MessageDigest // change(add)-hyungchul-2026-10-10-20:57 AAR SHA-256 검사
+import javax.inject.Inject // change(add)-hyungchul-2026-10-10-20:57 Gradle 서비스 주입
 
 plugins {
     alias(libs.plugins.android.application)
@@ -113,4 +119,81 @@ dependencies {
 // 앱 컴파일·APK 패키징 클래스패스에는 영향 없음(이름이 "UnitTestRuntimeClasspath" 로 끝나는 설정에만 적용).
 configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
     exclude(group = "com.microsoft.onnxruntime", module = "onnxruntime-android") // 안드로이드 AAR 제외
+}
+
+// change(add)-hyungchul-2026-10-10-20:57
+/**
+ * 목적: sherpa-onnx AAR 에서 arm64-v8a JNI 라이브러리만 꺼내기
+ * 기능: AAR 파일의 SHA-256 이 고정값과 같은지 확인한 뒤(다르면 빌드 실패 — 다른 버전으로 조용히 대체하지 않음),
+ *       jni/arm64-v8a/libsherpa-onnx-jni.so 하나만 outputDir/arm64-v8a/ 에 풀어 놓는다(그 밖 ABI·classes.jar 는 무시).
+ *       이 AAR 은 onnxruntime 을 정적 링크했으므로 arm64 용 libonnxruntime.so 를 따로 갖고 있지 않다(APK 의 libonnxruntime.so 는 onnxruntime-android 것 1개).
+ * 입력: aarFile(AAR 경로), expectedSha256(기대 해시), outputDir(jniLibs 형식 출력 폴더)
+ * 출력: 해시 불일치·.so 없음 → GradleException
+ * 리턴: 없음
+ */
+abstract class ExtractSherpaJniTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val aarFile: RegularFileProperty // 입력 AAR(tools/fetch_native_deps.sh 가 받아 둠)
+
+    @get:Input
+    abstract val expectedSha256: Property<String> // AAR 기대 SHA-256
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty // 출력 폴더(<outputDir>/arm64-v8a/libsherpa-onnx-jni.so)
+
+    @get:Inject
+    abstract val archives: ArchiveOperations // zipTree 제공 서비스
+
+    @get:Inject
+    abstract val fileOps: FileSystemOperations // sync 제공 서비스
+
+    /**
+     * 목적: 해시 검사 후 JNI .so 추출
+     * 기능: AAR 을 1 MiB 단위로 읽어 SHA-256 을 계산·비교하고, 출력 폴더를 jni/arm64-v8a/libsherpa-onnx-jni.so 만 든 상태로 동기화한다.
+     * 입력: 없음(속성 사용)
+     * 출력: 실패 시 GradleException
+     * 리턴: 없음
+     */
+    @TaskAction
+    fun extract() {
+        val aar = aarFile.get().asFile // AAR 파일
+        val md = MessageDigest.getInstance("SHA-256") // 해시기
+        aar.inputStream().use { input -> // 파일 열기
+            val buf = ByteArray(1 shl 20) // 1 MiB 버퍼
+            while (true) { // 끝까지
+                val n = input.read(buf) // 읽기
+                if (n < 0) break // 파일 끝
+                md.update(buf, 0, n) // 해시 갱신
+            }
+        }
+        val got = md.digest().joinToString("") { "%02x".format(it) } // 실제 해시(16진)
+        if (got != expectedSha256.get()) { // 불일치
+            throw GradleException("sherpa-onnx AAR SHA-256 불일치: ${aar.path} 기대 ${expectedSha256.get()} 실제 $got (tools/fetch_native_deps.sh 로 다시 받기)") // 빌드 실패
+        }
+        fileOps.sync { // 출력 폴더를 아래 내용으로 맞춤(이전 결과 정리)
+            from(archives.zipTree(aar)) { // AAR(zip) 내용
+                include("jni/arm64-v8a/libsherpa-onnx-jni.so") // arm64 JNI 하나만
+                eachFile { relativePath = RelativePath(true, "arm64-v8a", name) } // jni/arm64-v8a/x.so → arm64-v8a/x.so
+            }
+            into(outputDir) // 출력 폴더
+            includeEmptyDirs = false // 빈 jni/ 폴더 만들지 않음
+        }
+        val so = outputDir.get().file("arm64-v8a/libsherpa-onnx-jni.so").asFile // 추출 결과
+        if (!so.isFile) throw GradleException("AAR 에 jni/arm64-v8a/libsherpa-onnx-jni.so 가 없음: ${aar.path}") // 누락 시 실패
+    }
+}
+
+// change(add)-hyungchul-2026-10-10-20:57: sherpa-onnx v1.13.8 AAR(SHA-256 은 tools/fetch_native_deps.sh 의 SHERPA_SHA 와 같은 값)에서 JNI 만 추출
+val extractSherpaJni = tasks.register<ExtractSherpaJniTask>("extractSherpaJni") {
+    aarFile.set(layout.projectDirectory.file("libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar")) // 입력 AAR
+    expectedSha256.set("b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471") // AAR SHA-256
+    outputDir.set(layout.buildDirectory.dir("generated/sherpaJni")) // 출력(빌드 폴더, git 밖)
+}
+
+// change(add)-hyungchul-2026-10-10-20:57: 모든 변형(debug/release)의 jniLibs 소스에 추출 폴더를 생성 소스로 등록(작업 의존성 자동 연결)
+androidComponents {
+    onVariants { variant ->
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(extractSherpaJni, ExtractSherpaJniTask::outputDir) // 추출 결과를 jniLibs 로
+    }
 }

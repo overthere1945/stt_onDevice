@@ -54,7 +54,25 @@ CMake 4.1.2 가 폐기 경고를 낸다. 소스 목록은 같다(헤더 제외 .
 알려진 동작: v1.9.5 의 `abort_callback` 은 인코더 그래프 전체(conv·encoder·cross) 계산 후와 디코더 호출마다만 확인된다.
 인코딩 도중 취소하면 그 인코딩이 끝날 때까지 기다린다(소스를 고치지 않으므로 그대로 둠).
 
-## 4. 다시 받기
+## 4. sherpa-onnx (`app/libs/`, gitignore — 저장소에 없음) — change(add)-hyungchul-2026-10-10-20:57
+
+| 항목 | 값 |
+|---|---|
+| 출처 | https://github.com/k2-fsa/sherpa-onnx , 릴리스 `v1.13.8` (태그 커밋 `11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf`) |
+| 파일 | `app/libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar` — https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-static-link-onnxruntime-1.13.8.aar |
+| SHA-256 | AAR `b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471`, 안의 `jni/arm64-v8a/libsherpa-onnx-jni.so` `b4a53d915c19cb6d09b1cdc9a8084be54419b647aab9097ffdfb46f30c3c4dd8` |
+| 라이선스 | Apache-2.0 (https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/LICENSE). 정적 링크된 onnxruntime 1.28.2(`.so` 안 문자열로 확인)는 MIT |
+| 받는 방법 | `tools/fetch_native_deps.sh` (해시 검사) |
+| 사용 | `app/build.gradle.kts` 의 `ExtractSherpaJniTask` 가 AAR 해시를 다시 확인하고 **arm64-v8a `libsherpa-onnx-jni.so` 하나만** `build/generated/sherpaJni/` 에 풀어 jniLibs 로 등록 |
+
+- Kotlin API 는 AAR 의 `classes.jar` 가 아니라 원문 복사 소스(`app/src/main/java/com/k2fsa/sherpa/onnx/`, 출처·해시는 그 폴더 `README_한국어.md`)를 쓴다.
+  AAR 을 통째로 의존성에 넣으면 같은 클래스가 두 번 정의되어 release R8 이 실패하고, AAR 의 x86 `libonnxruntime.so` 가
+  onnxruntime-android 의 x86 `.so` 와 `mergeDebugNativeLibs` 에서 충돌한다(둘 다 실제 빌드로 확인). 그래서 JNI 만 꺼낸다(`pickFirst` 안 씀).
+- `libsherpa-onnx-jni.so` 는 onnxruntime 을 정적 링크했다: NEEDED 는 `libandroid·liblog·libm·libdl·libc` 뿐이고 `Ort*` 심볼을 내보내지 않는다.
+  그래서 APK 의 `lib/arm64-v8a/libonnxruntime.so` 는 onnxruntime-android 1.30.0 의 것 1개뿐이다(VAD 용, sherpa 와 별개).
+- LOAD 정렬은 이미 0x4000(16 KB)이다(`tools/check_16kb.sh` 통과).
+
+## 5. 다시 받기
 
 ```bash
 tools/fetch_native_deps.sh   # 서브모듈(libfvad·whisper.cpp) 초기화 + TEN 3개 파일 + sherpa-onnx AAR(app/libs/) SHA-256 검사
