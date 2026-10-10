@@ -4,6 +4,7 @@
 //       change(add)-hyungchul-2026-10-10-15:26 CMake 네이티브 빌드(NDK 30.0.16248370, CMake 4.1.2, c++_static)
 //       change(add)-hyungchul-2026-10-10-15:43 LiteRT(Yamnet VAD) 의존성
 //       change(add)-hyungchul-2026-10-10-20:18 commons-compress(tar.bz2·zip 해제) 의존성
+//       change(add)-hyungchul-2026-10-11-03:09 Compose material-icons-core(하단 탭 아이콘) 의존성 — Task 28
 //       change(add)-hyungchul-2026-10-10-21:41 Vosk(vosk-android 0.3.75 + JNA 5.18.1 AAR) 의존성 — Task 22
 //       change(add)-hyungchul-2026-10-10-20:57 sherpa-onnx v1.13.8 AAR 에서 arm64 JNI(libsherpa-onnx-jni.so)만 꺼내 APK 에 넣는 작업(ExtractSherpaJniTask)
 //         — Kotlin API 는 소스(app/src/main/java/com/k2fsa/sherpa/onnx/)로 복사해 쓰므로 AAR 의 classes.jar 는 쓰지 않는다
@@ -90,6 +91,8 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
+    // change(add)-hyungchul-2026-10-11-03:09: 하단 탭 아이콘(Icons.Default.*, 기본 모음)
+    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     // change(add)-hyungchul-2026-10-10-11:56: Activity / Lifecycle / Navigation 의 Compose 연동

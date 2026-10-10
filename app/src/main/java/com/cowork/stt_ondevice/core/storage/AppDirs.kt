@@ -1,6 +1,6 @@
 // 파일명: AppDirs.kt
 // 목적: 앱 전용 외부 저장소 아래 작업 폴더 경로를 한곳에서 관리
-// 기능: input_sound / models / output_stt / tmp 경로와 실행(run)별 출력 폴더 경로를 제공한다.
+// 기능: input_sound / models / output_stt / tmp / import(change(add)-hyungchul-2026-10-11-03:09 adb push 모델 가져오기 폴더) 경로와 실행(run)별 출력 폴더 경로를 제공한다.
 package com.cowork.stt_ondevice.core.storage // 저장소 패키지
 
 import android.content.Context // 안드로이드 컨텍스트
@@ -18,6 +18,7 @@ class AppDirs(val root: File) {
     val models: File = File(root, "models") // 모델 폴더
     val output: File = File(root, "output_stt") // 결과 출력 폴더
     val tmp: File = File(root, "tmp") // 임시 폴더
+    val importDir: File = File(root, "import") // change(add)-hyungchul-2026-10-11-03:09 모델 import 폴더(adb push 대상: import/<모델id>/)
 
     /**
      * 목적: 실행(run)별 출력 폴더 경로 계산

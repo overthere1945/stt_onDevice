@@ -49,7 +49,8 @@ app/libs/*.aar
 app/src/main/jniLibs/
 app/src/main/cpp/third_party/ten-vad/
 # 모델 파일은 저장소에 넣지 않음
-models/
+# change(add)-hyungchul-2026-10-11-03:09: 'models/' 는 소스 패키지 ui/models/ 까지 무시해 저장소 루트 models/ 만 무시하도록 한정(Task 28)
+/models/
 *.onnx
 *.tflite
 *.bin
