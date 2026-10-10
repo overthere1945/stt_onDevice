@@ -1,0 +1,27 @@
+# 파일명: requirements.txt
+# 목적: 골든 데이터 생성 도구(tools/golden) Python 의존성
+# 기능: python3 -m venv tools/golden/.venv && tools/golden/.venv/bin/pip install -r tools/golden/requirements.txt
+#       실제 설치된 정확한 버전은 requirements.lock.txt 에 고정한다.
+# change(add)-hyungchul-2026-10-10-12:19
+# torch 는 CPU 전용 휠(용량 작음)을 쓴다
+--extra-index-url https://download.pytorch.org/whl/cpu
+# pyannote.audio 3.4.0 은 torchaudio.AudioMetaData 를 쓰므로 torchaudio 2.9 이상(제거됨)과 함께 쓸 수 없다 → 2.8 고정
+torch==2.8.0
+torchaudio==2.8.0
+# Silero VAD 공식 패키지(get_speech_timestamps 원본)
+silero-vad==6.2.3
+# ONNX 추론
+onnxruntime
+numpy
+soundfile
+PyYAML
+# FunASR FSMN-VAD ONNX 실행기(Fsmn_vad, WavFrontend, E2EVadModel)
+funasr-onnx
+# py-webrtcvad 휠 배포판
+webrtcvad-wheels
+# Kaldi 호환 fbank
+kaldi-native-fbank
+# pyannote Inference/Binarize/VoiceActivityDetection 원본 코드
+pyannote.audio==3.4.0
+# TEN VAD 공식 Python 패키지(공식 repo 의 pip 설치 방법, 커밋 고정). Linux 에서는 libc++1 필요(README 참고)
+ten_vad @ git+https://github.com/TEN-framework/ten-vad.git@d68ab71c8d5fbd8f98e97ae7c9986af76b5d72b1

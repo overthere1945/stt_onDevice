@@ -53,3 +53,9 @@ models/
 *.onnx
 *.tflite
 *.bin
+# --- 골든 데이터 도구 (change(add)-hyungchul-2026-10-10-12:19) ---
+# 골든 도구 가상환경·다운로드 모델(위 .venv/, models/ 규칙과 중복이지만 명시)
+tools/golden/.venv/
+tools/golden/models/
+# 골든 테스트 음원 클립(사용자 음원 파생물, 공개 저장소에 넣지 않음)
+app/src/test/resources/golden/audio/
