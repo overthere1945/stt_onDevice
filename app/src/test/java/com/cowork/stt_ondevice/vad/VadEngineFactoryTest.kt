@@ -75,7 +75,7 @@ class VadEngineFactoryTest {
 
     /**
      * 목적: 폴더 경로가 파일이거나 존재하지 않을 때 예외
-     * 기능: 존재하지 않는 폴더를 주면 FSMN 도 VadUnavailableException.
+     * 기능: 존재하지 않는 경로와 폴더가 아닌 일반 파일 경로를 주면 폴더 계열(FSMN 등)·파일 계열(SILERO) 모두 VadUnavailableException.
      * 입력: 없음
      * 출력: 없음
      * 리턴: 없음
@@ -85,6 +85,12 @@ class VadEngineFactoryTest {
         val factory = VadEngineFactory { File(tmp.root, "nope") } // 없는 폴더
         for (family in listOf(VadFamily.FSMN, VadFamily.FIRERED, VadFamily.MARBLENET, VadFamily.SILERO)) { // 폴더 계열 포함
             assertThrows(VadUnavailableException::class.java) { factory.create(family) } // 예외 확인
+        }
+        val plainFile = tmp.newFile("not_a_dir") // 폴더가 아닌 일반 파일
+        val fileFactory = VadEngineFactory { plainFile } // 파일 경로를 모델 폴더로 반환
+        for (family in listOf(VadFamily.FSMN, VadFamily.FIRERED, VadFamily.MARBLENET, VadFamily.SILERO)) { // 폴더 계열 + 파일 계열
+            val e = assertThrows(VadUnavailableException::class.java) { fileFactory.create(family) } // 예외 확인
+            assertEquals(family, e.family) // 계열 보존
         }
     }
 
