@@ -18,6 +18,31 @@ JSON 은 주석을 달 수 없으므로 이 문서와 위 문서가 설명을 �
 | `fsmn_am.mvn` | 1 | FSMN CMVN 파일(아래) |
 | `audio/*.wav` | 4 | 골든 클립(사용자 음원 파생물, **gitignore — 저장소에 없음**). `tools/golden/make_clips.py` 로 재생성 |
 
+### FireRedVAD·MarbleNet 골든 (change(add)-hyungchul-2026-10-10-14:25, Task 13)
+
+생성 스크립트·알고리즘·전처리·ONNX 입출력 설명은 **[tools/export/README_한국어.md](../../../../../tools/export/README_한국어.md)** 를 본다(6~8절).
+
+| 파일 | 개수 | 내용 |
+|---|---|---|
+| `FIRERED_FIRERED_OFFLINE_<clipStem>.json`, `FIRERED_FIRERED_STREAM_<clipStem>.json` | 8 | 공식 fireredvad(commit c30ec49) `detect()`/`detect_full()` 구간 + PyTorch 확률(hop 0.010) + `expectedFrames`·`stages`/`events` |
+| `FIRERED_FIRERED_{OFFLINE,STREAM}_synthetic_firered_long.json` | 2 | 손작성 확률(음원 없음, `synthetic: true`)로 max_speech(2000 프레임) 분할 분기 골든 |
+| `MARBLENET_MARBLENET_NEMO_<clipStem>.json` | 4 | NeMo 3.0.0 `vad_utils` 후처리 구간(float32 초) + NeMo fp32 확률(hop 0.02) + `binarized`·`filtered`·`officialFileRoute` |
+| `scores_FIRERED_<clipStem>.json` / `scores_FIRERED_STREAM_<clipStem>.json` / `scores_MARBLENET_<clipStem>.json` | 12 | 변환한 ONNX(오프라인 / 스트리밍 / MarbleNet) 확률(모델 추론 정합용, `expected: null`) |
+| `firered_fbank_<clipStem>.json`, `firered_fbank_cmvn_<clipStem>.json` | 8 | FireRed fbank(povey 창, int16 입력) 앞 50 프레임 × 80, CMVN 적용 후(모델 입력) 앞 50 프레임 |
+| `firered_cmvn.json`, `firered_cmvn.ark` | 2 | FireRed CMVN 해석값(mean·inverse std, float64) / 원본 Kaldi 바이너리 행렬(아래) |
+| `marblenet_mel_<clipStem>.json` | 4 | NeMo log-mel(프레임×80) 앞 50 프레임 + 끝 4 프레임(`tailFrames`) |
+| `marblenet_preprocessor.json` | 1 | NeMo 전처리 설정 원문·실효값·hann 창 400 값·mel 필터뱅크 80×257 (`expected: null`) |
+
+주의: MarbleNet 의 마지막 출력 프레임은 패딩 영역이며(확률 0.45888966), NeMo 동작 그대로라 합성 클립에도 끝 구간 `[7.80, 8.20]` 이 있다
+(tools/export README 7.4 절).
+
+## firered_cmvn.ark 출처·라이선스
+
+- 출처 URL: https://huggingface.co/FireRedTeam/FireRedVAD/resolve/7990aaccc6b7aec1e527743bd30201f2c4a03b8c/VAD/cmvn.ark (`Stream-VAD/cmvn.ark` 와 동일 파일)
+- SHA-256: `c87f6f13edf0f0ec7535ddfc9cc3387d9268cb234b70182d566c5e2edf3ca473` (원본 그대로 복사, 수정 없음)
+- 라이선스: **Apache-2.0** (FireRedVAD, Xiaohongshu FireRedTeam). 재배포 시 출처·라이선스 고지를 유지한다.
+- 형식: Kaldi 바이너리 double 행렬 2×81(0행 = 특징별 합 + count, 1행 = 제곱합 + 0). 용도: Kotlin FireRed CMVN 파서·적용 단위 테스트 입력.
+
 클립: `kr_customer_01_20s_plus77`(320077 샘플), `en_customer_01_20s_plus77`(320077), `synth_silence_noise_8s_plus123`(128123),
 `kr_customer_01_70s_plus55`(1120055). 길이는 일부러 hop 배수가 아니다.
 
