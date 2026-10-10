@@ -3,12 +3,15 @@
 // 기능: 카탈로그 각 모델의 설치 상태를 ModelStore 에서 읽어 rows 로 노출하고, 오래 걸리는 작업은 viewModelScope + IO 디스패처에서 모델 id 당 1개만 실행한다.
 //       작업이 끝나면(성공·실패·취소) 상태를 다시 읽고, 실패는 한국어 메시지(messages)로 알린다. 가져오기는 adb push 폴더(files/import/<모델id>/)를 쓴다.
 //       SAF(Uri) 가져오기는 Task 30 에서 이 클래스의 importFrom(id, source: File) 앞단에 Uri → 임시 파일/폴더 복사를 붙여 추가한다(확장 지점).
+//       change(add)-hyungchul-2026-10-11-03:59 importFromSaf(id, copy): import/<id>/saf_<시각>/ 임시 폴더로 복사(화면이 SafBridge.importModel 로 만든 함수) → resolveImportSource 와 같은 규칙으로 원본 결정
+//       → installer.importFrom → 임시 폴더 삭제(성공·실패·취소 모두, 사용자의 원본은 SAF 쪽에 그대로 있음).
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
 import androidx.lifecycle.ViewModel // 뷰모델 기본 클래스
 import androidx.lifecycle.ViewModelProvider // 뷰모델 팩토리 인터페이스
 import androidx.lifecycle.viewModelScope // 뷰모델 코루틴 범위
 import com.cowork.stt_ondevice.App // 앱 전역 객체
+import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 상태
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
 import com.cowork.stt_ondevice.model.ModelCatalog // 카탈로그
@@ -32,6 +35,8 @@ import kotlinx.coroutines.launch // 코루틴 시작
 import kotlinx.coroutines.withContext // 컨텍스트 전환
 import java.io.File // 파일
 import java.io.FileNotFoundException // 파일 없음
+import java.time.LocalDateTime // change(add)-hyungchul-2026-10-11-03:59 임시 폴더 이름 시각
+import java.time.format.DateTimeFormatter // change(add)-hyungchul-2026-10-11-03:59 시각 서식
 import java.util.concurrent.ConcurrentHashMap // 스레드 안전 맵
 
 // change(add)-hyungchul-2026-10-11-03:09
@@ -283,15 +288,40 @@ class ModelsViewModel(
         installer.importFrom(spec, source) // 설치기에 위임
     }
 
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: SAF 로 고른 파일·폴더에서 가져오기
+     * 기능: 안내 대화상자를 닫고 모델당 1개 작업으로: import/<id>/saf_<yyyyMMdd_HHmmss>/ 를 만들어 copy 에 넘기고(SAF → 앱 폴더 복사),
+     *       그 안에서 resolveImportSource 규칙(압축 1개 / 선언 파일이 든 하위 폴더 1개 / 폴더 자체)으로 원본을 정해 installer.importFrom 을 부른다.
+     *       끝나면(성공·실패·취소) 임시 폴더를 지운다(앱이 만든 복사본일 뿐, 사용자의 원본은 그대로). 복사한 파일이 없으면 한국어 오류.
+     * 입력: id(모델 id), copy(임시 폴더를 받아 SAF 내용을 복사하는 함수)
+     * 출력: 실패는 "가져오기 실패 — …" 메시지
+     * 리턴: 없음
+     */
+    fun importFromSaf(id: String, copy: suspend (File) -> SafCopyResult) {
+        dismissImportPrompt() // 대화상자 닫기
+        runJob(id, "가져오기", "가져오기와 검증을 마쳤습니다", InstallState.VERIFYING) { spec ->
+            val stage = File(importFolderOf(spec), "saf_" + LocalDateTime.now().format(STAGE_FORMAT)) // 임시 폴더
+            try {
+                if (!stage.isDirectory && !stage.mkdirs()) throw IllegalStateException("임시 폴더를 만들 수 없습니다(${stage.path})") // 폴더 생성
+                post("${spec.displayName}: 선택한 위치에서 앱 폴더로 복사하는 중입니다(큰 모델은 시간이 걸립니다)") // 진행 안내
+                val r = copy(stage) // SAF → 임시 폴더
+                if (r.copied == 0) throw FileNotFoundException("복사된 파일이 없습니다(선택한 위치가 비었거나 같은 이름 파일만 있음)") // 빈 선택
+                installer.importFrom(spec, resolveImportSource(spec, stage)) // 원본 해석 후 설치
+            } finally {
+                stage.deleteRecursively() // 임시 복사본 정리
+            }
+        }
+    }
+
     /**
      * 목적: import/<id> 안에서 설치기에 넘길 원본 결정
      * 기능: 폴더가 없거나 비면 한국어 오류. 항목이 압축 파일(.tar.bz2/.tbz2/.tbz/.zip) 1개면 그 파일, 폴더 1개뿐이고 선언 파일이 바로 그 안에 있으면 그 폴더(adb push 로 폴더째 넣은 경우), 그 밖이면 import/<id> 자체.
-     * 입력: spec(대상 모델)
+     * 입력: spec(대상 모델), folder(change(add)-hyungchul-2026-10-11-03:59 해석할 폴더 — 기본 import/<id>, SAF 는 그 아래 임시 폴더)
      * 출력: 폴더 없음/비어 있음이면 FileNotFoundException(경로 포함 한국어 메시지)
      * 리턴: 원본 File
      */
-    fun resolveImportSource(spec: ModelSpec): File {
-        val folder = importFolderOf(spec) // import/<id>
+    fun resolveImportSource(spec: ModelSpec, folder: File = importFolderOf(spec)): File { // change(add)-hyungchul-2026-10-11-03:59 폴더 인자 추가
         if (!folder.isDirectory) throw FileNotFoundException("가져올 폴더가 없습니다. 파일을 이 폴더에 넣어 주세요: ${folder.path}") // 폴더 없음
         val entries = folder.listFiles()?.sortedBy { it.name } ?: emptyList() // 항목 목록
         if (entries.isEmpty()) throw FileNotFoundException("가져올 폴더가 비어 있습니다. 파일을 이 폴더에 넣어 주세요: ${folder.path}") // 비어 있음
@@ -417,6 +447,7 @@ class ModelsViewModel(
         const val VAD_GROUP = "VAD 모델" // VAD 모델 그룹 이름
         private const val PROGRESS_STEP = 0.005f // 진행률 반영 최소 변화(0.5%)
         private const val MB = 1024L * 1024L // 1MB 바이트
+        private val STAGE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss") // change(add)-hyungchul-2026-10-11-03:59 SAF 임시 폴더 이름 서식
 
         /**
          * 목적: 바이트 → MB(올림)

@@ -2,6 +2,7 @@
 // 목적: 재개(resume) 시 결과 CSV 를 점검하는 읽기 도우미
 // 기능: - truncatePartialLastLine: 크래시로 반쯤 쓰인 마지막 줄(CRLF 로 끝나지 않는 꼬리)을 잘라낸다.
 //       - readRecords: ResultCsvWriter 가 쓴 CSV(UTF-8 BOM, RFC4180 따옴표, CRLF)를 헤더→값 맵 목록으로 읽는다.
+//         change(add)-hyungchul-2026-10-11-03:59 completeOnly=true 면 줄바꿈으로 끝나지 않은 마지막 레코드(쓰는 중인 행)를 뺀다(결과 화면이 실행 중 run 을 셀 때).
 //       - containsRow: 지정한 열 값이 모두 같은 행이 있는지 본다(행 중복 추가 방지).
 //       - removeRows: 지정한 열 값이 모두 같은 행을 지우고 원자적으로 다시 쓴다(재시도·크래시 정리 시 중복/상충 행 방지).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
@@ -43,11 +44,12 @@ internal object CsvFiles {
     /**
      * 목적: 원문 레코드 분리
      * 기능: BOM 을 뗀 텍스트를 따옴표 밖의 CRLF(또는 LF) 기준으로 레코드 원문 목록으로 나눈다(따옴표 안 줄바꿈은 레코드 안에 남긴다). 빈 꼬리는 버린다.
-     * 입력: text(CSV 전체 텍스트, BOM 제거됨)
+     *       change(add)-hyungchul-2026-10-11-03:59 dropUnterminated 가 참이면 따옴표 밖 줄바꿈으로 끝나지 않은 마지막 레코드(따옴표가 열린 채 끝난 것 포함)를 버린다.
+     * 입력: text(CSV 전체 텍스트, BOM 제거됨), dropUnterminated(change(add)-hyungchul-2026-10-11-03:59 끝나지 않은 꼬리 버리기, 기본 false)
      * 출력: 없음
      * 리턴: 레코드 원문 목록(줄바꿈 문자 제외)
      */
-    private fun splitRawRecords(text: String): List<String> {
+    private fun splitRawRecords(text: String, dropUnterminated: Boolean = false): List<String> {
         val out = ArrayList<String>() // 결과
         var inQuotes = false // 따옴표 안인지
         var start = 0 // 현재 레코드 시작
@@ -62,7 +64,7 @@ internal object CsvFiles {
             }
             i++ // 다음 문자
         }
-        if (start < text.length) out.add(text.substring(start).removeSuffix("\r")) // 줄바꿈 없는 마지막 레코드
+        if (start < text.length && !dropUnterminated) out.add(text.substring(start).removeSuffix("\r")) // 줄바꿈 없는 마지막 레코드(change(add)-hyungchul-2026-10-11-03:59 버리기 요청이면 제외)
         return out // 레코드 목록
     }
 
@@ -98,13 +100,13 @@ internal object CsvFiles {
     /**
      * 목적: CSV 레코드 읽기
      * 기능: BOM 을 떼고 레코드로 나눈 뒤 첫 레코드를 헤더로 써서 헤더→값 맵을 만든다.
-     * 입력: file(CSV 파일)
-     * 출력: 없음
+     * 입력: file(CSV 파일), completeOnly(change(add)-hyungchul-2026-10-11-03:59 참이면 줄바꿈으로 끝나지 않은 마지막 레코드 제외 — 실행 중 run 집계용, 기본 false)
+     * 출력: 읽기 실패 시 IOException(change(add)-hyungchul-2026-10-11-03:59 정정: 원래도 readText 의 IOException 이 그대로 전달됨)
      * 리턴: 행(헤더 → 값) 목록. 파일이 없으면 빈 목록
      */
-    fun readRecords(file: File): List<Map<String, String>> {
+    fun readRecords(file: File, completeOnly: Boolean = false): List<Map<String, String>> {
         if (!file.isFile) return emptyList() // 파일 없음
-        val raws = splitRawRecords(file.readText(Charsets.UTF_8).removePrefix("\uFEFF")) // 레코드 원문
+        val raws = splitRawRecords(file.readText(Charsets.UTF_8).removePrefix("\uFEFF"), completeOnly) // 레코드 원문(change(add)-hyungchul-2026-10-11-03:59 끝나지 않은 꼬리 처리)
         if (raws.isEmpty()) return emptyList() // 내용 없음
         val header = parseFields(raws.first()) // 헤더
         return raws.drop(1).map { raw -> // 데이터 레코드마다

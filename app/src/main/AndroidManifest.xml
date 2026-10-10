@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- change(add)-hyungchul-2026-10-11-03:59: 마이크 녹음(AudioRecord) — 런타임 권한, 마이크 화면에서 요청(거부되면 한국어 안내, 녹음만 불가) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- change(add)-hyungchul-2026-10-10-11:56: android:name=".App" 로 커스텀 Application 등록 -->
     <application

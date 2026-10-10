@@ -2,10 +2,12 @@
 // 목적: 실행 설정 화면 ViewModel(RunSetupViewModel)의 조합 수 계산·모델 선택 순서·runId 형식·미설치 모델/VAD 모델 미설치 프리셋 선택 거부·maxChunk 검증을 검증
 // 기능: 임시 폴더 ModelStore 에 합성 모델을 직접 설치(파일+표식)하고, 고정 입력 목록을 돌려주는 스캐너로 ViewModel 을 만든 뒤
 //       선택 동작과 comboCount/buildConfig 결과를 확인한다. 작업 디스패처는 즉시 실행 테스트 디스패처로 바꿔 refresh 가 바로 끝나게 한다.
+//       change(add)-hyungchul-2026-10-11-03:59 마이크 녹음 파일 미리 선택(preselect)과 SAF 음원 가져오기 작업(runImport)의 메시지·목록 갱신도 확인한다.
 package com.cowork.stt_ondevice.ui.run // 실행 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
+import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
 import com.cowork.stt_ondevice.model.ModelFile // 모델 파일 정보
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
@@ -234,5 +236,39 @@ class RunSetupViewModelTest {
         assertTrue(vm.buildConfig(now).maxChunkOverride.isEmpty()) // 해제
         assertTrue(vm.setMaxChunk("third", 10.0)) // 선택 안 한 모델에 값
         assertTrue(vm.buildConfig(now).maxChunkOverride.isEmpty()) // 선택 모델만 설정에 들어감
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: 마이크 녹음 파일 미리 선택과 SAF 가져오기 후 목록 갱신
+     * 기능: kr 언어를 끈 상태에서 새로 생긴 kr/mic/20261011_120000.wav 를 preselect 하면 다시 스캔해 그 항목이 선택되고 kr 이 켜진다(없는 경로는 무시).
+     *       runImport 는 복사 결과(복사 2·건너뜀 1)를 한국어 메시지로 보이고, 끝나면 importing=false 이며 입력 목록을 다시 읽는다. 실패하면 "음원 가져오기 실패" 사유.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun preselectAndImportRefresh() {
+        var items = kr + en // 스캐너가 돌려줄 목록(바뀔 수 있음)
+        var scans = 0 // 스캔 횟수
+        val vm = RunSetupViewModel({ scans++; items }, listOf(koOnly, both), store, VadPresets.all, { null }, dispatcher) // ViewModel
+        vm.toggleLang("kr") // kr 끄기
+        val mic = item("kr", "mic", "20261011_120000") // 새 녹음 파일
+        items = items + mic // 목록에 생김
+        vm.preselect(File("/nope/x.wav")) // 없는 경로
+        assertFalse(vm.state.value.selectedItems.any { it.file.path == "/nope/x.wav" }) // 무시
+        vm.preselect(mic.file) // 녹음 파일 미리 선택
+        assertTrue(mic in vm.state.value.selectedItems) // 선택됨
+        assertTrue("kr" in vm.state.value.langs) // kr 켜짐
+        assertTrue(vm.state.value.folders.any { it.lang == "kr" && it.relDir == "mic" }) // 트리에 나타남
+        val before = scans // 가져오기 전 스캔 수
+        vm.runImport { SafCopyResult(copied = 2, skipped = 1, bytes = 10, target = "/x/input_sound") } // 가져오기 성공
+        val msg = vm.state.value.message!! // 안내
+        assertTrue(msg, msg.contains("2개") && msg.contains("건너뜀 1개")) // 결과 문구
+        assertFalse(vm.state.value.importing) // 끝남
+        assertTrue(scans > before) // 다시 스캔
+        vm.consumeMessage() // 소비
+        assertNull(vm.state.value.message) // 비워짐
+        vm.runImport { throw java.io.IOException("읽기 거부") } // 실패
+        assertTrue(vm.state.value.message!!.contains("음원 가져오기 실패: 읽기 거부")) // 사유
+        assertFalse(vm.state.value.importing) // 끝남
     }
 }

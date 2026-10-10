@@ -2,10 +2,13 @@
 // 목적: 결과 화면 ViewModel(ResultsViewModel)과 그 도우미의 run 목록·조합별 집계·파일 목록·미리보기·manifest 손상 표시·이어하기 설정 복원을 검증
 // 기능: 임시 output_stt 트리에 manifest(정상·미완료·손상)와 _results/<lang>/<combo>/result.csv(따옴표 안 쉼표·줄바꿈·큰따옴표 포함)를
 //       실제 ResultCsvWriter 로 쓰고, 목록 순서(최신 먼저)·집계·드릴다운·미리보기·이어하기 RunConfig 복원과 복원 실패 사유를 확인한다.
+//       change(add)-hyungchul-2026-10-11-03:59 R42: refresh 중 result.csv 읽기 실패의 한국어 메시지(크래시 없음), 실행 중 run 의 "실행 중" 판정·이어하기 거부,
+//       실행 중 run 의 CRLF 로 끝나지 않은 마지막 CSV 레코드 제외 집계, 내보내기 작업의 완료·실패 메시지를 확인한다.
 package com.cowork.stt_ondevice.ui.results // 결과 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
+import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
 import com.cowork.stt_ondevice.model.ModelFile // 모델 파일 정보
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 모델 저장소
@@ -23,6 +26,7 @@ import com.cowork.stt_ondevice.segment.ChunkMode // 묶기 방식
 import com.cowork.stt_ondevice.vad.VadPresets // 프리셋 목록
 import kotlinx.coroutines.Dispatchers // 디스패처
 import kotlinx.coroutines.ExperimentalCoroutinesApi // 테스트 API 표시
+import kotlinx.coroutines.flow.MutableStateFlow // change(add)-hyungchul-2026-10-11-03:59 실행 중 runId 흉내
 import kotlinx.coroutines.test.UnconfinedTestDispatcher // 즉시 실행 테스트 디스패처
 import kotlinx.coroutines.test.resetMain // Main 복구
 import kotlinx.coroutines.test.setMain // Main 교체
@@ -101,9 +105,9 @@ class ResultsViewModelTest {
     private fun csvRow(runId: String, lang: String, combo: String, rel: String, file: String, status: String, text: String) =
         ResultCsvWriter(OutputLayout.resultCsv(dirs.runDir(runId), lang, combo)).append(mapOf("run_id" to runId, "rel_dir" to rel, "file" to file, "status" to status, "text" to text)) // 행 추가
 
-    /** 목적: ViewModel 만들기 / 기능: 임시 output 루트·합성 카탈로그·실제 프리셋·기록용 시작 함수 / 입력: start(시작 함수) / 리턴: ResultsViewModel */
-    private fun newVm(start: (RunConfig) -> String? = { null }): ResultsViewModel =
-        ResultsViewModel(dirs.output, store, listOf(m1, m2), VadPresets.all, start, dispatcher) // 주입
+    /** 목적: ViewModel 만들기 / 기능: 임시 output 루트·합성 카탈로그·실제 프리셋·기록용 시작 함수 / 입력: running(change(add)-hyungchul-2026-10-11-03:59 실행 중 runId 흐름), start(시작 함수 — 뒤따르는 람다) / 리턴: ResultsViewModel */
+    private fun newVm(running: MutableStateFlow<String?> = MutableStateFlow(null), start: (RunConfig) -> String? = { null }): ResultsViewModel =
+        ResultsViewModel(dirs.output, store, listOf(m1, m2), VadPresets.all, start, dispatcher, runningRunId = running) // 주입 — change(add)-hyungchul-2026-10-11-03:59 실행 중 runId
 
     /** 목적: 공통 트리 만들기 / 기능: 완료 run A, 미완료 run B, 손상 run C 와 A 의 결과 CSV·txt·ERROR.txt / 입력: 없음 / 리턴: 없음 */
     private fun buildTree() {
@@ -259,5 +263,107 @@ class ResultsViewModelTest {
         vm.resume("20261011_000003") // 실패하는 이어하기
         assertTrue(started.isEmpty()) // 시작하지 않음
         assertTrue(vm.state.value.message!!.contains("미설치")) // 사유를 메시지로 표시
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: R42(1) — refresh 중 result.csv 읽기 실패
+     * 기능: 조합을 연 뒤 그 result.csv 를 읽을 수 없게 만들고 refresh 하면 크래시 없이 "result.csv 를 읽지 못했습니다" 한국어 메시지가 나오고 파일 목록은 빈다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun refreshCsvReadFailureShowsMessage() {
+        buildTree() // 트리
+        val vm = newVm() // ViewModel
+        vm.openRun("20261009_131500") // run 열기
+        val combo = vm.state.value.runs.first { it.runId == "20261009_131500" }.combos.first { it.combo == "test_m1_NONE" } // 조합
+        vm.openCombo(combo) // 조합 열기
+        assertEquals(3, vm.state.value.files.size) // 처음엔 읽힘
+        val csv = OutputLayout.resultCsv(dirs.runDir("20261009_131500"), "kr", "test_m1_NONE") // 그 CSV
+        assertTrue(csv.setReadable(false)) // 읽기 권한 제거(읽기 시 IOException)
+        try {
+            vm.refresh() // 다시 읽기
+            val msg = vm.state.value.message // 안내
+            assertTrue(msg.toString(), msg != null && msg.contains("result.csv 를 읽지 못했습니다")) // 한국어 메시지
+            assertTrue(vm.state.value.files.isEmpty()) // 파일 목록 비움
+            assertFalse(vm.state.value.loading) // 읽기 끝남
+        } finally {
+            csv.setReadable(true) // 권한 복구(임시 폴더 정리용)
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: R42(2) — 실행 중인 run
+     * 기능: RunService 가 미완료 run B 를 실행 중이면 state.runningRunId = B, isRunning(B) 참, resumable(B) 거짓(이어하기 숨김), resume(B) 는 시작 함수를 부르지 않고 사유를 보인다.
+     *       실행이 끝나 흐름이 null 이 되면 다시 이어하기 가능으로 돌아온다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun runningRunHidesResume() {
+        val items = listOf(input("kr", "customer", "01")) // 입력
+        writeManifest("20261010_090000", null, inputs = items) // 미완료 run B
+        val running = MutableStateFlow<String?>("20261010_090000") // B 실행 중
+        val started = mutableListOf<RunConfig>() // 시작 기록
+        val vm = newVm(running) { started += it; null } // ViewModel
+        val s = vm.state.value // 상태
+        val b = s.runs.single() // run B
+        assertEquals("20261010_090000", s.runningRunId) // 실행 중 runId
+        assertTrue(s.isRunning(b.runId)) // 실행 중
+        assertTrue(b.resumable) // manifest 상으로는 미완료
+        assertFalse(s.resumable(b)) // 화면에서는 이어하기 숨김
+        vm.resume("20261010_090000") // 이어하기 시도
+        assertTrue(started.isEmpty()) // 시작하지 않음
+        assertTrue(vm.state.value.message.toString(), vm.state.value.message!!.contains("실행 중")) // 사유
+        running.value = null // 실행 끝
+        assertNull(vm.state.value.runningRunId) // 반영
+        assertTrue(vm.state.value.resumable(vm.state.value.runs.single())) // 다시 이어하기 가능
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: R42(4) — 실행 중 run 의 반쯤 쓴 마지막 CSV 레코드
+     * 기능: result.csv 끝에 CRLF 로 끝나지 않은 레코드를 붙이면, 그 run 이 실행 중일 때는 집계·파일 목록에서 빼고(OK 1·NO_MATCH 1·ERROR 1·기타 0, 파일 3),
+     *       실행 중이 아니면 기존처럼 레코드로 센다(기타 1, 파일 4).
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun runningRunIgnoresUnterminatedCsvTail() {
+        buildTree() // 트리
+        val runId = "20261009_131500" // 대상 run
+        OutputLayout.resultCsv(dirs.runDir(runId), "kr", "test_m1_NONE").appendText("$runId,kr,whisper", Charsets.UTF_8) // CRLF 없는 꼬리(쓰는 중 흉내)
+        val running = MutableStateFlow<String?>(runId) // 실행 중
+        val vm = newVm(running = running) // ViewModel
+        val c = vm.state.value.runs.first { it.runId == runId }.combos.first { it.combo == "test_m1_NONE" } // 조합
+        assertEquals(listOf(1, 1, 1, 0), listOf(c.ok, c.noMatch, c.error, c.other)) // 꼬리 제외
+        vm.openCombo(c) // 파일 목록
+        assertEquals(3, vm.state.value.files.size) // 꼬리 제외
+        running.value = null // 실행 끝(꼬리는 그대로 남음)
+        val c2 = vm.state.value.runs.first { it.runId == runId }.combos.first { it.combo == "test_m1_NONE" } // 다시 읽은 조합
+        assertEquals(1, c2.other) // 실행 중이 아니면 레코드로 셈
+        assertEquals(4, vm.state.value.files.size) // 파일 목록도 4
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: 내보내기 작업 상태와 메시지
+     * 기능: export(runId, copy) 는 run 폴더를 copy 에 넘기고, 끝나면 "내보내기 완료" 와 대상 폴더 이름·파일 수를 보이며 exportingRunId 를 비운다.
+     *       copy 가 IOException 을 던지면 "내보내기 실패" 사유를 보인다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun exportReportsResult() {
+        buildTree() // 트리
+        val vm = newVm() // ViewModel
+        var got: File? = null // copy 에 넘어온 폴더
+        vm.export("20261009_131500") { dir -> got = dir; SafCopyResult(copied = 5, skipped = 0, bytes = 100, target = "20261009_131500_1") } // 내보내기
+        assertEquals(dirs.runDir("20261009_131500"), got) // run 폴더
+        val msg = vm.state.value.message!! // 안내
+        assertTrue(msg, msg.contains("내보내기 완료") && msg.contains("20261009_131500_1") && msg.contains("5")) // 결과
+        assertNull(vm.state.value.exportingRunId) // 끝남
+        vm.consumeMessage() // 소비
+        vm.export("20261009_131500") { throw java.io.IOException("공간 부족") } // 실패
+        assertTrue(vm.state.value.message!!.contains("내보내기 실패: 공간 부족")) // 사유
+        assertNull(vm.state.value.exportingRunId) // 끝남
     }
 }

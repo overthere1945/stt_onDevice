@@ -3,8 +3,13 @@
 // 기능: ModelsViewModel.rows 를 그룹(ASR 은 algo 별, 마지막 "VAD 모델")으로 묶어 카드로 그린다. 카드에는 표시 이름·크기(MB)·언어·라이선스·
 //       색 배지(상업 이용 상태)·설치 상태·진행률 바가 있고 상태에 맞는 버튼만 보인다. 삭제는 확인 대화상자, 가져오기는 폴더 경로 안내 대화상자,
 //       검증은 결과 대화상자를 거치며 오류·완료 메시지는 스낵바(한국어)로 보인다.
+//       change(add)-hyungchul-2026-10-11-03:59 가져오기 대화상자에 "폴더 선택(SAF)"(OpenDocumentTree)·"파일 선택(SAF)"(OpenDocument, 압축 1개)을 더했다. 고르면 import/<id>/saf_… 로 복사한 뒤
+//       기존 가져오기(installer.importFrom)를 그대로 쓴다(ModelsViewModel.importFromSaf). adb 안내는 tools/adb/push_models.sh 사용을 권장한다(R41 — push 후 권한 정리).
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
+import android.net.Uri // change(add)-hyungchul-2026-10-11-03:59 고른 문서 Uri
+import androidx.activity.compose.rememberLauncherForActivityResult // change(add)-hyungchul-2026-10-11-03:59 SAF 선택기 런처
+import androidx.activity.result.contract.ActivityResultContracts // change(add)-hyungchul-2026-10-11-03:59 SAF 선택기 계약
 import androidx.compose.foundation.isSystemInDarkTheme // change(add)-hyungchul-2026-10-11-03:24 다크 모드 여부(색 대비)
 import androidx.compose.foundation.layout.Arrangement // 배치 간격
 import androidx.compose.foundation.layout.Column // 세로 배치
@@ -35,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect // 부수 효과
 import androidx.compose.runtime.getValue // 위임 읽기
 import androidx.compose.runtime.mutableStateOf // 상태 생성
 import androidx.compose.runtime.remember // 기억
+import androidx.compose.runtime.saveable.rememberSaveable // change(add)-hyungchul-2026-10-11-03:59 선택기 왕복·회전에도 유지
 import androidx.compose.runtime.setValue // 위임 쓰기
 import androidx.compose.ui.Modifier // 수정자
 import androidx.compose.ui.graphics.Color // 색
@@ -43,6 +49,7 @@ import androidx.compose.ui.unit.dp // dp 단위
 import androidx.lifecycle.compose.collectAsStateWithLifecycle // change(add)-hyungchul-2026-10-11-03:24 생명주기 인식 상태 수집
 import androidx.lifecycle.viewmodel.compose.viewModel // 화면용 ViewModel 얻기
 import com.cowork.stt_ondevice.App // 앱 전역 객체
+import com.cowork.stt_ondevice.core.storage.SafBridge // change(add)-hyungchul-2026-10-11-03:59 SAF 입출력
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 상태
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
 
@@ -61,6 +68,17 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel(factory = ModelsViewMode
     val verifyReport by viewModel.verifyReport.collectAsStateWithLifecycle() // 검증 결과
     val snackbar = remember { SnackbarHostState() } // 스낵바 상태
     var deleteTarget by remember { mutableStateOf<ModelRow?>(null) } // 삭제 확인 대상
+    val context = LocalContext.current // change(add)-hyungchul-2026-10-11-03:59 컨텍스트(SAF)
+    val bridge = remember { SafBridge(context.applicationContext) } // change(add)-hyungchul-2026-10-11-03:59 SAF 다리
+    var safTarget by rememberSaveable { mutableStateOf<String?>(null) } // change(add)-hyungchul-2026-10-11-03:59 선택기를 연 모델 id
+    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? -> // change(add)-hyungchul-2026-10-11-03:59 폴더 선택 결과
+        val id = safTarget; safTarget = null // 대상 모델(소비)
+        if (uri != null && id != null) viewModel.importFromSaf(id) { dir -> bridge.importModel(uri, isTree = true, dest = dir) } // 폴더째 복사 → 가져오기
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> // change(add)-hyungchul-2026-10-11-03:59 파일 선택 결과
+        val id = safTarget; safTarget = null // 대상 모델(소비)
+        if (uri != null && id != null) viewModel.importFromSaf(id) { dir -> bridge.importModel(uri, isTree = false, dest = dir) } // 파일 복사 → 가져오기
+    }
 
     LaunchedEffect(viewModel) { // 메시지 수집
         viewModel.messages.collect { snackbar.showSnackbar(it) } // 한국어 메시지를 스낵바로
@@ -113,9 +131,14 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel(factory = ModelsViewMode
             title = { Text("모델 가져오기") }, // 제목
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("'${prompt.modelName}' 의 파일(폴더 또는 .tar.bz2/.zip 압축 파일 1개)을 PC 에서 아래 폴더로 adb push 한 뒤 '가져오기 실행'을 누르세요.") // 안내
+                    Text("방법 1(휴대폰 안의 파일): 아래 버튼으로 모델 폴더 또는 .tar.bz2/.zip 압축 파일 1개를 고르면 앱 폴더로 복사한 뒤 바로 가져옵니다.") // change(add)-hyungchul-2026-10-11-03:59 SAF 안내
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { // change(add)-hyungchul-2026-10-11-03:59 SAF 버튼
+                        TextButton(onClick = { safTarget = prompt.modelId; treePicker.launch(null) }) { Text("폴더 선택(SAF)") } // 폴더
+                        TextButton(onClick = { safTarget = prompt.modelId; filePicker.launch(arrayOf("*/*")) }) { Text("파일 선택(SAF)") } // 압축 파일
+                    }
+                    Text("방법 2(PC): tools/adb/push_models.sh ${prompt.modelId} <폴더 또는 압축 파일> 로 아래 폴더에 넣은 뒤 '가져오기 실행'을 누르세요(스크립트가 push 후 앱이 읽을 수 있게 권한도 정리합니다 — adb push 만 하면 하위 폴더를 못 읽을 수 있습니다).") // 안내(change(add)-hyungchul-2026-10-11-03:59 R41 스크립트 권장)
                     SelectionContainer { Text(prompt.folderPath, style = MaterialTheme.typography.bodyMedium) } // 정확한 경로(선택·복사 가능)
-                    Text("가져온 뒤에도 원본은 지워지지 않습니다. 필요 없으면 직접 지우세요.", style = MaterialTheme.typography.bodySmall) // 부가 안내
+                    Text("가져온 뒤에도 원본은 지워지지 않습니다(SAF 로 복사한 임시본은 앱이 정리). 필요 없으면 직접 지우세요.", style = MaterialTheme.typography.bodySmall) // 부가 안내
                 }
             },
             confirmButton = { TextButton(onClick = { viewModel.confirmImport(prompt.modelId) }) { Text("가져오기 실행") } }, // 실행

@@ -2,9 +2,11 @@
 // 목적: 모델 관리 화면 ViewModel(ModelsViewModel)의 행 구성·삭제 거부·그룹/배지 라벨·import 폴더 안내·import 실행을 검증
 // 기능: 임시 폴더 ModelStore/ModelInstaller 와 테스트용 ModelSpec 으로 rows 가 설치 상태를 반영하는지, 사용 중 모델 삭제가 한국어 오류 메시지로 거부되는지,
 //       실제 카탈로그가 ASR(algo별) → VAD 모델 그룹으로 묶이고 라벨이 한국어인지, import 폴더 경로 안내와 폴더 해석·실행이 맞는지 확인한다.
+//       change(add)-hyungchul-2026-10-11-03:59 SAF 가져오기(importFromSaf): import/<id>/saf_* 임시 폴더로 복사 → 설치 → 임시 폴더 정리를 확인한다.
 package com.cowork.stt_ondevice.ui.models // 모델 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
+import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
 import com.cowork.stt_ondevice.model.ArchiveType // 압축 형식
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 상태
 import com.cowork.stt_ondevice.model.Download // 다운로드 정보
@@ -32,6 +34,7 @@ import kotlinx.coroutines.test.setMain // Main 교체
 import kotlinx.coroutines.withTimeout // 제한 시간
 import org.junit.After // 각 테스트 후
 import org.junit.Assert.assertEquals // 값 일치
+import org.junit.Assert.assertFalse // change(add)-hyungchul-2026-10-11-03:59 거짓
 import org.junit.Assert.assertNotNull // null 아님
 import org.junit.Assert.assertNull // null
 import org.junit.Assert.assertTrue // 참
@@ -337,4 +340,35 @@ class ModelsViewModelTest {
     /** 목적: model-b 행 상태 수집 / 기능: scope 에서 rows 를 구독해 model-b 의 상태를 seen 에 모은다(Unconfined 라 즉시 반영) / 리턴: 수집 Job */
     private fun launchCollect(scope: kotlinx.coroutines.CoroutineScope, vm: ModelsViewModel, seen: MutableSet<InstallState>) =
         scope.launch(dispatcher) { vm.rows.collect { r -> r.firstOrNull { it.id == "model-b" }?.let { seen.add(it.state) } } }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: SAF 가져오기(폴더째 고른 경우)
+     * 기능: copy 가 받은 임시 폴더(import/model-b/saf_…) 안에 "모델폴더/b.bin" 을 만들면(상위 폴더를 고른 경우 흉내) 그 하위 폴더를 원본으로 설치해 READY 가 되고,
+     *       끝나면 임시 폴더가 지워진다. copy 가 실패하면 "가져오기 실패" 메시지와 함께 임시 폴더가 정리되고 미설치로 남는다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun importFromSafInstallsAndCleansStaging() = runBlocking {
+        val vm = newVm(listOf(specA, specB)) // ViewModel
+        var stage: File? = null // copy 에 넘어온 임시 폴더
+        vm.importFromSaf("model-b") { dir -> // SAF 복사 흉내
+            stage = dir // 기록
+            File(dir, "picked/b.bin").apply { parentFile!!.mkdirs(); writeBytes(bBytes) } // 폴더째 복사된 모양
+            SafCopyResult(copied = 1, skipped = 0, bytes = bBytes.size.toLong(), target = dir.path) // 결과
+        }
+        withTimeout(10_000) { vm.rows.first { r -> r.first { it.id == "model-b" }.state == InstallState.READY } } // READY 대기
+        assertEquals(File(dirs.importDir, "model-b"), stage!!.parentFile) // import/<id> 아래 임시 폴더
+        assertTrue(stage!!.name.startsWith("saf_")) // 이름 규칙
+        withTimeout(5_000) { while (stage!!.exists()) kotlinx.coroutines.delay(10) } // 정리 대기
+        assertFalse(stage!!.exists()) // 임시 폴더 삭제
+        val failing = newVm(listOf(specA, specB)) // 새 ViewModel
+        store.delete(specB) // 다시 미설치로
+        var stage2: File? = null // 두 번째 임시 폴더
+        failing.importFromSaf("model-b") { dir -> stage2 = dir; File(dir, "half.bin").writeBytes(ByteArray(3)); throw java.io.IOException("SAF 읽기 실패") } // 복사 실패
+        val msg = withTimeout(10_000) { failing.messages.first { it.contains("실패") } } // 실패 메시지
+        assertTrue(msg, msg.contains("가져오기 실패") && msg.contains("SAF 읽기 실패")) // 사유
+        withTimeout(5_000) { while (stage2!!.exists()) kotlinx.coroutines.delay(10) } // 정리 대기
+        assertEquals(InstallState.NOT_INSTALLED, store.state(specB)) // 미설치 유지
+    }
 }

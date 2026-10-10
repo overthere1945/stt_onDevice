@@ -6,6 +6,8 @@
 //       - 예상 조합 수 = Σ(선택 모델 × 선택 프리셋 × 그 모델이 지원하는 언어의 선택 파일) 를 상태에 실시간으로 반영한다.
 //       - buildConfig(now) 는 runId = now 의 yyyyMMdd_HHmmss 로 RunConfig 를 만든다(선택이 부족하거나 값 오류가 있으면 한국어 IllegalStateException).
 //       - 다른 모델·프리셋으로 자동 대체하지 않는다(조용한 fallback 금지).
+//       change(add)-hyungchul-2026-10-11-03:59 - preselect(path): 마이크 화면 "실행 설정으로" 에서 넘어온 녹음 파일을 다시 스캔한 뒤 선택하고 그 언어를 켠다.
+//       - runImport(block): SAF 음원 가져오기 작업(복사 함수는 화면이 SafBridge 로 만든다)을 1개만 돌리고(취소 가능), 결과를 한국어 메시지로 보인 뒤 목록을 다시 읽는다.
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
 
@@ -15,6 +17,7 @@ import androidx.lifecycle.viewModelScope // 뷰모델 코루틴 범위
 import com.cowork.stt_ondevice.App // 앱 전역 객체
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
 import com.cowork.stt_ondevice.core.storage.InputScanner // 입력 스캐너
+import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
 import com.cowork.stt_ondevice.model.ModelCatalog // 모델 카탈로그
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
@@ -28,13 +31,18 @@ import com.cowork.stt_ondevice.ui.models.koreanLabel // 설치 상태 한국어 
 import com.cowork.stt_ondevice.vad.VadFamily // VAD 계열
 import com.cowork.stt_ondevice.vad.VadPreset // VAD 프리셋
 import com.cowork.stt_ondevice.vad.VadPresets // VAD 프리셋 레지스트리
+import kotlinx.coroutines.CancellationException // change(add)-hyungchul-2026-10-11-03:59 취소 예외
 import kotlinx.coroutines.CoroutineDispatcher // 디스패처 타입
 import kotlinx.coroutines.Dispatchers // 디스패처
+import kotlinx.coroutines.Job // change(add)-hyungchul-2026-10-11-03:59 가져오기 작업 핸들
 import kotlinx.coroutines.flow.MutableStateFlow // 변경 가능한 상태 흐름
 import kotlinx.coroutines.flow.StateFlow // 읽기 전용 상태 흐름
 import kotlinx.coroutines.flow.asStateFlow // 읽기 전용 변환
 import kotlinx.coroutines.flow.update // 원자적 갱신
 import kotlinx.coroutines.launch // 코루틴 시작
+import kotlinx.coroutines.withContext // change(add)-hyungchul-2026-10-11-03:59 컨텍스트 전환
+import java.io.File // change(add)-hyungchul-2026-10-11-03:59 파일
+import java.util.concurrent.atomic.AtomicReference // change(add)-hyungchul-2026-10-11-03:59 미리 선택할 경로(스레드 안전)
 import java.time.LocalDateTime // 현재 시각
 import java.time.format.DateTimeFormatter // 시각 서식
 
@@ -95,6 +103,7 @@ data class MaxChunkInput(val text: String, val error: String?)
  * 입력: loaded(첫 읽기 완료 여부), folders(입력 트리), langs(켜진 언어 폴더), selectedItems(선택한 항목), models(모델 행), selectedModels(선택 순서),
  *       presets(프리셋 행), selectedPresets(선택한 프리셋 id), chunkMode(묶기 방식), maxChunk(모델 id → 입력 칸), maxChunkOverride(모델 id → 검증된 값),
  *       threads(스레드 1~8), comboCount(예상 조합 수)
+ *       change(add)-hyungchul-2026-10-11-03:59 importing(SAF 음원 가져오기 중), message(일회성 안내 — 화면이 보인 뒤 consumeMessage)
  */
 data class RunSetupState(
     val loaded: Boolean = false, // 첫 읽기 완료
@@ -110,6 +119,8 @@ data class RunSetupState(
     val maxChunkOverride: Map<String, Double> = emptyMap(), // 검증된 덮어쓰기 값
     val threads: Int = RunSetupViewModel.DEFAULT_THREADS, // 스레드
     val comboCount: Int = 0, // 예상 조합 수
+    val importing: Boolean = false, // change(add)-hyungchul-2026-10-11-03:59 가져오기 중
+    val message: String? = null, // change(add)-hyungchul-2026-10-11-03:59 안내 문구
 )
 
 // change(add)-hyungchul-2026-10-11-03:31
@@ -132,6 +143,8 @@ class RunSetupViewModel(
     private val specs: Map<String, ModelSpec> = catalog.associateBy { it.id } // id → 모델
     private val presetById: Map<String, VadPreset> = presets.associateBy { it.id } // id → 프리셋
     private val _state = MutableStateFlow(RunSetupState()) // 내부 상태
+    private val pendingSelect = AtomicReference<String?>(null) // change(add)-hyungchul-2026-10-11-03:59 다음 스캔에서 선택할 파일 절대 경로
+    private var importJob: Job? = null // change(add)-hyungchul-2026-10-11-03:59 진행 중인 가져오기(메인 스레드에서만 읽고 씀)
 
     /** 목적: 화면 상태 / 기능: 선택이 바뀔 때마다 comboCount 까지 다시 계산된 값 */
     val state: StateFlow<RunSetupState> = _state.asStateFlow() // 읽기 전용 노출
@@ -157,12 +170,16 @@ class RunSetupViewModel(
             val selectableModels = modelRows.filter { it.selectable }.map { it.id }.toSet() // 선택 가능 모델
             val selectablePresets = presetRows.filter { it.selectable }.map { it.id }.toSet() // 선택 가능 프리셋
             val itemSet = items.toSet() // 존재 항목
+            val wanted = pendingSelect.get() // change(add)-hyungchul-2026-10-11-03:59 미리 선택할 경로
+            val pick = wanted?.let { w -> items.firstOrNull { it.file.absolutePath == w } } // change(add)-hyungchul-2026-10-11-03:59 그 항목(아직 없으면 null)
+            if (pick != null) pendingSelect.compareAndSet(wanted, null) // change(add)-hyungchul-2026-10-11-03:59 찾았으면 소비
             _state.update { s ->
                 recount(
                     s.copy(
                         loaded = true, // 읽기 완료
                         folders = folders, // 트리
-                        selectedItems = s.selectedItems.filter { it in itemSet }.toSet(), // 사라진 항목 제외
+                        langs = if (pick != null) s.langs + pick.lang else s.langs, // change(add)-hyungchul-2026-10-11-03:59 미리 선택 항목의 언어 켜기
+                        selectedItems = s.selectedItems.filter { it in itemSet }.toSet() + listOfNotNull(pick), // 사라진 항목 제외(change(add)-hyungchul-2026-10-11-03:59 미리 선택 항목 추가)
                         models = modelRows, // 모델 행
                         selectedModels = s.selectedModels.filter { it in selectableModels }, // 선택 불가가 된 모델 제외(순서 유지)
                         presets = presetRows, // 프리셋 행
@@ -365,6 +382,68 @@ class RunSetupViewModel(
      */
     fun setThreads(n: Int) {
         _state.update { it.copy(threads = n.coerceIn(MIN_THREADS, MAX_THREADS)) } // 범위 제한
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: 파일 미리 선택(마이크 녹음 → 실행 설정)
+     * 기능: 경로를 기억하고 다시 스캔한다. 스캔 결과에 그 파일이 있으면 선택에 넣고 그 언어를 켠다(없으면 다음 스캔까지 기다림 — 다른 파일로 바꾸지 않음).
+     * 입력: file(선택할 wav)
+     * 출력: state 갱신
+     * 리턴: 없음
+     */
+    fun preselect(file: File) {
+        pendingSelect.set(file.absolutePath) // 기억
+        refresh() // 다시 스캔
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: SAF 음원 가져오기 실행
+     * 기능: 이미 가져오는 중이면 거부 메시지. 아니면 importing 을 켜고 io 에서 block 을 실행한 뒤
+     *       "음원 N개를 가져왔습니다(건너뜀 M개 — 같은 이름 파일이 이미 있음 등)" 또는 "음원 가져오기 실패: 사유"/취소 안내를 보이고 목록을 다시 읽는다.
+     * 입력: block(복사 함수 — 화면이 SafBridge.importTree 로 만든다)
+     * 출력: state 갱신
+     * 리턴: 없음
+     */
+    fun runImport(block: suspend () -> SafCopyResult) {
+        if (_state.value.importing) { // 이미 진행 중
+            _state.update { it.copy(message = "이미 음원을 가져오는 중입니다") } // 거부
+            return // 중단
+        }
+        _state.update { it.copy(importing = true) } // 진행 표시
+        importJob = viewModelScope.launch {
+            try {
+                val r = withContext(io) { block() } // 복사
+                val skipped = if (r.skipped > 0) " (건너뜀 ${r.skipped}개 — 같은 이름 파일이 이미 있거나 쓸 수 없는 이름)" else "" // 건너뜀 안내
+                _state.update { it.copy(message = "음원 ${r.copied}개를 가져왔습니다$skipped") } // 성공
+            } catch (e: CancellationException) {
+                _state.update { it.copy(message = "음원 가져오기를 취소했습니다(이미 복사된 파일은 남아 있습니다)") } // 취소
+                throw e // 취소는 삼키지 않음
+            } catch (e: Exception) {
+                _state.update { it.copy(message = "음원 가져오기 실패: ${e.message ?: e::class.java.simpleName}") } // 실패
+            } finally {
+                _state.update { it.copy(importing = false) } // 진행 표시 해제
+                importJob = null // 핸들 정리
+                refresh() // 목록 다시 읽기(취소된 코루틴이 아닌 새 코루틴에서)
+            }
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: 가져오기 취소 / 기능: 진행 중인 가져오기를 취소한다(파일 사이·64KB 마다 멈춤) / 입력·출력: 없음 / 리턴: 없음
+     */
+    fun cancelImport() {
+        importJob?.cancel() // 취소
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /**
+     * 목적: 안내 문구 소비 / 기능: 화면이 스낵바로 보인 뒤 부른다 / 입력·출력: 없음 / 리턴: 없음
+     */
+    fun consumeMessage() {
+        _state.update { it.copy(message = null) } // 비우기
     }
 
     /**

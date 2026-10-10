@@ -4,6 +4,9 @@
 //       "실행" 을 누르면 (Android 13+ 에서 알림 권한이 없으면 먼저 요청 — 거부해도 실행은 계속) buildConfig(지금 시각) → RunService.start.
 //       시작이 거부되면 RunService.events 의 사유를 스낵바로 보이고, 시작되면 onStarted 로 진행 탭으로 이동한다.
 //       알림 권한 요청 도우미(rememberNotificationGate)는 결과 화면의 이어하기도 함께 쓴다.
+//       change(add)-hyungchul-2026-10-11-03:59 "음원 가져오기(SAF)": OpenDocumentTree 로 폴더를 고르면 SafBridge.inspectTree 로 구조를 보고(최상위 kr/en → 그 폴더들,
+//       트리 자체가 kr/en → 그 언어 폴더, 그 밖 → 언어를 묻는 대화상자 → input_sound/<lang>/<트리 이름>/) RunSetupViewModel.runImport 로 복사한 뒤 목록을 다시 읽는다.
+//       마이크 화면에서 넘어온 preselectPath 는 다시 스캔 후 그 파일을 선택한다. 입력이 없을 때 안내에 adb 스크립트(tools/adb/push_inputs.sh — push 후 권한 정리)와 SAF 를 권장한다(R41).
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
 
@@ -12,6 +15,7 @@ import android.content.pm.PackageManager // 권한 결과 값
 import android.os.Build // SDK 버전
 import androidx.activity.compose.rememberLauncherForActivityResult // 권한 요청 런처
 import androidx.activity.result.contract.ActivityResultContracts // 권한 요청 계약
+import android.net.Uri // change(add)-hyungchul-2026-10-11-03:59 고른 트리 Uri
 import androidx.compose.foundation.clickable // 클릭 처리
 import androidx.compose.foundation.layout.Arrangement // 배치 간격
 import androidx.compose.foundation.layout.Column // 세로 배치
@@ -29,11 +33,13 @@ import androidx.compose.foundation.text.KeyboardOptions // 키보드 종류
 import androidx.compose.material.icons.Icons // 기본 아이콘
 import androidx.compose.material.icons.filled.KeyboardArrowDown // 펼침 아이콘
 import androidx.compose.material.icons.filled.KeyboardArrowUp // 접기 아이콘
+import androidx.compose.material3.AlertDialog // change(add)-hyungchul-2026-10-11-03:59 언어 선택 대화상자
 import androidx.compose.material3.Button // 버튼
 import androidx.compose.material3.Card // 카드
 import androidx.compose.material3.Checkbox // 체크박스
 import androidx.compose.material3.FilterChip // 선택 칩
 import androidx.compose.material3.HorizontalDivider // 구분선
+import androidx.compose.material3.LinearProgressIndicator // change(add)-hyungchul-2026-10-11-03:59 가져오기 진행 표시
 import androidx.compose.material3.Icon // 아이콘
 import androidx.compose.material3.MaterialTheme // 테마 값
 import androidx.compose.material3.OutlinedTextField // 입력 칸
@@ -51,6 +57,7 @@ import androidx.compose.runtime.mutableStateMapOf // 상태 맵
 import androidx.compose.runtime.mutableStateOf // 상태 생성
 import androidx.compose.runtime.remember // 기억
 import androidx.compose.runtime.rememberCoroutineScope // 코루틴 범위
+import androidx.compose.runtime.saveable.rememberSaveable // change(add)-hyungchul-2026-10-11-03:59 선택기 왕복·회전에도 유지
 import androidx.compose.runtime.setValue // 위임 쓰기
 import androidx.compose.ui.Alignment // 정렬
 import androidx.compose.ui.Modifier // 수정자
@@ -64,10 +71,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle // 생명주기 �
 import androidx.lifecycle.viewmodel.compose.viewModel // 화면용 ViewModel
 import com.cowork.stt_ondevice.App // 앱 전역 객체
 import com.cowork.stt_ondevice.core.storage.InputScanner // 언어 폴더 목록
+import com.cowork.stt_ondevice.core.storage.InputTreeLayout // change(add)-hyungchul-2026-10-11-03:59 음원 트리 구조
+import com.cowork.stt_ondevice.core.storage.SafBridge // change(add)-hyungchul-2026-10-11-03:59 SAF 입출력
 import com.cowork.stt_ondevice.runner.RunService // 배치 실행 서비스
 import com.cowork.stt_ondevice.runner.RunUiState // 실행 상태
 import com.cowork.stt_ondevice.segment.ChunkMode // 묶기 방식
 import kotlinx.coroutines.launch // 코루틴 시작
+import java.io.File // change(add)-hyungchul-2026-10-11-03:59 파일
+import java.io.IOException // change(add)-hyungchul-2026-10-11-03:59 입출력 오류
 import java.time.LocalDateTime // 현재 시각
 import kotlin.math.roundToInt // 반올림
 
@@ -120,7 +131,8 @@ fun langFolderLabel(lang: String): String = when (lang) {
 /**
  * 목적: 실행 설정 화면
  * 기능: 파일 머리말 참조. 화면에 들어올 때마다 입력 목록·설치 상태를 다시 읽는다(모델 탭에서 설치한 결과 반영).
- * 입력: onStarted(실행이 시작됐을 때 — 진행 탭으로 이동), viewModel(기본은 App 싱글턴으로 만든 RunSetupViewModel)
+ * 입력: onStarted(실행이 시작됐을 때 — 진행 탭으로 이동), preselectPath(change(add)-hyungchul-2026-10-11-03:59 마이크 화면에서 넘어온 녹음 wav 절대 경로 또는 null),
+ *       viewModel(기본은 App 싱글턴으로 만든 RunSetupViewModel)
  * 출력: 화면 표시
  * 리턴: Unit
  */
@@ -128,6 +140,7 @@ fun langFolderLabel(lang: String): String = when (lang) {
 @Composable
 fun RunSetupScreen(
     onStarted: (String) -> Unit,
+    preselectPath: String? = null, // change(add)-hyungchul-2026-10-11-03:59 미리 선택할 파일
     viewModel: RunSetupViewModel = viewModel(factory = RunSetupViewModel.factory(App.from(LocalContext.current))),
 ) {
     val context = LocalContext.current // 컨텍스트
@@ -143,6 +156,31 @@ fun RunSetupScreen(
     }
 
     LaunchedEffect(Unit) { viewModel.refresh() } // 들어올 때마다 다시 읽기
+    LaunchedEffect(preselectPath) { preselectPath?.let { viewModel.preselect(File(it)) } } // change(add)-hyungchul-2026-10-11-03:59 마이크 녹음 파일 미리 선택
+    LaunchedEffect(s.message) { // change(add)-hyungchul-2026-10-11-03:59 안내 문구(가져오기 결과)
+        s.message?.let { viewModel.consumeMessage(); scope.launch { snackbar.showSnackbar(it) } } // 소비 후 표시 — change(add)-hyungchul-2026-10-11-03:59 화면 범위에서 표시(소비로 키가 바뀌어 이 효과가 취소돼도 스낵바가 바로 사라지지 않게)
+    }
+    val bridge = remember { SafBridge(context.applicationContext) } // change(add)-hyungchul-2026-10-11-03:59 SAF 다리
+    var askLangFor by rememberSaveable { mutableStateOf<String?>(null) } // change(add)-hyungchul-2026-10-11-03:59 언어를 물을 트리 Uri 문자열
+    var askLangName by rememberSaveable { mutableStateOf("") } // change(add)-hyungchul-2026-10-11-03:59 그 트리 이름
+
+    // change(add)-hyungchul-2026-10-11-03:59
+    /** 목적: 정해진 대상으로 가져오기 시작 / 입력: uri(트리), layout(구조), lang(고른 언어 또는 null), name(트리 이름) / 리턴: 없음 */
+    fun startImport(uri: Uri, layout: InputTreeLayout, lang: String?, name: String) {
+        val (dest, topDirs) = SafBridge.inputDest(app.dirs.inputSound, layout, lang, name) // 대상 폴더·최상위 제한
+        viewModel.runImport { bridge.importTree(uri, dest, topDirs) } // 복사 작업(ViewModel 범위 — 탭 이동에도 계속)
+    }
+
+    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? -> // change(add)-hyungchul-2026-10-11-03:59 폴더 선택 결과
+        if (uri == null) return@rememberLauncherForActivityResult // 취소
+        scope.launch {
+            val info = try { bridge.inspectTree(uri) } catch (e: IOException) { snackbar.showSnackbar("폴더를 읽지 못했습니다: ${e.message}"); return@launch } // 구조 읽기
+            when (val layout = SafBridge.detectLayout(info.name, info.topDirs)) { // 구조 판정
+                InputTreeLayout.Unknown -> { askLangFor = uri.toString(); askLangName = info.name } // 언어 묻기
+                else -> startImport(uri, layout, null, info.name) // 바로 가져오기
+            }
+        }
+    }
 
     val busy = runState is RunUiState.Running // 다른 실행이 진행 중인지
 
@@ -206,10 +244,23 @@ fun RunSetupScreen(
                     TextButton(onClick = viewModel::refresh) { Text("새로고침") } // 다시 스캔
                 }
             }
+            item(key = "files-import") { // change(add)-hyungchul-2026-10-11-03:59 SAF 음원 가져오기
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (s.importing) { // 가져오는 중
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) // 진행 표시(미정)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("음원을 앱 폴더로 복사하는 중…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)) // 안내
+                            TextButton(onClick = viewModel::cancelImport) { Text("가져오기 취소") } // 취소
+                        }
+                    } else {
+                        TextButton(onClick = { treePicker.launch(null) }) { Text("음원 가져오기(SAF)") } // 폴더 고르기
+                    }
+                }
+            }
             val visibleFolders = s.folders.filter { it.lang in s.langs } // 켜진 언어의 폴더
             if (s.loaded && visibleFolders.isEmpty()) {
                 item(key = "files-empty") {
-                    Text("입력 음원(wav)이 없습니다. PC 에서 adb push 로 다음 폴더 아래 kr/ 또는 en/ 에 넣어 주세요: ${app.dirs.inputSound.path}", style = MaterialTheme.typography.bodySmall) // 안내
+                    Text("입력 음원(wav)이 없습니다. 위 '음원 가져오기(SAF)' 로 폴더를 고르거나, PC 에서 tools/adb/push_inputs.sh <input_sound 폴더> 로 넣어 주세요(스크립트가 push 후 앱이 읽을 수 있게 권한도 정리합니다 — adb push 만 하면 앱이 하위 폴더를 못 읽습니다). 대상: ${app.dirs.inputSound.path}/kr, en", style = MaterialTheme.typography.bodySmall) // 안내(change(add)-hyungchul-2026-10-11-03:59 R41 스크립트·SAF 권장)
                 }
             }
             visibleFolders.forEach { folder -> // 폴더마다
@@ -325,6 +376,22 @@ fun RunSetupScreen(
                 }
             }
         }
+    }
+
+    askLangFor?.let { uriText -> // change(add)-hyungchul-2026-10-11-03:59 언어 폴더를 알 수 없는 트리 → 언어 묻기
+        AlertDialog(
+            onDismissRequest = { askLangFor = null }, // 바깥 탭 = 취소
+            title = { Text("어느 언어 폴더로 가져올까요?") }, // 제목
+            text = { Text("고른 폴더 '$askLangName' 에 kr/ 또는 en/ 폴더가 없습니다. 고른 언어 폴더 아래 '$askLangName' 폴더로 wav 를 복사합니다(하위 폴더 구조 유지).") }, // 설명
+            confirmButton = {
+                Row {
+                    InputScanner.LANG_FOLDERS.keys.forEach { lang -> // 언어마다
+                        TextButton(onClick = { askLangFor = null; startImport(Uri.parse(uriText), InputTreeLayout.Unknown, lang, askLangName) }) { Text(langFolderLabel(lang)) } // 그 언어로
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { askLangFor = null }) { Text("취소") } }, // 취소
+        )
     }
 }
 
