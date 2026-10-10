@@ -158,8 +158,8 @@ docs/사용설명서.md, docs/테스트보고서_phase1.md
   - `object OutputLayout { fun comboName(algo: String, model: String, vadPresetId: String): String /* "${algo}_${model}_${vad}" */; fun transcript(runDir: File, item: InputItem, combo: String): File; fun errorFile(runDir: File, item: InputItem, combo: String): File /* <stem>.ERROR.txt */; fun resultCsv(runDir: File, lang: String, combo: String): File; fun detail(runDir: File, item: InputItem, combo: String): File /* details/<lang>/<combo>/<relDir>/<stem>.json */; fun vadSegments(runDir: File, presetId: String, item: InputItem): File /* vad_segments/<preset>/<lang>/<relDir>/<stem>.json */; fun manifest(runDir: File): File; fun log(runDir: File, runId: String): File /* _logs/run_<id>.log */; fun summaryCsv(runDir: File, runId: String): File /* _summary/all_result_<id>.csv */ }`
   - `data class TimedText(val startSec: Double, val endSec: Double, val text: String)`
   - `object TranscriptWriter { fun format(engineLabel: String, vadId: String, chunkCount: Int, fullText: String, segments: List<TimedText>): String; fun write(file: File, content: String) /* UTF-8 no BOM, 부모 폴더 생성 */ ; fun writeError(file: File, stage: String, code: String, message: String) }`
-  - `val STT_CSV_HEADER: List<String>` — PC `stt_common.py` 94-180행의 59개 열을 **순서 그대로** 복사(run_id … text).
-  - `class ResultCsvWriter(val file: File) { fun append(row: Map<String, String?>) }` — 파일이 없으면 BOM(EF BB BF)+헤더, 모든 행은 59열, 없는 키/null은 빈 칸, RFC4180 따옴표.
+  - `val STT_CSV_HEADER: List<String>` — PC `stt_common.py` 94-180행의 60개 열을 **순서 그대로** 복사(run_id … text).
+  - `class ResultCsvWriter(val file: File) { fun append(row: Map<String, String?>) }` — 파일이 없으면 BOM(EF BB BF)+헤더, 모든 행은 60열, 없는 키/null은 빈 칸, RFC4180 따옴표.
   - `val AppJson: kotlinx.serialization.json.Json` (prettyPrint, encodeDefaults, explicitNulls=true).
 
 - [ ] **Step 1: 실패 테스트**
@@ -174,7 +174,7 @@ docs/사용설명서.md, docs/테스트보고서_phase1.md
     29.05, 55.80, 하세요
     ```
     (줄바꿈 `\n`, 마지막 줄 뒤 `\n`). 전체 텍스트에 포함된 줄바꿈은 공백으로 치환.
-  - `headerHas59Columns`: `STT_CSV_HEADER.size == 59`, first `run_id`, last `text`, index of `status` < `text`.
+  - `headerHas59Columns`: `STT_CSV_HEADER.size == 60`, first `run_id`, last `text`, index of `status` < `text`.
   - `csvBomHeaderAndEscaping`: 두 번 append → 바이트 앞 3개 EF BB BF, 헤더 1회, `text`에 `a,"b"\nc` → `"a,""b""\nc"`.
 - [ ] **Step 2: 실패 확인** → **Step 3: 구현** → **Step 4: PASS** (`--tests "com.cowork.stt_ondevice.output.*"`)
 - [ ] **Step 5: 커밋** — `"PC 평가기 호환 출력 경로·txt·CSV"`
@@ -586,7 +586,7 @@ docs/사용설명서.md, docs/테스트보고서_phase1.md
 3. 모델 순서대로 `prepare` → (실패 시 그 모델의 모든 항목 ERROR(MODEL_LOAD, code)) → 프리셋 → 파일: `inFlight` 갱신 → WAV 읽기/변환(preprocess_sec) → `VadCache` → `ChunkPlanner` → chunk 별 `transcribe` → txt/CSV/detail 쓰기 → `inFlight=null`. resume 이고 txt 또는 ERROR.txt 가 있으면 건너뜀.
 4. 발화 0개 → 엔진 호출 없이 빈 전체 텍스트 txt, status `NO_MATCH`.
 5. 항목 예외 → `ERROR.txt` + CSV status `ERROR`, note 에 stage/code, 다음 항목 계속.
-6. CSV 행: spec §11 매핑(algo, model, exec_mode=embedded, engine_version, rel_dir, file, audio_ext=.wav, audio_bytes, audio_sec, sample_rate/channels(원본), req_lang, detected_lang, task=transcribe(whisper만, 그 외 빈 값), device=cpu, device_name, compute_type, workers, cpu_time_sec, rss_peak_mb(=PSS peak), preprocess_sec, upload_sec 빈 값, transcribe_sec, cloud_total_sec=transcribe_sec, elapsed_sec, rtf=transcribe_sec/audio_sec 소수 4자리, attempts=1, status, utterances=chunk 수, chars, words, text_sha1(앞 12자), note=`vad=..;chunk_mode=..;max_chunk=..;alias=..`, text). 나머지 빈 값. 같은 행에 `_summary/all_result_<id>.csv` 에도 append(헤더 = 59열 + `vad`).
+6. CSV 행: spec §11 매핑(algo, model, exec_mode=embedded, engine_version, rel_dir, file, audio_ext=.wav, audio_bytes, audio_sec, sample_rate/channels(원본), req_lang, detected_lang, task=transcribe(whisper만, 그 외 빈 값), device=cpu, device_name, compute_type, workers, cpu_time_sec, rss_peak_mb(=PSS peak), preprocess_sec, upload_sec 빈 값, transcribe_sec, cloud_total_sec=transcribe_sec, elapsed_sec, rtf=transcribe_sec/audio_sec 소수 4자리, attempts=1, status, utterances=chunk 수, chars, words, text_sha1(앞 12자), note=`vad=..;chunk_mode=..;max_chunk=..;alias=..`, text). 나머지 빈 값. 같은 행에 `_summary/all_result_<id>.csv` 에도 append(헤더 = 60열 + `vad`).
 7. 취소: 코루틴 취소 시 현재 chunk 후 `engine.cancel()`/`close()` 보장, manifest `finishedAt=null`.
 8. 모델 단위 `close()` 를 finally 로 보장(`ModelStore.acquire/release` 는 `engineFactory` 래퍼가 담당 — Task 27 `RunService` 에서 `{ spec -> store.acquire(spec); EngineFactory.create(spec, store.modelDir(spec)).also { onClose = { store.release(spec) } } }` 형태로 주입).
 9. 진행 로그: 항목 시작/종료·오류·모델 로드 시간을 `OutputLayout.log(runDir, runId)` 에 한 줄씩 append(시각, combo, file, status, 메시지).
@@ -594,7 +594,7 @@ docs/사용설명서.md, docs/테스트보고서_phase1.md
 - [ ] **Step 1: 실패 테스트**
   - `orderIsModelThenPresetThenFile`: 모델 2, 프리셋 2, 파일 2 → 가짜 엔진 호출 순서 기록 검증.
   - `vadComputedOncePerPresetAndFile`: 모델 2개여도 VAD detect 호출 = 프리셋×파일.
-  - `writesPcCompatibleTree`: 실행 후 `run/kr/fake_m1_SILERO/customer/01.txt` 가 `[전체 텍스트]` 형식, `result.csv` 59열 1행+헤더.
+  - `writesPcCompatibleTree`: 실행 후 `run/kr/fake_m1_SILERO/customer/01.txt` 가 `[전체 텍스트]` 형식, `result.csv` 60열 1행+헤더.
   - `silentFileWritesNoMatch`: VAD 0 구간 → 엔진 호출 0회, CSV status `NO_MATCH`.
   - `errorIsolated`: 두 번째 파일에서 엔진 예외 → `02.ERROR.txt`, 세 번째 파일 OK.
   - `modelLoadFailureMarksAllItems`: prepare 예외 → 그 모델 항목 전부 ERROR(MODEL_LOAD), 다음 모델 정상.

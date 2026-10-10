@@ -326,7 +326,7 @@ interface AsrEngine : AutoCloseable {
 ```
 output_stt/<run_id>/
  ├ <lang>/<algo>_<model>_<VAD>/<rel_dir>/<stem>.txt          (실패: <stem>.ERROR.txt)
- ├ <lang>/<algo>_<model>_<VAD>/result.csv                    (UTF-8 BOM, PC STT_CSV_HEADER 59열 그대로)
+ ├ <lang>/<algo>_<model>_<VAD>/result.csv                    (UTF-8 BOM, PC STT_CSV_HEADER 60열 그대로)
  ├ details/<lang>/<algo>_<model>_<VAD>/<rel_dir>/<stem>.json (chunk별 offset/텍스트/raw, 시간, 자원, 엔진 메타)
  ├ vad_segments/<VAD>/<lang>/<rel_dir>/<stem>.json
  ├ run_manifest.json                                          (기기, 앱 빌드, 모델 hash/라이선스, 프리셋 값, UNSUPPORTED 목록)
@@ -342,7 +342,7 @@ output_stt/<run_id>/
   [구간별] start(sec), end(sec), text
   0.42, 28.10, ...
   ```
-- result.csv 59열 매핑: `algo`=`<algo>_<VAD>`가 아닌 **`<algo>`**, `model`=`<model>`, `exec_mode`=`embedded`, `engine_version`=runtime 버전,
+- result.csv 60열 매핑: `algo`=`<algo>_<VAD>`가 아닌 **`<algo>`**, `model`=`<model>`, `exec_mode`=`embedded`, `engine_version`=runtime 버전,
   `device`=`cpu`, `device_name`=SoC/모델명, `compute_type`=실제 precision, `workers`=threads, `cloud_total_sec`=transcribe_sec(로컬은 업로드 0),
   `note`에 `vad=<preset>;chunk_mode=..;max_chunk=..;alias=<PC 호환명>`. GPU·비용·Google/Azure 전용 열은 빈 값.
 - PC 평가 사용: `python run_eval.py --ref ~/workspace/stt/answer_sheet/kr --hyp <run_id>/kr` → 모델명 `<algo>_<model>_<VAD>`.
@@ -365,7 +365,7 @@ output_stt/<run_id>/
 ## 14. 검증 계획 (3단계)
 
 1. **정적·단위**: 공식 소스 대조(프리셋 값·후처리 로직), JVM 테스트 — WavReader, 각 post-processor 골든 비교, ChunkPlanner(병합/개별/초과분할/0발화),
-   OutputLayout 경로, TranscriptWriter 형식, ResultCsvWriter 59열/BOM, ModelInstaller 경로탈출·SHA 검사.
+   OutputLayout 경로, TranscriptWriter 형식, ResultCsvWriter 60열/BOM, ModelInstaller 경로탈출·SHA 검사.
    추가로 샘플 출력 폴더에 사용자의 `run_eval.py`를 **읽기 전용 실행**하여 페어링 확인.
 2. **빌드**: `./gradlew assembleDebug testDebugUnitTest`, `llvm-readelf`로 모든 `.so` LOAD p_align=16384 확인, 중복 .so 없음.
 3. **실기기(S25 Ultra 연결 시)**: 모델 설치→KO/EN 파일 1개씩 엔진×(NONE, SILERO, 대표 VAD) smoke, 취소/재시작, 비행기 모드 전사, adb pull → PC 평가기 실행.
