@@ -128,11 +128,12 @@ configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configu
  *       jni/arm64-v8a/libsherpa-onnx-jni.so 하나만 outputDir/arm64-v8a/ 에 풀어 놓는다(그 밖 ABI·classes.jar 는 무시).
  *       이 AAR 은 onnxruntime 을 정적 링크했으므로 arm64 용 libonnxruntime.so 를 따로 갖고 있지 않다(APK 의 libonnxruntime.so 는 onnxruntime-android 것 1개).
  * 입력: aarFile(AAR 경로), expectedSha256(기대 해시), outputDir(jniLibs 형식 출력 폴더)
- * 출력: 해시 불일치·.so 없음 → GradleException
+ * 출력: AAR 없음(change(add)-hyungchul-2026-10-10-21:32: tools/fetch_native_deps.sh 안내)·해시 불일치·.so 없음 → GradleException
  * 리턴: 없음
  */
 abstract class ExtractSherpaJniTask : DefaultTask() {
-    @get:InputFile
+    // change(add)-hyungchul-2026-10-10-21:32 @InputFile → @InputFiles: 파일이 없을 때 Gradle 입력 검증 오류 대신 작업이 안내 메시지로 실패하게 함(입력 추적은 그대로)
+    @get:InputFiles
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val aarFile: RegularFileProperty // 입력 AAR(tools/fetch_native_deps.sh 가 받아 둠)
 
@@ -158,6 +159,9 @@ abstract class ExtractSherpaJniTask : DefaultTask() {
     @TaskAction
     fun extract() {
         val aar = aarFile.get().asFile // AAR 파일
+        if (!aar.isFile) { // change(add)-hyungchul-2026-10-10-21:32 AAR 없음
+            throw GradleException("sherpa-onnx AAR 없음: ${aar.path} — 저장소 루트에서 tools/fetch_native_deps.sh 를 먼저 실행해 내려받으세요(SHA-256 검사 포함)") // change(add)-hyungchul-2026-10-10-21:32 안내 후 실패
+        }
         val md = MessageDigest.getInstance("SHA-256") // 해시기
         aar.inputStream().use { input -> // 파일 열기
             val buf = ByteArray(1 shl 20) // 1 MiB 버퍼
@@ -187,7 +191,7 @@ abstract class ExtractSherpaJniTask : DefaultTask() {
 // change(add)-hyungchul-2026-10-10-20:57: sherpa-onnx v1.13.8 AAR(SHA-256 은 tools/fetch_native_deps.sh 의 SHERPA_SHA 와 같은 값)에서 JNI 만 추출
 val extractSherpaJni = tasks.register<ExtractSherpaJniTask>("extractSherpaJni") {
     aarFile.set(layout.projectDirectory.file("libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar")) // 입력 AAR
-    expectedSha256.set("b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471") // AAR SHA-256
+    expectedSha256.set("b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471") // AAR SHA-256(change(add)-hyungchul-2026-10-10-21:32 tools/fetch_native_deps.sh 의 SHERPA_SHA 와 같은 값 — 바꿀 때 둘 다)
     outputDir.set(layout.buildDirectory.dir("generated/sherpaJni")) // 출력(빌드 폴더, git 밖)
 }
 

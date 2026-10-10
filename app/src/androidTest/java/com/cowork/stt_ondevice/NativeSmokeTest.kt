@@ -519,7 +519,20 @@ class NativeSmokeTest {
     private fun sherpaRun(id: String, vararg inputs: Pair<String, String>, sec: Int = 20): List<ChunkText> {
         val installed = installedModel(id) // 기기 모델
         assumeTrue("기기에 $id 모델 없음 — 건너뜀", installed != null) // 없으면 건너뜀
-        val (spec, dir) = installed!! // 스펙·폴더
+        return sherpaRunInstalled(installed!!.first, installed.second, inputs.toList(), sec) // change(add)-hyungchul-2026-10-10-21:32 실제 전사는 공통 함수
+    }
+
+    // change(add)-hyungchul-2026-10-10-21:32
+    /**
+     * 목적: 설치 확인이 끝난 sherpa 모델로 여러 음원 전사
+     * 기능: EngineFactory → prepare(4) → PrepareInfo 확인(버전 1.13.8, CPU, 카탈로그 정밀도, 4 스레드) →
+     *       (상대 경로, 언어) 마다 앞 sec 초 전사 → 비어 있지 않음·detectedLang null 확인, 로드·추론 시간·텍스트를 logcat 에 남긴다.
+     * 입력: spec(모델 메타), dir(모델 폴더), inputs(input_sound 기준 상대 경로 to 언어 코드 목록), sec(자를 길이, 초)
+     * 출력: 실패 시 AssertionError
+     * 리턴: 입력 순서대로의 ChunkText 목록
+     */
+    private fun sherpaRunInstalled(spec: ModelSpec, dir: File, inputs: List<Pair<String, String>>, sec: Int): List<ChunkText> {
+        val id = spec.id // 로그용 id
         EngineFactory.create(spec, dir).use { engine -> // 엔진 생성
             val info = runBlocking { engine.prepare(4) } // 모델 로드
             Log.i(TAG, "$id prepare: $info") // 준비 결과 기록
@@ -539,11 +552,23 @@ class NativeSmokeTest {
     }
 
     // change(add)-hyungchul-2026-10-10-20:57
-    /** 한글 음절이 하나라도 있는지. */
+    /**
+     * 목적: 한글 포함 여부 판정(change(add)-hyungchul-2026-10-10-21:32 주석 형식 정리)
+     * 기능: 문자열에 한글 음절(U+AC00–U+D7A3)이 하나라도 있는지 본다.
+     * 입력: s(검사할 문자열)
+     * 출력: 없음
+     * 리턴: 있으면 true
+     */
     private fun hasHangul(s: String) = s.any { it in '\uAC00'..'\uD7A3' } // 한글 음절 범위
 
     // change(add)-hyungchul-2026-10-10-20:57
-    /** 라틴 문자가 하나라도 있는지. */
+    /**
+     * 목적: 영문 포함 여부 판정(change(add)-hyungchul-2026-10-10-21:32 주석 형식 정리)
+     * 기능: 문자열에 라틴 문자(a–z, A–Z)가 하나라도 있는지 본다.
+     * 입력: s(검사할 문자열)
+     * 출력: 없음
+     * 리턴: 있으면 true
+     */
     private fun hasLatin(s: String) = s.any { it in 'a'..'z' || it in 'A'..'Z' } // 영문자
 
     // change(add)-hyungchul-2026-10-10-20:57
@@ -650,7 +675,8 @@ class NativeSmokeTest {
     // change(add)-hyungchul-2026-10-10-20:57
     /**
      * 목적: 선택 모델(Omnilingual 300M v1, 1B v2) 기록
-     * 기능: 기기에 있는 것만 kr 0–20 s 전사해 결과를 남긴다(없으면 기록만). 둘 다 없으면 건너뜀(assume).
+     * 기능: 모델마다 따로 판단한다(change(add)-hyungchul-2026-10-10-21:32) — 파일이 모두 있는 모델만 kr 0–20 s 전사해 결과를 남기고,
+     *       없는(또는 파일이 덜 있는) 모델은 logcat 에 "건너뜀" 만 남기고 다음 모델로 간다. 하나도 실행하지 못했으면 테스트 전체를 건너뜀(assume).
      * 입력: 없음
      * 출력: 없음(실패 시 AssertionError)
      * 리턴: 없음
@@ -658,12 +684,18 @@ class NativeSmokeTest {
     @Test
     fun sherpaOmnilingualOptional() {
         val ids = listOf("sherpa-omnilingual-ctc300m-v1-int8-2025-11-12", "sherpa-omnilingual-ctc1b-v2-int8-2026-02-05") // 선택 모델
-        val present = ids.filter { File(filesDir, "models/$it").isDirectory } // 기기에 폴더가 있는 것
-        assumeTrue("선택 Omnilingual 모델이 기기에 없음 — 건너뜀", present.isNotEmpty()) // 없으면 건너뜀
-        for (id in present) { // 있는 것마다
-            val (ko) = sherpaRun(id, "kr/customer/01.wav" to "ko") // 한국어 전사(파일이 덜 있으면 assume 로 건너뜀)
+        var ran = 0 // change(add)-hyungchul-2026-10-10-21:32 실행한 모델 수
+        for (id in ids) { // change(add)-hyungchul-2026-10-10-21:32 모델마다 따로
+            val installed = installedModel(id) // 기기 모델(SHA-256 확인 포함)
+            if (installed == null) { // 없으면
+                Log.i(TAG, "$id 기기에 없음(또는 파일 일부 없음) — 이 모델만 건너뜀") // 건너뜀 기록
+                continue // 다음 모델
+            }
+            val (ko) = sherpaRunInstalled(installed.first, installed.second, listOf("kr/customer/01.wav" to "ko"), 20) // 한국어 전사
             Log.i(TAG, "$id 한글 포함=${hasHangul(ko.text)}") // 문자 종류 기록
+            ran++ // 실행 수 증가
         }
+        assumeTrue("선택 Omnilingual 모델이 하나도 기기에 없음 — 건너뜀", ran > 0) // 하나도 못 했으면 건너뜀 표시
     }
 
     private companion object {

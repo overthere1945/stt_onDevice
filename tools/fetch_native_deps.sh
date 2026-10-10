@@ -25,7 +25,7 @@ TEN_LICENSE_SHA="03d862b922867b8c3406a0c17791e256ed3d76f197d88c1996c4aebfb79f688
 SHERPA_VERSION="1.13.8" # sherpa-onnx 릴리스 버전
 SHERPA_AAR="sherpa-onnx-static-link-onnxruntime-${SHERPA_VERSION}.aar" # AAR 파일명(onnxruntime 정적 링크판)
 SHERPA_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${SHERPA_AAR}" # 릴리스 다운로드 URL
-SHERPA_SHA="b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471" # AAR SHA-256
+SHERPA_SHA="b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471" # AAR SHA-256 (change(add)-hyungchul-2026-10-10-21:32 app/build.gradle.kts extractSherpaJni 의 expectedSha256 과 같은 값 — 바꿀 때 둘 다)
 
 TEN_DIR="${ROOT}/app/src/main/cpp/third_party/ten-vad" # TEN 배치 폴더(gitignore)
 LIBS_DIR="${ROOT}/app/libs" # AAR 배치 폴더(*.aar 는 gitignore)
