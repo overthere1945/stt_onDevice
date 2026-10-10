@@ -20,12 +20,15 @@ MODELS_DIR = os.path.join(TOOLS_DIR, "models")  # 다운로드 모델 폴더(git
 
 SAMPLE_RATE = 16000  # 모든 클립의 샘플레이트(Hz)
 
-# 골든 클립 3종(파일명 = 클립 이름)
+# 골든 클립 4종(파일명 = 클립 이름). 길이는 일부러 hop(512/256/480/320/160) 배수가 아니게 해 끝부분 처리를 검증한다.
+# change(add)-hyungchul-2026-10-10-12:52 수정 라운드 1: 20 s+77 / 8 s+123 샘플로 변경, 70 s+55 긴 클립 추가
 CLIPS = [
-    "kr_customer_01_20s.wav",  # 한국어 고객상담 01 앞 20 s
-    "en_customer_01_20s.wav",  # 영어 Customer_Service 01 앞 20 s
-    "synth_silence_noise_8s.wav",  # 합성: 무음 2 s + 백색잡음 4 s + 무음 2 s
+    "kr_customer_01_20s_plus77.wav",  # 한국어 고객상담 01 앞 320077 샘플
+    "en_customer_01_20s_plus77.wav",  # 영어 Customer_Service 01 앞 320077 샘플
+    "synth_silence_noise_8s_plus123.wav",  # 합성: 무음 2 s + 백색잡음 4 s + 무음 2 s + 무음 123 샘플
+    "kr_customer_01_70s_plus55.wav",  # 한국어 고객상담 01 앞 1120055 샘플(FSMN 다중 블록·최대 구간 검증)
 ]
+SYNTHETIC_PREFIX = "synthetic_"  # 음원 없는 손작성 점수 골든의 clip 이름 접두어
 
 INF = float("inf")  # 최대 발화 길이 제한 없음 표기
 

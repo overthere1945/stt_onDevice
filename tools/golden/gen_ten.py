@@ -111,6 +111,7 @@ def main():
             "TEN", "TEN_DEFAULT", clip, hop_sec, probs, hr.frames_to_sec(default_frames, hop_sec),  # 기본 필드
             f"{TOOL_BASE}; flag 연속 병합",  # 도구
             extra={"expectedFrames": default_frames, "frameFlags": flags,  # 프레임 구간, 원본 flag
+                   "totalSamples": len(pcm),  # change(add)-hyungchul-2026-10-10-12:52 전체 샘플 수
                    "params": {"threshold": th_d, "speechMs": sp_d, "silenceMs": sil_d, "hopSamples": hop}},  # 파라미터
         )
         th, min_sp, min_sil, pad, max_sp = gc.TEN_SHERPA  # TEN_SHERPA 파라미터

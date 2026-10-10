@@ -178,11 +178,13 @@ def main():
                 print("  synth", pid, pairs)  # 참고 출력
             gc.write_golden(  # 골든 저장
                 "PYANNOTE", pid, clip, hop, scores, pairs, TOOL, frame_times_sec=times,  # 기본 필드 + 프레임 시각
-                extra={"params": {"onset": onset, "offset": offset, "minDurationOn": min_on, "minDurationOff": min_off}},  # 파라미터
+                extra={"params": {"onset": onset, "offset": offset, "minDurationOn": min_on, "minDurationOff": min_off},  # 파라미터
+                       "totalSamples": len(audio)},  # change(add)-hyungchul-2026-10-10-12:52 전체 샘플 수
             )
             print(clip, pid, len(pairs), [(round(s, 3), round(e, 3)) for s, e in pairs[:3]])  # 진행 로그
         gc.write_scores("PYANNOTE", clip, hop, scores, TOOL, frame_times_sec=times,  # 모델 추론 정합용 점수
                         extra={"windowSamples": int(model.meta["window_size"]), "stepSamples": gc.SAMPLE_RATE,  # 창/step
+                               "totalSamples": len(audio),  # change(add)-hyungchul-2026-10-10-12:52 전체 샘플 수
                                "receptiveFieldSize": int(model.meta["receptive_field_size"]),  # 프레임 길이(샘플)
                                "receptiveFieldShift": int(model.meta["receptive_field_shift"])})  # 프레임 간격(샘플)
 

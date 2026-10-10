@@ -3,7 +3,7 @@
 # 기능: funasr_onnx.Fsmn_vad(quantize=True → model_quant.onnx)를 프리셋별 config.yaml 로 실행하고,
 #       E2EVadModel 을 기록용 하위 클래스로 바꿔(site-packages 수정 없이 모듈 속성만 교체) 내부의
 #       ONNX 출력 scores[0][t][0](silence 확률)과 프레임 dB(ComputeDecibel 결과)를 가로채 저장한다.
-#       프리셋 2종 × 클립 3종 결과 구간(ms→초)을 골든 JSON 으로 쓴다.
+#       프리셋 2종 × 클립 4종 결과 구간(ms→초)을 골든 JSON 으로 쓴다. 60 s 초과 클립은 6000 프레임 블록으로 나뉘어 처리된다.
 # change(add)-hyungchul-2026-10-10-12:19
 
 import os  # 경로
@@ -55,6 +55,18 @@ class RecordingE2EVadModel(E2EVadModel):
         super().ComputeDecibel()  # 원본 동작
         RECORD["decibel"] = list(self.decibel)  # 누적 목록 복사
 
+    # change(add)-hyungchul-2026-10-10-12:52 다중 블록 호출 방식 기록
+    def __call__(self, score, waveform, is_final=False, max_end_sil=800, online=False):
+        """
+        목적: 블록 호출 기록
+        기능: 원본 __call__ 을 그대로 실행하면서 블록마다 (프레임 수, 파형 샘플 수, is_final) 을 기록한다.
+        입력: score(블록 ONNX 출력), waveform(블록 파형), is_final, max_end_sil, online
+        출력: RECORD["calls"]
+        리턴: 원본 반환값(구간 목록)
+        """
+        RECORD.setdefault("calls", []).append([int(score.shape[1]), int(waveform.shape[-1]), bool(is_final)])  # 호출 기록
+        return super().__call__(score, waveform, is_final=is_final, max_end_sil=max_end_sil, online=online)  # 원본 동작
+
 
 def make_model_dir(tmp_root, preset_id, conf):
     """
@@ -95,8 +107,9 @@ def main():
                 audio, _ = gc.load_clip(clip)  # float32 파형(-1~1)
                 RECORD.clear()  # 기록 초기화
                 result = vad(audio)  # 원본 실행(ndarray 입력 → librosa 미사용)
-                assert len(RECORD["scores"]) == 1, "20 s 이하 클립은 한 블록(6000 프레임 이하)이어야 함"  # 블록 1개
-                scores = RECORD["scores"][0][0]  # (T, 248) 소프트맥스 출력
+                scores = np.concatenate([b[0] for b in RECORD["scores"]], axis=0)  # 블록을 이어 (T, 248) 소프트맥스 출력
+                calls = RECORD["calls"]  # change(add)-hyungchul-2026-10-10-12:52 블록 호출 기록 [프레임 수, 파형 샘플 수, is_final]
+                assert calls[-1][2] and not any(c[2] for c in calls[:-1]), "마지막 블록만 is_final 이어야 함"  # 호출 방식 확인
                 sil = scores[:, 0]  # sil_pdf_ids=[0] → silence 확률
                 db = RECORD["decibel"]  # 프레임 dB
                 assert len(db) == len(sil), f"dB 프레임 수 {len(db)} ≠ 점수 프레임 수 {len(sil)}"  # 길이 일치
@@ -105,13 +118,16 @@ def main():
                 gc.write_golden(  # 골든 저장
                     "FSMN", pid, clip, 0.010, sil, pairs, TOOL, frame_db=db,  # 기본 필드 + dB
                     extra={"expectedMs": ms_pairs,  # 원본 ms 정수 구간
+                           "totalSamples": len(audio),  # change(add)-hyungchul-2026-10-10-12:52 전체 샘플 수
+                           "blocks": calls,  # 블록 호출 기록 [프레임 수, 파형 샘플 수, is_final]
                            "params": conf,  # 적용한 model_conf 값
                            "originalConfigMaxSingleSegmentTime": original_max},  # ModelScope config 원래 값
                 )
                 if pid == "FSMN_DEFAULT":  # 점수는 프리셋과 무관하므로 한 번만
                     gc.write_scores("FSMN", clip, 0.010, sil, TOOL,  # 모델 추론 정합용 sil 확률
-                                    extra={"scoreIndex": 0, "numClasses": int(scores.shape[1])})  # 사용 인덱스/클래스 수
-                print(clip, pid, len(sil), ms_pairs[:4])  # 진행 로그
+                                    extra={"scoreIndex": 0, "numClasses": int(scores.shape[1]),  # 사용 인덱스/클래스 수
+                                           "totalSamples": len(audio)})  # 사용 인덱스/클래스 수
+                print(clip, pid, len(sil), calls, ms_pairs)  # 진행 로그
 
 
 if __name__ == "__main__":  # 스크립트 실행 시

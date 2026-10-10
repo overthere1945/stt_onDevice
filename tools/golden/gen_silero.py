@@ -2,7 +2,7 @@
 # 목적: Silero VAD 골든 데이터 생성(Kotlin SileroTimestamps·SileroVad 포팅 검증 기준)
 # 기능: silero-vad 6.2.3 공식 ONNX(models/silero_v6.2.3/silero_vad.onnx)를 라이브러리 OnnxWrapper 로 실행하면서
 #       get_speech_timestamps(return_seconds=False) 가 내부에서 계산한 512-hop 확률을 그대로 가로채 저장하고,
-#       Silero 프리셋 8종 × 클립 3종 결과(샘플·초)를 골든 JSON 으로 쓴다.
+#       Silero 프리셋 8종 × 클립 4종 결과(샘플·초)를 골든 JSON 으로 쓴다.
 #       같은 확률을 get_speech_timestamps_from_probs 에 다시 넣어 라이브러리 결과와 완전히 같은지 assert 한다.
 # change(add)-hyungchul-2026-10-10-12:19
 
