@@ -5,7 +5,9 @@
 package com.cowork.stt_ondevice.ui.models // 모델 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
+import com.cowork.stt_ondevice.model.ArchiveType // 압축 형식
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 상태
+import com.cowork.stt_ondevice.model.Download // 다운로드 정보
 import com.cowork.stt_ondevice.model.Downloader // 다운로더
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
 import com.cowork.stt_ondevice.model.ModelCatalog // 실제 카탈로그
@@ -14,6 +16,7 @@ import com.cowork.stt_ondevice.model.ModelInstaller // 설치기
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 모델 저장소
+import com.cowork.stt_ondevice.model.TestHttpServer // 로컬 HTTP 서버
 import com.cowork.stt_ondevice.model.addFile // tar 항목 추가 도우미
 import com.cowork.stt_ondevice.model.makeTarBz2 // tar.bz2 생성 도우미
 import com.cowork.stt_ondevice.model.sha256Hex // SHA-256 도우미
@@ -21,6 +24,7 @@ import com.cowork.stt_ondevice.model.testSpec // 테스트용 ModelSpec
 import kotlinx.coroutines.Dispatchers // 디스패처
 import kotlinx.coroutines.ExperimentalCoroutinesApi // 테스트 API 표시
 import kotlinx.coroutines.flow.first // 첫 조건 값 대기
+import kotlinx.coroutines.launch // 코루틴 시작
 import kotlinx.coroutines.runBlocking // 블로킹 실행
 import kotlinx.coroutines.test.UnconfinedTestDispatcher // 즉시 실행 테스트 디스패처
 import kotlinx.coroutines.test.resetMain // Main 복구
@@ -36,6 +40,7 @@ import org.junit.Rule // 규칙
 import org.junit.Test // 테스트
 import org.junit.rules.TemporaryFolder // 임시 폴더
 import java.io.File // 파일
+import java.util.Random // 난수
 
 // change(add)-hyungchul-2026-10-11-03:09
 /**
@@ -265,4 +270,71 @@ class ModelsViewModelTest {
         withTimeout(10_000) { vm.rows.first { r -> r.first { it.id == "model-b" }.state == InstallState.READY } } // READY 대기
         assertEquals(InstallState.READY, store.state(specB)) // 설치됨
     }
+
+    // change(add)-hyungchul-2026-10-11-03:24
+    /**
+     * 목적: 다운로드 시작·진행률·취소·재시작(이어받기) 전 과정
+     * 기능: 로컬 서버가 본문 일부만 보내고 멈추게 해 "받는 도중"을 결정적으로 만든다.
+     *       (1) download 직후 행이 DOWNLOADING 이고 진행률이 올라간다 (2) cancel 후 정리 전 재시도는 "정리하는 중" 안내로 거부된다(실패 메시지 아님)
+     *       (3) 정리가 끝나면 NOT_INSTALLED 로 돌아가고 취소 메시지가 나오며 .part 가 일부만 남는다 (4) 다시 download 하면 Range 로 이어받아 READY 가 된다.
+     * 입력: 없음 / 출력: 없음 / 리턴: 없음
+     */
+    @Test
+    fun downloadCancelResumeFlow() = runBlocking {
+        val server = TestHttpServer() // 로컬 서버
+        try {
+            val body = ByteArray(200_000).also { Random(9).nextBytes(it) } // 받을 파일
+            server.serve("/m.bin", body) // 서빙
+            val spec = testSpec("model-dl", listOf(Download(server.url("/m.bin"), body.size.toLong(), sha256Hex(body), ArchiveType.NONE, "")),
+                listOf(ModelFile("m.bin", body.size.toLong(), sha256Hex(body), "model"))) // 다운로드 가능한 spec
+            val gate = server.gate("/m.bin", 100_000) // 100KB 보낸 뒤 멈춤
+            val vm = newVm(listOf(spec)) // ViewModel
+            fun row() = vm.rows.value.first { it.id == "model-dl" } // 현재 행
+            vm.download("model-dl") // 시작
+            assertEquals(InstallState.DOWNLOADING, row().state) // (1) 시작 직후 곧바로 받는 중으로 보임(취소 버튼 노출 조건)
+            val moved = withTimeout(10_000) { vm.rows.first { r -> r.first().let { it.state == InstallState.DOWNLOADING && (it.progress ?: 0f) >= 0.3f } } } // 진행률 상승 대기
+            assertTrue(moved.first().progress!! < 1f) // 아직 끝나지 않음
+            vm.cancel("model-dl") // 취소 요청(서버가 멈춘 상태라 정리까지 시간이 걸림)
+            vm.download("model-dl") // 정리 전 재시도
+            val early = withTimeout(5_000) { vm.messages.first() } // 거부 메시지
+            assertTrue(early, early.contains("정리하는 중") && !early.contains("실패")) // (2) 실패가 아니라 안내
+            gate.countDown() // 서버 재개 → 다음 읽기에서 취소 확인
+            withTimeout(10_000) { vm.rows.first { r -> r.first().state == InstallState.NOT_INSTALLED } } // 정리 후 미설치 복귀
+            val cancelMsg = withTimeout(5_000) { vm.messages.first() } // 취소 메시지
+            assertTrue(cancelMsg, cancelMsg.contains("취소했습니다")) // (3) 취소 메시지
+            val part = File(dirs.tmp, "model-dl.dl/0.dl.part") // 이어받기용 .part
+            assertTrue(part.isFile && part.length() > 0 && part.length() < body.size) // 일부만 보관
+            val partLen = part.length() // 보관된 크기
+            vm.download("model-dl") // (4) 재시작
+            withTimeout(10_000) { vm.rows.first { r -> r.first().state == InstallState.READY } } // 설치됨
+            assertEquals("bytes=$partLen-", server.requests.last().range) // 보관한 지점부터 이어받음
+            assertEquals(InstallState.READY, store.state(spec)) // 저장소도 READY
+            assertTrue(!part.exists()) // .part 정리됨
+        } finally {
+            server.close() // 서버 종료
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:24
+    /**
+     * 목적: 가져오기 진행 중 행 상태
+     * 기능: 안내 없이 importFrom 으로 시작하면 곧바로 VERIFYING(검증 중)으로 보이고 끝나면 READY 가 된다(작업 시작 상태 반영).
+     * 입력: 없음 / 출력: 없음 / 리턴: 없음
+     */
+    @Test
+    fun importShowsVerifyingThenReady() = runBlocking {
+        val vm = newVm(listOf(specA, specB)) // ViewModel
+        val src = tmp.newFolder("srcB") // 원본 폴더
+        File(src, "b.bin").writeBytes(bBytes) // 원본 파일
+        val seen = mutableSetOf<InstallState>() // 관찰한 상태
+        val collector = launchCollect(this, vm, seen) // 상태 수집 시작
+        vm.importFrom("model-b", src) // 가져오기
+        withTimeout(10_000) { vm.rows.first { r -> r.first { it.id == "model-b" }.state == InstallState.READY } } // 완료 대기
+        collector.cancel() // 수집 종료
+        assertTrue(seen.toString(), InstallState.VERIFYING in seen) // 도중에 검증 중으로 보였음
+    }
+
+    /** 목적: model-b 행 상태 수집 / 기능: scope 에서 rows 를 구독해 model-b 의 상태를 seen 에 모은다(Unconfined 라 즉시 반영) / 리턴: 수집 Job */
+    private fun launchCollect(scope: kotlinx.coroutines.CoroutineScope, vm: ModelsViewModel, seen: MutableSet<InstallState>) =
+        scope.launch(dispatcher) { vm.rows.collect { r -> r.firstOrNull { it.id == "model-b" }?.let { seen.add(it.state) } } }
 }

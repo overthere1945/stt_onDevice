@@ -5,6 +5,7 @@
 //       검증은 결과 대화상자를 거치며 오류·완료 메시지는 스낵바(한국어)로 보인다.
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
+import androidx.compose.foundation.isSystemInDarkTheme // change(add)-hyungchul-2026-10-11-03:24 다크 모드 여부(색 대비)
 import androidx.compose.foundation.layout.Arrangement // 배치 간격
 import androidx.compose.foundation.layout.Column // 세로 배치
 import androidx.compose.foundation.layout.ExperimentalLayoutApi // 실험적 레이아웃 표시
@@ -31,7 +32,6 @@ import androidx.compose.material3.Text // 텍스트
 import androidx.compose.material3.TextButton // 텍스트 버튼
 import androidx.compose.runtime.Composable // 컴포저블
 import androidx.compose.runtime.LaunchedEffect // 부수 효과
-import androidx.compose.runtime.collectAsState // 상태 수집
 import androidx.compose.runtime.getValue // 위임 읽기
 import androidx.compose.runtime.mutableStateOf // 상태 생성
 import androidx.compose.runtime.remember // 기억
@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier // 수정자
 import androidx.compose.ui.graphics.Color // 색
 import androidx.compose.ui.platform.LocalContext // 컨텍스트
 import androidx.compose.ui.unit.dp // dp 단위
+import androidx.lifecycle.compose.collectAsStateWithLifecycle // change(add)-hyungchul-2026-10-11-03:24 생명주기 인식 상태 수집
 import androidx.lifecycle.viewmodel.compose.viewModel // 화면용 ViewModel 얻기
 import com.cowork.stt_ondevice.App // 앱 전역 객체
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 상태
@@ -55,9 +56,9 @@ import com.cowork.stt_ondevice.model.InstallState // 설치 상태
  */
 @Composable
 fun ModelsScreen(viewModel: ModelsViewModel = viewModel(factory = ModelsViewModel.factory(App.from(LocalContext.current)))) {
-    val rows by viewModel.rows.collectAsState() // 행 목록
-    val importPrompt by viewModel.importPrompt.collectAsState() // 가져오기 안내
-    val verifyReport by viewModel.verifyReport.collectAsState() // 검증 결과
+    val rows by viewModel.rows.collectAsStateWithLifecycle() // 행 목록
+    val importPrompt by viewModel.importPrompt.collectAsStateWithLifecycle() // 가져오기 안내
+    val verifyReport by viewModel.verifyReport.collectAsStateWithLifecycle() // 검증 결과
     val snackbar = remember { SnackbarHostState() } // 스낵바 상태
     var deleteTarget by remember { mutableStateOf<ModelRow?>(null) } // 삭제 확인 대상
 
@@ -75,6 +76,9 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel(factory = ModelsViewMode
             verticalArrangement = Arrangement.spacedBy(8.dp), // 항목 간격
         ) {
             item(key = "title") { Text("모델 관리", style = MaterialTheme.typography.headlineSmall) } // 화면 제목
+            item(key = "notice") { // change(add)-hyungchul-2026-10-11-03:24 다운로드 수명 안내
+                Text("다운로드는 앱이 켜져 있는 동안 진행됩니다. 앱을 완전히 종료하면 취소되며, 받은 부분은 보관되어 다시 시작하면 이어받습니다(탭 이동은 괜찮습니다).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             rows.groupBy { it.group }.forEach { (group, groupRows) -> // 그룹 순서는 카탈로그 순서
                 item(key = "group-$group") { // 그룹 머리글
                     Text(group, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
@@ -220,14 +224,14 @@ private fun CommercialBadge(status: CommercialStatus) {
 // change(add)-hyungchul-2026-10-11-03:09
 /**
  * 목적: 설치 상태 글자색
- * 기능: 설치됨=초록, 손상=오류색, 진행 중=주색, 미설치=기본 보조색.
+ * 기능: 설치됨=초록(라이트 진한 / 다크 밝은), 손상=오류색, 진행 중=주색, 미설치=기본 보조색.
  * 입력: state(설치 상태)
  * 출력: 없음
  * 리턴: 색
  */
 @Composable
 private fun stateColor(state: InstallState): Color = when (state) {
-    InstallState.READY -> Color(0xFF2E7D32) // 설치됨
+    InstallState.READY -> if (isSystemInDarkTheme()) Color(0xFF81C784) else Color(0xFF2E7D32) // 설치됨 — change(add)-hyungchul-2026-10-11-03:24 다크 모드에서는 밝은 초록으로 대비 확보
     InstallState.CORRUPT -> MaterialTheme.colorScheme.error // 손상
     InstallState.DOWNLOADING, InstallState.VERIFYING -> MaterialTheme.colorScheme.primary // 진행 중
     InstallState.NOT_INSTALLED -> MaterialTheme.colorScheme.onSurfaceVariant // 미설치

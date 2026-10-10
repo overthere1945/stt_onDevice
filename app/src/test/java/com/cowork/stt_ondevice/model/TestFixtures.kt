@@ -16,6 +16,8 @@ import java.net.InetAddress // 주소
 import java.net.InetSocketAddress // 소켓 주소
 import java.security.MessageDigest // 해시
 import java.util.concurrent.CopyOnWriteArrayList // 스레드 안전 리스트
+import java.util.concurrent.CountDownLatch // 재개 신호
+import java.util.concurrent.TimeUnit // 대기 단위
 import java.util.concurrent.ConcurrentHashMap // 스레드 안전 맵
 import java.util.concurrent.Executors // 실행기
 
@@ -157,6 +159,7 @@ class TestHttpServer : AutoCloseable {
     private val routes = ConcurrentHashMap<String, ByteArray>() // 경로 → 본문
     private val redirects = ConcurrentHashMap<String, String>() // 경로 → 이동할 경로
     private val truncateTo = ConcurrentHashMap<String, Int>() // 경로 → 본문을 이 길이로 잘라 보냄(Content-Length 는 원래 길이)
+    private val gates = ConcurrentHashMap<String, Pair<Int, CountDownLatch>>() // change(add)-hyungchul-2026-10-11-03:24 경로 → (먼저 보낼 바이트 수, 재개 신호) — 한 번 쓰면 제거
     val requests = CopyOnWriteArrayList<RecordedRequest>() // 수신 기록
     @Volatile var rangeMode: RangeMode = RangeMode.HONOR // Range 처리 방식
 
@@ -177,6 +180,16 @@ class TestHttpServer : AutoCloseable {
 
     /** 목적: 본문을 중간에 끊어 보내도록 설정 / 입력: path, bytes(실제로 보낼 앞부분 길이) / 리턴: 없음 */
     fun truncate(path: String, bytes: Int) { truncateTo[path] = bytes } // 등록
+
+    /**
+     * 목적: 본문 전송 도중 멈추기 (change(add)-hyungchul-2026-10-11-03:24)
+     * 기능: path 의 다음 응답 1회에 한해 앞 afterBytes 바이트만 보내고 멈췄다가, 돌려준 래치를 countDown 하면 나머지를 보낸다(최대 20초 대기 후 재개).
+     *       취소·진행률처럼 "받는 도중" 상태를 결정적으로 만들 때 쓴다.
+     * 입력: path, afterBytes(먼저 보낼 바이트 수)
+     * 출력: 없음
+     * 리턴: 재개 신호 래치
+     */
+    fun gate(path: String, afterBytes: Int): CountDownLatch = CountDownLatch(1).also { gates[path] = afterBytes to it } // 등록
 
     /** 목적: 요청 1건 처리 / 기능: 리다이렉트 → 본문 순으로 응답한다 / 입력: ex / 리턴: 없음 */
     private fun handle(ex: HttpExchange) {
@@ -217,7 +230,17 @@ class TestHttpServer : AutoCloseable {
     private fun send(ex: HttpExchange, code: Int, body: ByteArray, path: String) {
         val cut = truncateTo[path] // 잘라 보낼 길이
         ex.sendResponseHeaders(code, body.size.toLong()) // 헤더(선언 길이는 전체)
-        ex.responseBody.use { out -> out.write(if (cut != null && cut < body.size) body.copyOf(cut) else body) } // 본문
+        val gate = gates.remove(path) // change(add)-hyungchul-2026-10-11-03:24 이번 응답에 걸린 멈춤(한 번만)
+        ex.responseBody.use { out -> // 본문
+            if (gate != null && gate.first < body.size) { // change(add)-hyungchul-2026-10-11-03:24 중간 멈춤
+                out.write(body, 0, gate.first) // 앞부분
+                out.flush() // 클라이언트가 받도록 비움
+                gate.second.await(20, TimeUnit.SECONDS) // 재개 신호 대기
+                out.write(body, gate.first, body.size - gate.first) // 나머지
+            } else {
+                out.write(if (cut != null && cut < body.size) body.copyOf(cut) else body) // 본문
+            }
+        }
     }
 
     /** 목적: 서버 종료 / 기능: 즉시 중지 / 입력: 없음 / 리턴: 없음 */

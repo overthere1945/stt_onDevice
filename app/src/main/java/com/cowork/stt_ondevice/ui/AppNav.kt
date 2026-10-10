@@ -5,12 +5,12 @@
 //       모델 탭만 실제 화면이고 나머지는 "준비 중" 임시 화면이다(Task 29~30 에서 교체).
 package com.cowork.stt_ondevice.ui // 화면 최상위 패키지
 
+import androidx.annotation.DrawableRes // 리소스 id 표시
 import androidx.compose.foundation.layout.Box // 겹치기/단일 배치
 import androidx.compose.foundation.layout.fillMaxSize // 가득 채우기
 import androidx.compose.foundation.layout.padding // 여백
 import androidx.compose.material.icons.Icons // 기본 아이콘 모음
 import androidx.compose.material.icons.automirrored.filled.List // 목록 아이콘
-import androidx.compose.material.icons.filled.Phone // 전화(마이크 대용) 아이콘
 import androidx.compose.material.icons.filled.PlayArrow // 재생 아이콘
 import androidx.compose.material.icons.filled.Refresh // 새로고침 아이콘
 import androidx.compose.material.icons.filled.Settings // 설정 아이콘
@@ -25,26 +25,28 @@ import androidx.compose.runtime.getValue // 위임 읽기
 import androidx.compose.ui.Alignment // 정렬
 import androidx.compose.ui.Modifier // 수정자
 import androidx.compose.ui.graphics.vector.ImageVector // 벡터 아이콘 타입
+import androidx.compose.ui.res.painterResource // 리소스 아이콘
 import androidx.navigation.NavDestination.Companion.hierarchy // 목적지 계층
 import androidx.navigation.NavGraph.Companion.findStartDestination // 시작 목적지
 import androidx.navigation.compose.NavHost // 화면 호스트
 import androidx.navigation.compose.composable // 화면 등록
 import androidx.navigation.compose.currentBackStackEntryAsState // 현재 화면 상태
 import androidx.navigation.compose.rememberNavController // 내비게이션 컨트롤러
+import com.cowork.stt_ondevice.R // 앱 리소스
 import com.cowork.stt_ondevice.ui.models.ModelsScreen // 모델 관리 화면
 
 // change(add)-hyungchul-2026-10-11-03:09
 /**
  * 목적: 하단 탭 정의
  * 기능: 경로·한국어 라벨·아이콘을 묶는다(표시 순서 = 선언 순서).
- * 입력: route(경로), label(탭 이름), icon(아이콘)
+ * 입력: route(경로), label(탭 이름), icon(기본 벡터 아이콘, 없으면 null), iconRes(change(add)-hyungchul-2026-10-11-03:24 리소스 아이콘 id, icon 이 null 일 때 사용)
  */
-enum class AppTab(val route: String, val label: String, val icon: ImageVector) {
+enum class AppTab(val route: String, val label: String, val icon: ImageVector? = null, @DrawableRes val iconRes: Int = 0) { // change(add)-hyungchul-2026-10-11-03:24 리소스 아이콘 지원
     MODELS("models", "모델", Icons.Default.Settings), // 모델 관리
     RUN("run", "실행", Icons.Default.PlayArrow), // 실행 설정
     PROGRESS("progress", "진행", Icons.Default.Refresh), // 진행 상황
     RESULTS("results", "결과", Icons.AutoMirrored.Filled.List), // 결과 보기
-    MIC("mic", "마이크", Icons.Default.Phone), // 마이크 녹음
+    MIC("mic", "마이크", iconRes = R.drawable.ic_mic), // 마이크 녹음 — change(add)-hyungchul-2026-10-11-03:24 마이크 벡터
 }
 
 // change(add)-hyungchul-2026-10-11-03:09
@@ -73,7 +75,9 @@ fun AppNav() {
                                 restoreState = true // 이전 상태 복원
                             }
                         },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) }, // 아이콘
+                        icon = { // change(add)-hyungchul-2026-10-11-03:24 벡터/리소스 중 있는 쪽
+                            if (tab.icon != null) Icon(tab.icon, contentDescription = tab.label) else Icon(painterResource(tab.iconRes), contentDescription = tab.label) // 아이콘
+                        },
                         label = { Text(tab.label) }, // 한국어 라벨
                     )
                 }

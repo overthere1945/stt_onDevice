@@ -16,8 +16,8 @@ import com.cowork.stt_ondevice.model.ModelInstaller // 설치기
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 저장소
-import kotlinx.coroutines.CoroutineDispatcher // 디스패처 타입
 import kotlinx.coroutines.CancellationException // 취소 예외
+import kotlinx.coroutines.CoroutineDispatcher // 디스패처 타입
 import kotlinx.coroutines.CoroutineStart // 코루틴 시작 방식
 import kotlinx.coroutines.Dispatchers // 디스패처
 import kotlinx.coroutines.Job // 작업 핸들
@@ -120,7 +120,7 @@ class ModelsViewModel(
     private val _rows = MutableStateFlow<List<ModelRow>>(emptyList()) // 행 목록(내부)
     private val progress = ConcurrentHashMap<String, Float>() // 받는 중인 모델의 진행률
     private val jobs = ConcurrentHashMap<String, Job>() // 모델 id → 진행 중인 작업(모델당 1개)
-    private val rowsLock = Any() // 행 갱신 직렬화 잠금
+    private val busy = ConcurrentHashMap<String, InstallState>() // change(add)-hyungchul-2026-10-11-03:24 작업 시작 직후부터 행에 보일 상태(DOWNLOADING/VERIFYING) — 설치기가 상태를 올리기 전 구간 보완
     private val messageChannel = Channel<String>(Channel.BUFFERED) // 일회성 메시지(스낵바)
     private val _importPrompt = MutableStateFlow<ImportPrompt?>(null) // 가져오기 안내
     private val _verifyReport = MutableStateFlow<VerifyReport?>(null) // 검증 결과
@@ -150,8 +150,20 @@ class ModelsViewModel(
      */
     fun refresh() {
         viewModelScope.launch(io) { // 백그라운드에서
-            synchronized(rowsLock) { _rows.value = buildRows() } // 행 구성 후 반영
+            _rows.update { buildRows() } // change(add)-hyungchul-2026-10-11-03:24 모든 갱신을 update(CAS) 한 경로로 통일 — 동시 갱신 시 최신 값으로 다시 계산
         }
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:24
+    /**
+     * 목적: 모델 1개의 행만 다시 만들기
+     * 기능: 그 모델의 상태·진행률을 새로 읽어 해당 행만 교체한다(진행 콜백·작업 시작 시 사용, update 로 다른 갱신과 직렬화).
+     * 입력: spec(대상 모델)
+     * 출력: rows 갱신(아직 첫 목록이 없으면 그대로)
+     * 리턴: 없음
+     */
+    private fun updateRow(spec: ModelSpec) {
+        _rows.update { list -> list.map { if (it.id == spec.id) buildRow(spec) else it } } // 해당 행만 교체
     }
 
     /**
@@ -161,9 +173,21 @@ class ModelsViewModel(
      * 출력: 없음
      * 리턴: 행 목록
      */
-    private fun buildRows(): List<ModelRow> = catalog.map { spec ->
-        val state = store.state(spec) // 설치 상태
-        ModelRow(
+    private fun buildRows(): List<ModelRow> = catalog.map { spec -> buildRow(spec) } // 전체 행
+
+    // change(add)-hyungchul-2026-10-11-03:24
+    /**
+     * 목적: 모델 1개의 행 구성
+     * 기능: 상태는 설치기가 진행 상태(DOWNLOADING/VERIFYING)를 올렸으면 그것, 아니면 이 ViewModel 이 작업을 시작해 둔 상태(busy), 아니면 저장소 판정.
+     *       진행률은 받는 중일 때만 채운다.
+     * 입력: spec(대상 모델)
+     * 출력: 없음
+     * 리턴: ModelRow
+     */
+    private fun buildRow(spec: ModelSpec): ModelRow {
+        val real = store.state(spec) // 저장소 판정
+        val state = if (real == InstallState.DOWNLOADING || real == InstallState.VERIFYING) real else busy[spec.id] ?: real // 표시 상태
+        return ModelRow(
             id = spec.id, // 모델 id
             group = if (spec.kind == ModelKind.VAD) VAD_GROUP else spec.algo, // 그룹
             name = spec.displayName, // 표시 이름
@@ -184,14 +208,14 @@ class ModelsViewModel(
      * 출력: 실패는 "다운로드 실패: …" 메시지, 취소는 취소 메시지
      * 리턴: 없음
      */
-    fun download(id: String) = runJob(id, "다운로드", "다운로드와 설치를 마쳤습니다") { spec ->
+    fun download(id: String) = runJob(id, "다운로드", "다운로드와 설치를 마쳤습니다", InstallState.DOWNLOADING) { spec ->
         var lastShown = -1f // 마지막으로 화면에 반영한 진행률
         installer.install(spec) { done, total -> // 진행 콜백(IO 스레드)
             val fraction = if (total > 0) (done.toDouble() / total).toFloat().coerceIn(0f, 1f) else 0f // 진행률
             progress[spec.id] = fraction // 기록
             if (fraction - lastShown >= PROGRESS_STEP || fraction >= 1f) { // 충분히 변했거나 끝
                 lastShown = fraction // 갱신
-                _rows.update { list -> list.map { if (it.id == spec.id && it.state == InstallState.DOWNLOADING) it.copy(progress = fraction) else it } } // 해당 행만 반영
+                updateRow(spec) // change(add)-hyungchul-2026-10-11-03:24 상태·진행률을 다시 읽어 해당 행만 반영(설치기가 올린 DOWNLOADING/VERIFYING 변화도 따라감)
             }
         }
     }
@@ -243,7 +267,7 @@ class ModelsViewModel(
      */
     fun confirmImport(id: String) {
         dismissImportPrompt() // 대화상자 닫기
-        runJob(id, "가져오기", "가져오기와 검증을 마쳤습니다") { spec ->
+        runJob(id, "가져오기", "가져오기와 검증을 마쳤습니다", InstallState.VERIFYING) { spec ->
             installer.importFrom(spec, resolveImportSource(spec)) // 원본 해석 후 가져오기
         }
     }
@@ -255,7 +279,7 @@ class ModelsViewModel(
      * 출력: 실패는 "가져오기 실패: …" 메시지
      * 리턴: 없음
      */
-    fun importFrom(id: String, source: File) = runJob(id, "가져오기", "가져오기와 검증을 마쳤습니다") { spec ->
+    fun importFrom(id: String, source: File) = runJob(id, "가져오기", "가져오기와 검증을 마쳤습니다", InstallState.VERIFYING) { spec ->
         installer.importFrom(spec, source) // 설치기에 위임
     }
 
@@ -297,7 +321,7 @@ class ModelsViewModel(
      * 출력: verifyReport 갱신, 실패는 "검증 실패: …" 메시지
      * 리턴: 없음
      */
-    fun verify(id: String) = runJob(id, "검증", null) { spec ->
+    fun verify(id: String) = runJob(id, "검증", null, InstallState.VERIFYING) { spec ->
         val problems = installer.verify(spec) // 전수 검사
         _verifyReport.value = VerifyReport(spec.displayName, problems) // 결과 표시
     }
@@ -320,11 +344,14 @@ class ModelsViewModel(
      * 출력: 거부·실패는 "삭제 실패: …" 메시지
      * 리턴: 없음
      */
-    fun delete(id: String) = runJob(id, "삭제", "삭제했습니다") { spec ->
+    fun delete(id: String) = runJob(id, "삭제", "삭제했습니다", null) { spec ->
         val state = store.state(spec) // 현재 상태
         check(state != InstallState.DOWNLOADING && state != InstallState.VERIFYING) { "설치 또는 검증이 진행 중인 모델은 삭제할 수 없습니다" } // 진행 중 거부
         check(store.useCountOf(spec) == 0) { "사용 중인 모델은 삭제할 수 없습니다(실행 중인 작업이 끝난 뒤 다시 시도하세요)" } // 사용 중 거부
-        check(store.delete(spec)) { "폴더를 지우지 못했습니다(${store.modelDir(spec).path})" } // 삭제 실패
+        if (!store.delete(spec)) { // change(add)-hyungchul-2026-10-11-03:24 false 의 사유를 가려서 알림
+            check(store.useCountOf(spec) == 0) { "사용 중인 모델은 삭제할 수 없습니다(그 사이 실행이 시작됨)" } // 확인 직후 사용이 시작된 경우
+            throw IllegalStateException("폴더를 지우지 못했습니다(${store.modelDir(spec).path})") // 그 밖의 삭제 실패
+        }
     }
 
     /**
@@ -332,24 +359,32 @@ class ModelsViewModel(
      * 기능: 같은 모델의 작업이 이미 돌면 거부 메시지. 아니면 viewModelScope 에서 io 로 block 을 실행하고,
      *       성공 시 successText(있으면)를 알리고, 취소는 취소 메시지 후 재전파, 그 밖의 Exception 은 "<label> 실패: 메시지"로 알린다.
      *       끝나면(성공·실패·취소) 진행률을 지우고 상태를 다시 읽는다.
-     * 입력: id(모델 id), label(작업 이름), successText(성공 메시지 또는 null), block(작업 본문)
+     * 입력: id(모델 id), label(작업 이름), successText(성공 메시지 또는 null), busyState(작업 시작 직후 행에 보일 상태 또는 null), block(작업 본문)
      * 출력: 메시지 발행
      * 리턴: 없음
      */
-    private fun runJob(id: String, label: String, successText: String?, block: suspend (ModelSpec) -> Unit) {
+    private fun runJob(id: String, label: String, successText: String?, busyState: InstallState?, block: suspend (ModelSpec) -> Unit) {
         val spec = specs[id] ?: return post("$label 실패: 카탈로그에 없는 모델입니다($id)") // 모르는 모델
-        if (jobs[id]?.isActive == true) return post("${spec.displayName}: 이미 다른 작업이 진행 중입니다") // 모델당 1개
+        val running = jobs[id] // 이 모델의 기존 작업
+        if (running != null && !running.isCompleted) { // change(add)-hyungchul-2026-10-11-03:24 isActive 가 아니라 isCompleted 로 판정 — 취소 중(정리 전)에도 새 작업을 막아 설치기의 중복 진행 오류를 피함
+            return post(if (running.isCancelled) "${spec.displayName}: 이전 작업을 정리하는 중입니다. 잠시 뒤 다시 눌러 주세요" else "${spec.displayName}: 이미 다른 작업이 진행 중입니다") // 사유별 안내
+        }
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) { // 시작 전에 등록하려고 지연 시작
             try {
-                withContext(io) { block(spec) } // 작업 실행
+                withContext(io) {
+                    if (busyState != null) busy[id] = busyState // change(add)-hyungchul-2026-10-11-03:24 시작 즉시 행에 반영할 상태
+                    updateRow(spec) // change(add)-hyungchul-2026-10-11-03:24 행 갱신(취소 버튼·진행 바가 바로 나타남)
+                    block(spec) // 작업 실행
+                }
                 if (successText != null) post("${spec.displayName}: $successText") // 성공 알림
             } catch (e: CancellationException) {
-                post("${spec.displayName}: $label 을(를) 취소했습니다") // 취소 알림
+                post("${spec.displayName}: $label 작업을 취소했습니다") // 취소 알림
                 throw e // 취소는 삼키지 않음
             } catch (e: Exception) {
                 post("${spec.displayName}: $label 실패 — ${e.message ?: e::class.java.simpleName}") // 실패 알림(예외의 한국어 메시지)
             } finally {
                 progress.remove(id) // 진행률 제거
+                busy.remove(id) // 작업 중 표시 제거
                 refresh() // 상태 다시 읽기(취소된 코루틴이 아닌 새 코루틴에서)
             }
         }
