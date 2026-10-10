@@ -6,6 +6,7 @@
 //       - notificationCancelStopsRun: 60 s 톤 WAV 2개로 실행 → 첫 진행 이벤트 후 (1) 두 번째 start 가 거부되고 Running.rejectedStart 가 채워짐,
 //         (2) 진행 알림에 "취소" 버튼이 있고 그 PendingIntent 를 보내면 Cancelled 로 끝남, (3) 끝난 뒤 진행(ongoing) 알림이 사라지고 사용 횟수 0.
 //         POST_NOTIFICATIONS 는 UiAutomation 으로 부여한다(실제 화면에서는 UI 가 요청).
+//       - cancelRightAfterStartEndsCancelled (change(add)-hyungchul-2026-10-11-03:00): start 직후 cancel → Cancelled, 사용 횟수 0, 다음 start 수락.
 //       테스트가 만든 입력(input_sound/en/_svc_test)과 실행 폴더(output_stt/<runId>)는 끝나면 지운다(결과 폴더에 유령 실행이 남지 않게).
 //       모델 준비: models/whispercpp-tiny 가 READY 가 아니면 files/import/whispercpp-tiny/ggml-tiny.bin 을 ModelInstaller.importFrom 으로 설치
 //       (SHA-256 검증 포함). 둘 다 없으면 건너뜀(assume). 넣는 법(installDebug·installDebugAndroidTest 뒤):
@@ -163,6 +164,31 @@ class RunServiceInstrumentedTest {
             ongoing = nm.activeNotifications.filter { it.notification.flags and Notification.FLAG_ONGOING_EVENT != 0 } // 다시 조회
         }
         assertTrue("진행 알림이 남아 있음: $ongoing", ongoing.isEmpty()) // 포그라운드 해제됨
+    }
+
+    // change(add)-hyungchul-2026-10-11-03:00
+    /**
+     * 목적: 시작 직후 취소(리뷰 수정 1 — 본문 시작 전 취소 경로의 기기 확인)
+     * 기능: start 바로 다음 줄에서 cancel → Cancelled 로 끝나고(Running 고착 없음), 사용 횟수 0, 다음 start 가 다시 수락된다(그 실행도 취소).
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun cancelRightAfterStartEndsCancelled() = runBlocking {
+        val items = listOf(writeTone("01", 60.0)) // 60 s 입력
+        val config = newConfig(items) // 실행 설정
+        assertTrue(RunService.start(ctx, config)) // 시작
+        RunService.cancel(ctx) // 즉시 취소
+        val end = withTimeout(60_000) { RunService.events.first { isTerminal(it, config.runId) } } // 종료 대기
+        Log.i(TAG, "시작 직후 취소 종료 상태: $end") // 기록
+        assertEquals(RunUiState.Cancelled(config.runId), end) // 사용자 취소
+        assertEquals(0, app.modelStore.useCountOf(spec)) // 누수 없음
+        val next = newConfig(items) // 다음 실행
+        assertTrue(RunService.start(ctx, next)) // 다시 수락됨(서비스가 멈추지 않음)
+        RunService.cancel(ctx) // 정리용 취소
+        val end2 = withTimeout(60_000) { RunService.events.first { isTerminal(it, next.runId) } } // 종료 대기
+        assertEquals(RunUiState.Cancelled(next.runId), end2) // 취소
     }
 
     /**

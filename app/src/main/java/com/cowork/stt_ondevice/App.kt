@@ -1,6 +1,6 @@
 // 파일명: App.kt
 // 목적: 앱 프로세스 전역 진입점(Application) 정의
-// 기능: 현재는 빈 Application. 이후 Task 에서 전역 초기화(저장소, 로거 등)를 이 클래스에 추가한다.
+// 기능: (change(add)-hyungchul-2026-10-11-03:00 정정) 프로세스 전역 객체 그래프를 보유한다(아래 02:40 항목). 이후 Task 에서 필요한 전역 초기화도 이 클래스에 추가한다.
 //       change(add)-hyungchul-2026-10-11-02:40 프로세스 전역 객체 그래프(AppDirs·ModelStore·Downloader·ModelInstaller·VadEngineFactory)를
 //       지연 생성 싱글턴으로 보유하고, 배치 실행기(BatchRunner)를 실제 의존성으로 조립하는 newBatchRunner() 를 제공한다.
 //       ModelStore 의 사용 횟수와 ModelInstaller 의 동시 설치 방지는 인스턴스 단위이므로(Task 19 리뷰) 서비스·화면 ViewModel 모두
@@ -9,6 +9,7 @@ package com.cowork.stt_ondevice // 앱 루트 패키지
 
 import android.app.Application // 안드로이드 Application 기본 클래스
 import android.content.Context // change(add)-hyungchul-2026-10-11-02:40 컨텍스트(App 조회)
+import android.util.Log // change(add)-hyungchul-2026-10-11-03:00 환경 스냅샷 실패 로그
 import com.cowork.stt_ondevice.core.device.DeviceInfo // change(add)-hyungchul-2026-10-11-02:40 기기 정보
 import com.cowork.stt_ondevice.core.device.EnvSnapshot // change(add)-hyungchul-2026-10-11-02:40 발열·배터리 스냅샷
 import com.cowork.stt_ondevice.core.device.ResourceSampler // change(add)-hyungchul-2026-10-11-02:40 메모리·CPU 샘플러
@@ -66,7 +67,7 @@ class App : Application() { // change(add)-hyungchul-2026-10-11-02:40 본문 추
     /**
      * 목적: 실제 의존성으로 배치 실행기 조립
      * 기능: engineFactory = ManagedEngine.factory(modelStore)(acquire → READY 확인 → EngineFactory.create, close 때 release),
-     *       vadFactory = vadEngineFactory.create, samplerFactory = 항목마다 새 ResourceSampler, env = EnvSnapshot.snapshot(실패 시 null),
+     *       vadFactory = vadEngineFactory.create, samplerFactory = 항목마다 새 ResourceSampler, env = envSnapshotOrNull()(Exception 만 null + 로그),
      *       device = 지금 수집한 DeviceInfo. 실행(run)마다 새로 만든다(실행기 자체는 상태가 없지만 device 를 실행 시점 값으로 맞추기 위함).
      * 입력: 없음
      * 출력: 기기 정보 수집·폴더 조회 실패 시 그 예외
@@ -77,11 +78,28 @@ class App : Application() { // change(add)-hyungchul-2026-10-11-02:40 본문 추
         engineFactory = ManagedEngine.factory(modelStore), // 사용 횟수를 묶은 엔진 생성
         vadFactory = vadEngineFactory::create, // VAD 엔진 생성(모델 없으면 VadUnavailableException)
         samplerFactory = { ResourceSampler() }, // 항목마다 새 샘플러(1회용)
-        env = { runCatching { EnvSnapshot.snapshot(this) }.getOrNull() }, // 환경 스냅샷(읽기 실패는 null — 추정치로 채우지 않음)
+        env = ::envSnapshotOrNull, // 환경 스냅샷(읽기 실패는 null — 추정치로 채우지 않음) // change(add)-hyungchul-2026-10-11-03:00 runCatching → Exception 만 잡고 로그
         device = DeviceInfo.collect(this), // 기기 정보
     )
 
+    // change(add)-hyungchul-2026-10-11-03:00
+    /**
+     * 목적: 환경 스냅샷 읽기(실패 시 null)
+     * 기능: EnvSnapshot.snapshot 을 부르고, Exception 이면 원인을 Log.w 로 남기고 null(측정 불가 값은 null). 취소·Error 는 삼키지 않는다.
+     * 입력: 없음
+     * 출력: 실패 시 로그
+     * 리턴: EnvSnapshot 또는 null
+     */
+    private fun envSnapshotOrNull(): EnvSnapshot? = try {
+        EnvSnapshot.snapshot(this) // 발열·배터리 읽기
+    } catch (e: Exception) {
+        Log.w(TAG, "환경 스냅샷 읽기 실패(이 항목의 env 값은 null)", e) // 원인 기록
+        null // 측정 불가
+    }
+
     companion object {
+        private const val TAG = "App" // 로그 태그 // change(add)-hyungchul-2026-10-11-03:00
+
         // change(add)-hyungchul-2026-10-11-02:40
         /**
          * 목적: 컨텍스트에서 App 인스턴스 얻기
