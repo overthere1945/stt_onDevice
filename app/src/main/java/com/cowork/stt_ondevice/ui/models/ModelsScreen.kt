@@ -7,6 +7,7 @@
 //       기존 가져오기(installer.importFrom)를 그대로 쓴다(ModelsViewModel.importFromSaf). adb 안내는 tools/adb/push_models.sh 사용을 권장한다(R41 — push 후 권한 정리).
 //       change(add)-hyungchul-2026-10-11-19:52 (2차 작업 7) 목록 맨 위에 "시스템 엔진" 카드 2개(ML Kit Basic·플랫폼 온디바이스)를 더했다. 카드에는 제목·"Google 서비스 약관 적용"·언어 줄(상태: 사용 가능/다운로드 필요/
 //       다운로드 중/사용 불가(사유))·[다운로드](다운로드 필요이고 앱에서 요청 가능할 때)·[새로고침]이 있다. 삭제·가져오기·검증 버튼은 없고, 동의 창은 사용자가 직접 누른다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) LanguageStatus.CheckFailed(일시적 확인 실패)는 사용 불가와 같은 색으로 그린다.
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
 import android.net.Uri // change(add)-hyungchul-2026-10-11-03:59 고른 문서 Uri
@@ -301,6 +302,7 @@ private fun systemStatusColor(status: LanguageStatus): Color = when (status) {
     LanguageStatus.Available -> if (isSystemInDarkTheme()) Color(0xFF81C784) else Color(0xFF2E7D32) // 사용 가능
     LanguageStatus.Downloadable, LanguageStatus.Downloading -> MaterialTheme.colorScheme.primary // 진행 필요·중
     is LanguageStatus.Unavailable -> MaterialTheme.colorScheme.onSurfaceVariant // 사용 불가
+    is LanguageStatus.CheckFailed -> MaterialTheme.colorScheme.onSurfaceVariant // 확인 실패(사용 불가와 같은 색) // change(add)-hyungchul-2026-10-11-21:50
 }
 
 // change(add)-hyungchul-2026-10-11-03:09

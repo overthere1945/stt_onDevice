@@ -6,6 +6,7 @@
 //       change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리 순서(행 먼저 → 파일, removeRows/removeResults 멱등)와 시간 단언 대신 요약 CSV 읽기 횟수 단언(CsvFiles.onFullRead)을 확인한다.
 //       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 시스템 엔진 CSV 행(rtf·compute_type·workers 빈 값, device=backend, engine_version, note 끝 ";feed=x<배속>")과
 //       시스템 엔진 maxChunk 덮어쓰기 범위 (0, 60] 를 확인한다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) 시스템 엔진 CSV attempts = 조각 수 + 재시도한 조각 수(계산 불가면 빈 값), 1차 엔진은 "1" 인지 확인한다.
 // change(add)-hyungchul-2026-10-11-02:14
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -21,9 +22,11 @@ import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식
 import com.cowork.stt_ondevice.model.SystemCatalog // 시스템 엔진 카탈로그 // change(add)-hyungchul-2026-10-11-19:10
 import com.cowork.stt_ondevice.model.VoskConfig // 엔진 설정
 import com.cowork.stt_ondevice.output.ChunkJson // chunk 결과
+import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON // change(add)-hyungchul-2026-10-11-21:50
 import com.cowork.stt_ondevice.output.EngineMetaJson // 엔진 메타 // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.output.ErrorJson // 오류 JSON
 import com.cowork.stt_ondevice.output.OutputLayout // 출력 경로 규칙
+import com.cowork.stt_ondevice.output.SessionJson // 시스템 엔진 세션 기록 // change(add)-hyungchul-2026-10-11-21:50
 import com.cowork.stt_ondevice.output.ResultCsvWriter // CSV 작성기(큰 요약 흉내) // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.output.STT_CSV_HEADER // PC CSV 헤더 // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.output.SpanJson // 원본 구간
@@ -279,5 +282,31 @@ class RunnerHelpersTest {
         }
         assertEquals(60.0, cfg(sys, 60.0).maxChunkFor(sys), 0.0) // 상한 60 허용
         assertEquals(0.0, cfg(spec(), 0.0).maxChunkFor(spec()), 0.0) // 일반 모델 0(무제한)은 기존대로 허용
+    }
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /**
+     * 목적: 시스템 엔진 CSV attempts 열 (최종 리뷰 수정)
+     * 기능: 시스템 엔진 OK 행은 조각 3개 중 1개가 재시도면 "4"(조각 수 + 재시도 조각 수), 세션 기록이 없는 조각이 있으면 빈 값, ERROR 행은 빈 값
+     *       (실패한 조각의 시도 수를 알 수 없음), 조각이 없는 NO_MATCH 는 "0"(세션을 열지 않음). 1차 엔진은 그대로 "1".
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun systemEngineAttemptsCountsRetriedSessions() {
+        val sys = SystemCatalog.all.first { it.id == "mlkit-basic-x1" } // 시스템 엔진 x1
+        val sysCombo = Combo(sys, VadPresets.byId("SILERO"), 30.0, ChunkMode.MERGE) // 시스템 조합
+        val it1 = item("01") // 항목
+        /** 목적: 세션 기록이 있는 조각 / 입력: i(순번), retried(재시도 여부 또는 null=기록 없음) / 리턴: ChunkJson */
+        fun chunk(i: Int, retried: Boolean?): ChunkJson = ChunkJson(i, listOf(SpanJson(i.toDouble(), i + 1.0, i.toDouble())), "NONE", "말", "말", 0.1, retried?.let { SessionJson(i + 1, 32_000L, 5L, it) }) // 조각
+        val ok = processor.failed(sysCombo, it1, ErrorJson("X", "Y", "z"), null).copy(status = "OK", error = null, chunks = listOf(chunk(0, false), chunk(1, true), chunk(2, false))) // OK detail(2번째 조각 재시도)
+        /** 목적: attempts 열 값 / 입력: c(조합), d(detail) / 리턴: 값(null 은 빈 값) */
+        fun attempts(c: Combo, d: DetailJson): String = CsvRowBuilder.build("20261011_215000", c, it1, d, device, 4)["attempts"].orEmpty() // 열 값
+        assertEquals("4", attempts(sysCombo, ok)) // 3 조각 + 재시도 1
+        assertEquals("", attempts(sysCombo, ok.copy(chunks = listOf(chunk(0, false), chunk(1, null))))) // 세션 기록 없음 → 계산 불가
+        assertEquals("", attempts(sysCombo, ok.copy(status = "ERROR", error = ErrorJson("TRANSCRIBE", "X", "y")))) // 오류 행 → 계산 불가
+        assertEquals("0", attempts(sysCombo, ok.copy(status = "NO_MATCH", chunks = emptyList()))) // 조각 없음 → 세션 0
+        assertEquals("1", attempts(combo, ok)) // 1차 엔진은 그대로 1
     }
 }

@@ -5,6 +5,7 @@
 //       safeStatus — 조회 중 예외(취소·VirtualMachineError 제외)를 Unavailable("상태 확인 실패(<클래스>: <메시지>)") 로 바꾼다.
 //       AndroidSystemEngineStatus — ML Kit checkStatus()/download(), 플랫폼 checkRecognitionSupport(API 33)/triggerModelDownload(API 34) 를 호출만 한다.
 //                                   동의 창은 Google 서비스가 띄우며 앱이 대신 누르지 않는다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) 시간 초과·조회 예외·플랫폼 onError 는 Unavailable 이 아니라 CheckFailed(일시적 확인 실패)로 돌려준다.
 //       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) installedLanguages — 플랫폼 기기에 설치된 언어 목록 보조 조회(실행 전 확인의 "언어 미설치(…)(설치됨: …)" 사유용).
 // change(add)-hyungchul-2026-10-11-19:52
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
@@ -84,18 +85,19 @@ interface SystemEngineStatus {
 // change(add)-hyungchul-2026-10-11-19:52
 /**
  * 목적: 상태 조회 제한 시간 래퍼
- * 기능: block 을 timeoutMs 안에 끝내면 그 값, 못 끝내면 Unavailable("상태 확인 시간 초과"). 코루틴 취소는 그대로 전파한다.
+ * 기능: block 을 timeoutMs 안에 끝내면 그 값, 못 끝내면 CheckFailed("상태 확인 시간 초과")(change(add)-hyungchul-2026-10-11-21:50 Unavailable → CheckFailed). 코루틴 취소는 그대로 전파한다.
  * 입력: timeoutMs(제한 시간 ms, 기본 15,000), block(상태 조회 본문)
  * 출력: 취소 시 CancellationException
  * 리턴: LanguageStatus
  */
 suspend fun withStatusTimeout(timeoutMs: Long = DEFAULT_STATUS_TIMEOUT_MS, block: suspend () -> LanguageStatus): LanguageStatus =
-    withTimeoutOrNull(timeoutMs) { block() } ?: LanguageStatus.Unavailable(StatusReasons.TIMEOUT) // 시간 초과면 사용 불가
+    withTimeoutOrNull(timeoutMs) { block() } ?: LanguageStatus.CheckFailed(StatusReasons.TIMEOUT) // 시간 초과면 일시적 확인 실패 // change(add)-hyungchul-2026-10-11-21:50
 
 // change(add)-hyungchul-2026-10-11-19:52
 /**
  * 목적: 예외를 사유로 바꾸는 상태 조회
- * 기능: status() 중 예외(Exception 뿐 아니라 NoClassDefFoundError 같은 LinkageError 도)를 Unavailable("상태 확인 실패(<클래스>: <메시지>)") 로 바꾼다.
+ * 기능: status() 중 예외(Exception 뿐 아니라 NoClassDefFoundError 같은 LinkageError 도)를 CheckFailed("상태 확인 실패(<클래스>: <메시지>)") 로 바꾼다
+ *       (change(add)-hyungchul-2026-10-11-21:50 Unavailable → CheckFailed — 일시적 확인 실패).
  *       코루틴 취소와 VirtualMachineError(OOM 등)는 그대로 다시 던진다(작업 6 의 unavailableReason 규칙 그대로).
  * 입력: kind(엔진 종류), engineLang(앱 엔진 언어)
  * 출력: 취소 시 CancellationException, VirtualMachineError 는 그대로
@@ -108,7 +110,7 @@ suspend fun SystemEngineStatus.safeStatus(kind: SystemEngineKind, engineLang: St
 } catch (e: VirtualMachineError) {
     throw e // OOM 등 VM 오류는 그대로(사유로 덮지 않음)
 } catch (e: Throwable) {
-    LanguageStatus.Unavailable("상태 확인 실패(${e.javaClass.simpleName}: ${e.message})") // 예외를 사유로(전파하지 않음)
+    LanguageStatus.CheckFailed("상태 확인 실패(${e.javaClass.simpleName}: ${e.message})") // 예외를 일시적 확인 실패 사유로(전파하지 않음) // change(add)-hyungchul-2026-10-11-21:50
 }
 
 // change(add)-hyungchul-2026-10-11-19:52
@@ -228,6 +230,7 @@ class AndroidSystemEngineStatus(context: Context) : SystemEngineStatus {
      * 목적: 플랫폼 언어 상태
      * 기능: API 33 미만·RECORD_AUDIO 미허용·온디바이스 인식기 없음이면 사용 불가. 아니면 메인 스레드에서 임시 인식기로 checkRecognitionSupport 를 불러
      *       installed 에 태그가 있으면 Available, pending 이면 Downloading, supported 이면 Downloadable, 모두 아니면 Unavailable("기기 인식기가 이 언어를 지원하지 않음").
+     *       change(add)-hyungchul-2026-10-11-21:50 지원 확인 onError 는 CheckFailed("상태 확인 실패(onError=<코드>)")(일시적 확인 실패).
      * 입력: tag(BCP-47 태그)
      * 출력: 인식기 오류는 예외로 전파, 취소 시 CancellationException
      * 리턴: LanguageStatus
@@ -243,7 +246,7 @@ class AndroidSystemEngineStatus(context: Context) : SystemEngineStatus {
             try {
                 val support = checkSupport(rec, tag) // 지원 확인
                 when {
-                    support.error != null -> LanguageStatus.Unavailable("상태 확인 실패(onError=${support.error})") // 확인 오류
+                    support.error != null -> LanguageStatus.CheckFailed("상태 확인 실패(onError=${support.error})") // 확인 오류(일시적) // change(add)-hyungchul-2026-10-11-21:50
                     support.installed.any { it.equals(tag, ignoreCase = true) } -> LanguageStatus.Available // 설치됨
                     support.pending.any { it.equals(tag, ignoreCase = true) } -> LanguageStatus.Downloading // 설치 대기
                     support.supported.any { it.equals(tag, ignoreCase = true) } -> LanguageStatus.Downloadable // 받을 수 있음

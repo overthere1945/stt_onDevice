@@ -10,6 +10,8 @@
 //       목록은 run 머리 카드·상세·조합 행·파일 행을 각각 LazyColumn 항목(안정 키)으로 펼치고, 각 항목에는 필요한 값만 넘긴다(R42-3, 큰 run 성능).
 //       change(add)-hyungchul-2026-10-11-12:51 완료된 run 에 CRASH_OR_KILLED 항목이 있으면 상세에 "CRASH_OR_KILLED 항목 다시 실행 (N개)" 버튼(알림 권한 확인 후 ViewModel.rerunCrashed — 시작되면 진행 탭)을 보이고,
 //       조합 행에 크래시 행 수를 함께 적는다(최종 리뷰 I-1).
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) 미완료 run 의 manifest 에 일시정지 사유(pausedReason)가 있으면 머리 카드에 "일시정지: <사유>" 와
+//       "해당 서비스 앱을 강제 중지한 뒤 [이어하기]를 누르세요" 안내를 보인다(진행 탭 안내는 앱을 다시 켜면 사라지므로). 실행 중이면 보이지 않는다.
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.results // 결과 화면 패키지
 
@@ -184,6 +186,7 @@ fun ResultsScreen(
 /**
  * 목적: run 머리 카드(접힌 상태 요약)
  * 기능: runId·상태 라벨(manifest 문제 / 실행 중 / 완료 / 미완료)·시작/종료 시각·조합 수와 합계를 그린다. 누르면 펼치기/접기.
+ *       change(add)-hyungchul-2026-10-11-21:50 일시정지 사유가 있고 실행 중이 아니면 "일시정지: <사유>" 와 강제 중지 후 [이어하기] 안내 한 줄을 더 그린다.
  * 입력: run(목록 행), open(펼침 여부), running(실행 중 여부), onToggle(펼치기/접기)
  * 출력: 화면 표시
  * 리턴: Unit
@@ -207,6 +210,11 @@ private fun RunHeader(run: RunEntry, open: Boolean, running: Boolean, onToggle: 
             val nm = run.combos.sumOf { it.noMatch } // NO_MATCH 합
             val er = run.combos.sumOf { it.error } // ERROR 합
             Text("조합 ${run.combos.size}개 · OK $ok · NO_MATCH $nm · ERROR $er", style = MaterialTheme.typography.bodySmall) // 합계
+            val paused = run.pausedReason // 일시정지 사유 // change(add)-hyungchul-2026-10-11-21:50
+            if (paused != null && !running) { // 일시정지된 미완료 run(실행 중이면 숨김) // change(add)-hyungchul-2026-10-11-21:50
+                Text("일시정지: $paused", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) // 사유 // change(add)-hyungchul-2026-10-11-21:50
+                Text("해당 서비스 앱을 강제 중지한 뒤 카드를 펼쳐 [이어하기]를 누르세요", style = MaterialTheme.typography.bodySmall) // 안내 // change(add)-hyungchul-2026-10-11-21:50
+            }
         }
     }
 }

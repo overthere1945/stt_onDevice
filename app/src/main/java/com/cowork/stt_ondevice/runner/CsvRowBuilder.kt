@@ -4,6 +4,7 @@
 //       텍스트 통계(chars/words/text_sha1)는 PC stt_common.text_stats 와 같다(공백류를 공백 1개로 정리·양끝 trim 후 길이(공백 포함)/공백 분할 수/SHA-1 앞 12자).
 //       숫자 서식은 PC build_row 와 같다(시간 3자리, rss 1자리, rtf 4자리, Locale.ROOT). 측정하지 못한 값은 빈 칸.
 //       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 시스템 엔진 행: rtf·compute_type·workers 는 빈 값, device 는 backend 그대로, engine_version 은 엔진 보고 버전, note 끝에 ";feed=x<배속>".
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) 시스템 엔진 행의 attempts = 실제 세션 시도 수(조각 수 + 재시도한 조각 수, 계산 불가면 빈 값). 1차 엔진은 그대로 "1".
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -103,6 +104,7 @@ internal object CsvRowBuilder {
      *       change(add)-hyungchul-2026-10-11-12:51 device 는 prepare 가 보고한 backend 를 소문자로 쓴다(현재 엔진은 모두 "CPU" → "cpu" 로 이전 출력과 같음, 최종 리뷰 I-6).
      *       모델 로드 전 실패(엔진 메타 없음)면 Phase 1 의 유일한 실행 장치인 "cpu"(설정값 — workers 가 설정 스레드 수를 쓰는 것과 같은 규칙).
      *       change(add)-hyungchul-2026-10-11-19:10 시스템 엔진: compute_type·workers 는 빈 값, rtf 는 빈 값(PACED_REALTIME), device 는 backend("system(soda)" 등) 그대로, engine_version 은 엔진 보고 버전.
+     *       change(add)-hyungchul-2026-10-11-21:50 시스템 엔진 attempts 는 systemAttempts(detail)(세션 시도 수 또는 빈 값), 그 밖의 엔진은 "1".
      * 입력: runId(실행 ID), combo(조합), item(입력 항목), detail(상세 JSON), device(기기), threads(설정 스레드 수)
      * 출력: 없음
      * 리턴: 열 이름 → 값(null 은 빈 칸)
@@ -142,7 +144,7 @@ internal object CsvRowBuilder {
             "cloud_total_sec" to fmt(detail.transcribeSec, 3), // 로컬은 업로드 0 → transcribe 와 같음
             "elapsed_sec" to fmt(detail.elapsedSec, 3), // 파일 전체 시간
             "rtf" to if (spec.streaming == StreamingKind.PACED_REALTIME) "" else fmt(detail.rtf, 4), // 실시간 배율(실시간 배속 공급 엔진은 빈 값) // change(add)-hyungchul-2026-10-11-19:10
-            "attempts" to "1", // 재시도 없음
+            "attempts" to if (spec.isSystem) systemAttempts(detail) else "1", // 시도 수(1차 엔진은 재시도 없음 1, 시스템 엔진은 실제 세션 시도 수 또는 빈 값) // change(add)-hyungchul-2026-10-11-21:50
             "status" to detail.status, // 상태
             "utterances" to (if (isError) 0 else detail.chunks.size).toString(), // chunk 수
             "chars" to chars.toString(), // 글자 수
@@ -151,6 +153,21 @@ internal object CsvRowBuilder {
             "note" to note(combo, detail.error), // 부가 설명
             "text" to text, // 전사문
         )
+    }
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /**
+     * 목적: 시스템 엔진 attempts 열 값(실제 세션 시도 수)
+     * 기능: 조각마다 세션 1번 + 재시도했으면 1번 더 → (조각 수 + session.retried 인 조각 수). 조각이 없으면(발화 없음) 세션을 열지 않았으므로 "0".
+     *       ERROR 행(실패한 조각의 시도 수는 detail 에 남지 않음)이나 세션 기록이 없는 조각이 있으면 계산할 수 없어 빈 값(null) — 추정치로 채우지 않는다.
+     * 입력: detail(상세 JSON)
+     * 출력: 없음
+     * 리턴: 시도 수 문자열 또는 null(빈 칸)
+     */
+    private fun systemAttempts(detail: DetailJson): String? {
+        if (detail.status == "ERROR") return null // 실패 조각의 시도 수를 알 수 없음
+        val sessions = detail.chunks.map { it.session ?: return null } // 조각별 세션 기록(하나라도 없으면 계산 불가)
+        return (sessions.size + sessions.count { it.retried }).toString() // 조각 수 + 재시도 조각 수
     }
 
     /**

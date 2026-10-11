@@ -5,6 +5,7 @@
 //       change(add)-hyungchul-2026-10-11-03:59 R42: refresh 중 result.csv 읽기 실패의 한국어 메시지(크래시 없음), 실행 중 run 의 "실행 중" 판정·이어하기 거부,
 //       실행 중 run 의 CRLF 로 끝나지 않은 마지막 CSV 레코드 제외 집계, 내보내기 작업의 완료·실패 메시지를 확인한다.
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1) CRASH_OR_KILLED 행 집계와 완료 run 의 "CRASH_OR_KILLED 항목 다시 실행"(설정 복원·시작·미완료 거부)을 확인한다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) 미완료 run 의 manifest.pausedReason 이 RunEntry.pausedReason 으로 보이고, 완료·사유 없는 run 은 null 인지 확인한다.
 //       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) USER 프리셋 이어하기: 지워진 USER 프리셋이면 "삭제된 USER 프리셋입니다" 사유로 거부하고 시작하지 않으며, 레지스트리에 있으면 그 프리셋으로 시작한다.
 package com.cowork.stt_ondevice.ui.results // 결과 화면 테스트 패키지
 
@@ -85,7 +86,7 @@ class ResultsViewModelTest {
     /**
      * 목적: manifest 쓰기
      * 기능: 주어진 값으로 run_manifest.json 을 만든다.
-     * 입력: runId, finishedAt(종료 시각 또는 null), models, presetIds, inputs(기록할 입력 또는 null), override, unsupported
+     * 입력: runId, finishedAt(종료 시각 또는 null), models, presetIds, inputs(기록할 입력 또는 null), override, unsupported, presetList, pausedReason(change(add)-hyungchul-2026-10-11-21:50 일시정지 사유 또는 null)
      * 출력: 파일 생성
      * 리턴: 없음
      */
@@ -93,6 +94,7 @@ class ResultsViewModelTest {
         runId: String, finishedAt: String?, models: List<ModelSpec> = listOf(m1), presetIds: List<String> = listOf("NONE", "WEBRTC_ANDROIDVAD"),
         inputs: List<InputItem>? = emptyList(), override: Map<String, Double> = emptyMap(), unsupported: List<String> = emptyList(),
         presetList: List<VadPreset>? = null, // 프리셋 객체로 직접 지정(USER 프리셋용, 없으면 presetIds) // change(add)-hyungchul-2026-10-11-20:15
+        pausedReason: String? = null, // 일시정지 사유 // change(add)-hyungchul-2026-10-11-21:50
     ) {
         RunManifest(
             runId = runId, appVersion = "1.0 (1)", startedAt = "2026-10-09T13:15:00", // 식별
@@ -102,6 +104,7 @@ class ResultsViewModelTest {
             chunkMode = ChunkMode.INDIVIDUAL.name, maxChunkOverride = override, threads = 3, resume = false, // 옵션
             inputRoot = dirs.inputSound.absolutePath, unsupported = unsupported, // 입력 루트·미지원
             finishedAt = finishedAt, inputs = inputs?.map { InputEntry.from(it) }, // 종료·입력
+            pausedReason = pausedReason, // 일시정지 사유 // change(add)-hyungchul-2026-10-11-21:50
         ).write(OutputLayout.manifest(dirs.runDir(runId))) // 저장
     }
 
@@ -473,5 +476,25 @@ class ResultsViewModelTest {
         assertEquals(user, started[0].presets[1]) // 같은 객체 값(파라미터 동일)
         assertTrue(started[0].resume) // 이어하기
         assertEquals("20261011_120000", vm.state.value.resumeStarted) // 진행 탭 이동 신호
+    }
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /**
+     * 목적: 결과 탭의 일시정지 사유 표시 (최종 리뷰 수정 — 앱을 다시 켜도 사유가 보이게)
+     * 기능: 미완료이고 manifest.pausedReason 이 있는 run 은 RunEntry.pausedReason 이 그 사유이고 이어하기 가능하다.
+     *       사유가 없는 미완료 run 과 (사유가 남아 있더라도) 완료된 run 은 null 이다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun pausedReasonIsShownForPausedRun() {
+        val reason = "Speech Services by Google 상태 확인 실패(상태 확인 시간 초과(en-US, 15 초) — Speech Services by Google 응답 없음) — 강제 중지 후 이어하기" // 사유
+        writeManifest("20261011_210000", null, pausedReason = reason) // 일시정지된 run
+        writeManifest("20261011_200000", null) // 그냥 미완료 run
+        writeManifest("20261011_190000", "2026-10-11T19:30:00", pausedReason = "오래된 사유") // 완료 run(사유가 남아 있어도 표시 안 함)
+        val runs = newVm().state.value.runs.associateBy { it.runId } // 목록
+        assertEquals(reason, runs.getValue("20261011_210000").pausedReason) // 일시정지 사유
+        assertTrue(runs.getValue("20261011_210000").resumable) // 이어하기 가능
+        assertNull(runs.getValue("20261011_200000").pausedReason) // 사유 없음
+        assertNull(runs.getValue("20261011_190000").pausedReason) // 완료 run 은 표시 안 함
     }
 }

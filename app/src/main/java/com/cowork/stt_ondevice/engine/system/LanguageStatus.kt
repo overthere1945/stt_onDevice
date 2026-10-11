@@ -2,6 +2,8 @@
 // 목적: 시스템 엔진(ML Kit Basic·플랫폼 온디바이스 인식기)의 언어별 사용 상태와 다운로드 진행 이벤트 값 정의 (2차 작업 7)
 // 기능: LanguageStatus — 사용 가능/다운로드 필요/다운로드 중/사용 불가(사유). DownloadEvent — 진행/완료/실패.
 //       StatusReasons — 화면·실행 전 확인이 같은 문구를 쓰도록 사용 불가 사유 상수를 한 곳에 둔다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) CheckFailed(상태 확인 자체가 실패 — 시간 초과·예외·onError) 종류를 추가해
+//       실행 전 확인이 사유 문자열 비교 없이 일시적 실패(이어하기에서 다시 확인)와 영구 사용 불가(Unavailable)를 구분하게 한다.
 // change(add)-hyungchul-2026-10-11-19:52
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -9,7 +11,8 @@ package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 /**
  * 목적: 시스템 엔진 언어 1개의 사용 상태
  * 기능: Available(바로 사용), Downloadable(언어 팩을 받아야 함), Downloading(받는 중·설치 대기), Unavailable(사용 불가 — 한국어 사유).
- * 입력: Unavailable.reason(사유)
+ *       change(add)-hyungchul-2026-10-11-21:50 CheckFailed(상태 확인 실패 — 일시적, 한국어 사유).
+ * 입력: Unavailable.reason(사유), CheckFailed.reason(사유)
  */
 sealed interface LanguageStatus {
     /** 목적: 사용 가능 / 기능: 언어 팩이 이미 설치되어 바로 인식할 수 있음 */
@@ -23,6 +26,15 @@ sealed interface LanguageStatus {
 
     /** 목적: 사용 불가 / 기능: 이 기기·설정에서 쓸 수 없음 / 입력: reason(한국어 사유) */
     data class Unavailable(val reason: String) : LanguageStatus
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /**
+     * 목적: 상태 확인 실패(일시적)
+     * 기능: 상태 조회가 제한 시간 안에 끝나지 않았거나(reason = StatusReasons.TIMEOUT) 조회 중 예외·onError 가 난 경우. 서비스가 잠시 멈춘 것일 수 있어
+     *       실행 전 확인은 이것을 영구 미지원으로 기록하지 않는다(이어하기에서 다시 확인). 화면에는 Unavailable 과 같은 "사용 불가(사유)" 로 보인다.
+     * 입력: reason(한국어 사유)
+     */
+    data class CheckFailed(val reason: String) : LanguageStatus
 }
 
 // change(add)-hyungchul-2026-10-11-19:52

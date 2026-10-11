@@ -15,6 +15,7 @@
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1)
 //       - 조합 집계에 CRASH_OR_KILLED 행 수(note 의 code=CRASH_OR_KILLED)를 함께 센다. 완료된 run 에 그런 행이 있으면 "CRASH_OR_KILLED 항목 다시 실행"을 보이고,
 //         rerunCrashed(runId) 가 manifest 로 같은 설정의 RunConfig(resume=true, rerunCrashed=true)를 복원해 시작한다(BatchRunner 가 그 항목의 ERROR.txt·detail·CSV 행을 지우고 그 항목만 다시 실행).
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) RunEntry.pausedReason — 미완료 run 의 manifest.pausedReason(엔진 멈춤·언어 상태 확인 실패로 일시정지한 사유)을 결과 탭 카드에 보이려고 노출한다.
 //       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) 이어하기 프리셋은 공급 함수(앱: 기본+USER 합본)로 이어하기 시점마다 새로 읽는다. 지워진 USER 프리셋이면 "삭제된 USER 프리셋입니다" 사유로 거부한다(기본 프리셋으로 대체하지 않음).
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.results // 결과 화면 패키지
@@ -118,6 +119,10 @@ data class RunEntry(
 
     /** 미지원 조합 "combo|lang" 목록. */
     val unsupported: List<String> get() = manifest?.unsupported ?: emptyList() // 미지원
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /** 일시정지 사유(미완료 run 의 manifest.pausedReason — 앱을 다시 켜도 결과 탭에서 보이게). 완료됐거나 사유가 없으면 null. */
+    val pausedReason: String? get() = manifest?.takeIf { it.finishedAt == null }?.pausedReason // 일시정지 사유
 
     // change(add)-hyungchul-2026-10-11-12:51
     /** CRASH_OR_KILLED 로 기록된 항목 수(모든 조합 합). */

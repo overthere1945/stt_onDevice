@@ -10,6 +10,8 @@
 //       동의 창은 사용자가 직접 누름, 끝나면 그 언어 상태 재조회), canDownloadSystem(kind). 생성자 끝의 systemStatus 가 null 이면 영역이 숨겨진다(systemRows 가 빈 목록).
 //       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) cancelSystemDownload(kind): 동의 창을 닫아 끝나지 않는 다운로드를 취소하고 busyLang 을 풀며 상태를 다시 조회한다. 새로고침 결과가 그 사이 끝난 다운로드의 갱신을 덮지 않게
 //       세대 번호(systemClock·downloadStamp)로 오래된 조회 결과를 버린다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) LanguageStatus.CheckFailed(일시적 확인 실패)도 화면에는 "사용 불가(사유)" 로 보인다.
+//       다운로드 [취소] 안내를 "앱의 다운로드 추적을 끝냈습니다(…[새로고침]으로 확인하세요)" 로 바꿨다(이미 시작된 서비스 다운로드는 멈추지 않으므로).
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
 import androidx.lifecycle.ViewModel // 뷰모델 기본 클래스
@@ -141,6 +143,7 @@ fun InstallState.koreanLabel(): String = when (this) {
 /**
  * 목적: 언어 상태의 한국어 라벨
  * 기능: Available=사용 가능, Downloadable=다운로드 필요, Downloading=다운로드 중, Unavailable=사용 불가(사유)
+ *       change(add)-hyungchul-2026-10-11-21:50 CheckFailed(일시적 확인 실패)=사용 불가(사유) — 이전과 같은 표시
  * 입력: 없음(수신 객체)
  * 출력: 없음
  * 리턴: 한국어 문자열
@@ -150,6 +153,7 @@ fun LanguageStatus.koreanLabel(): String = when (this) {
     LanguageStatus.Downloadable -> "다운로드 필요" // 언어 팩 필요
     LanguageStatus.Downloading -> "다운로드 중" // 받는 중
     is LanguageStatus.Unavailable -> "사용 불가($reason)" // 사유
+    is LanguageStatus.CheckFailed -> "사용 불가($reason)" // 확인 실패 사유(이전과 같은 표시) // change(add)-hyungchul-2026-10-11-21:50
 }
 
 // change(add)-hyungchul-2026-10-11-03:09
@@ -272,7 +276,7 @@ class ModelsViewModel(
         job.invokeOnCompletion { cause -> // 끝나면
             systemJobs.remove(kind, job) // 제거
             if (cause is CancellationException) { // change(add)-hyungchul-2026-10-11-20:05 취소로 끝남
-                post("$title: 다운로드 요청을 취소했습니다") // 취소 안내
+                post("$title: 앱의 다운로드 추적을 끝냈습니다(이미 시작된 서비스 다운로드는 계속될 수 있으니 [새로고침]으로 확인하세요)") // 취소 안내(실제 다운로드는 멈추지 않을 수 있음) // change(add)-hyungchul-2026-10-11-21:50
                 recheckSystem(kind, engineLang, status) // 그 언어 상태 재조회
             }
         }
@@ -283,7 +287,7 @@ class ModelsViewModel(
     /**
      * 목적: 진행 중인 시스템 엔진 다운로드 취소
      * 기능: 그 엔진의 다운로드 작업을 취소한다. 동의 창을 닫아 터미널 이벤트가 없어 "다운로드 중"에 멈춘 경우의 탈출구이다.
-     *       취소되면 busyLang 이 풀리고 "다운로드 요청을 취소했습니다" 안내가 나오며 그 언어 상태를 다시 조회한다. 진행 중이 아니면 아무 일도 없다.
+     *       취소되면 busyLang 이 풀리고 "앱의 다운로드 추적을 끝냈습니다(…)" 안내(change(add)-hyungchul-2026-10-11-21:50 문구 변경)가 나오며 그 언어 상태를 다시 조회한다. 진행 중이 아니면 아무 일도 없다.
      *       (이미 Google 서비스가 시작한 실제 다운로드를 멈추는 것은 아니다 — 앱의 추적만 끝낸다. 상태는 [새로고침]으로 다시 확인.)
      * 입력: kind(엔진 종류)
      * 출력: 메시지 발행, systemRows 갱신

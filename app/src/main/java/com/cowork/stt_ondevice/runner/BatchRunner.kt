@@ -25,6 +25,11 @@
 //       - change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 실행 시작 때(정리 이후) 카탈로그가 지원하는 모델 × 입력 언어마다 availability(spec, 엔진 언어)를 1회만 불러(run 안에서 재사용)
 //         쓸 수 없는 조합은 실행·폴더 생성 없이 manifest.unsupported 에 "combo|lang" + unavailableReasons 에 사유를 기록한다(로그 LANG_UNAVAILABLE).
 //         이어하기에서 이제 사용 가능해진 조합은 unsupported·unavailableReasons 에서 뺀다(unavailableReasons 에 키가 없는 카탈로그 언어 미지원 항목은 그대로 유지).
+//       - change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) availability 는 종류 있는 결과(LangAvailability)를 돌려준다.
+//         Unsupported(영구)만 위처럼 기록하고, Transient(상태 확인 시간 초과·확인 실패)인 (모델, 언어)는 기록 없이 이번 실행에서만 건너뛴다(로그 LANG_CHECK_FAILED, 다른 모델·언어는 계속).
+//         루프가 끝났을 때 Transient 로 건너뛴 항목이 있으면 finishedAt 을 쓰지 않고 작업 4 의 일시정지처럼 끝낸다(pausedReason="<서비스> 상태 확인 실패(<사유>) — 강제 중지 후 이어하기",
+//         로그 RUN_PAUSED, Paused 이벤트, Finished 없음). 이어하기에서 다시 확인해 사용 가능하면 그 항목이 실행된다.
+//         남은(이어하기에서 끝나지 않은) 항목이 없는 (모델, 언어)에는 availability 를 부르지 않는다(불필요한 서비스 호출·시간 초과 방지).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -34,6 +39,7 @@ import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더 구조
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
 import com.cowork.stt_ondevice.core.storage.InputScanner // 언어 폴더 매핑
 import com.cowork.stt_ondevice.engine.AsrEngine // 엔진 계약
+import com.cowork.stt_ondevice.engine.LangAvailability // 실행 전 언어 확인 결과 종류 // change(add)-hyungchul-2026-10-11-21:50
 import com.cowork.stt_ondevice.engine.system.EngineStalledException // 시스템 엔진 멈춤 예외 // change(add)-hyungchul-2026-10-11-19:03
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
@@ -83,7 +89,8 @@ private class LoadResult(val engine: AsrEngine?, val model: PreparedModel?, val 
  * 입력: dirs(앱 폴더), engineFactory(모델 → 엔진; ModelStore acquire/release 는 이 래퍼가 담당), vadFactory(계열 → VAD 엔진, 불가면 VadUnavailableException),
  *       samplerFactory(항목마다 새 ResourceSampler), env(환경 스냅샷), device(기기 정보), clock(단조 시계 ns), now(현재 시각 문자열),
  *       modelHold(change(add)-hyungchul-2026-10-11-12:51 실행 설정 → 선택 모델 전체 사용 표시 핸들(close 로 해제). 앱: ModelStore.acquireAll(ASR 모델 + VAD 계열 모델). 기본은 아무것도 하지 않음),
- *       availability(change(add)-hyungchul-2026-10-11-19:10 (모델, 엔진 언어 코드 ko/en) → 사용 가능하면 null, 아니면 한국어 사유(예 "언어 미설치(en-US)"). 모델 × 언어마다 실행 시작 때 1회 호출. 기본은 항상 사용 가능. 실제 확인 함수는 작업 6 이 넣는다)
+ *       availability(change(add)-hyungchul-2026-10-11-19:10 (모델, 엔진 언어 코드 ko/en) → 사용 가능하면 null, 아니면 한국어 사유(예 "언어 미설치(en-US)"). 모델 × 언어마다 실행 시작 때 1회 호출. 기본은 항상 사용 가능. 실제 확인 함수는 작업 6 이 넣는다
+ *                    change(add)-hyungchul-2026-10-11-21:50 → LangAvailability(Available / Unsupported(사유) / Transient(사유, 서비스 패키지, 서비스 이름)). 남은 항목이 있는 (모델, 언어)만 호출)
  */
 class BatchRunner(
     private val dirs: AppDirs, // 앱 폴더
@@ -95,7 +102,7 @@ class BatchRunner(
     private val clock: () -> Long = System::nanoTime, // 단조 시계(ns)
     private val now: () -> String = ::localIsoNow, // 현재 시각
     private val modelHold: (RunConfig) -> AutoCloseable = { AutoCloseable { } }, // 실행 동안 모델 사용 표시 // change(add)-hyungchul-2026-10-11-12:51
-    private val availability: suspend (ModelSpec, String) -> String? = { _, _ -> null }, // 언어 사용 가능 확인(null = 가능, 아니면 사유) // change(add)-hyungchul-2026-10-11-19:10
+    private val availability: suspend (ModelSpec, String) -> LangAvailability = { _, _ -> LangAvailability.Available }, // 언어 사용 가능 확인(종류 있는 결과) // change(add)-hyungchul-2026-10-11-19:10 // change(add)-hyungchul-2026-10-11-21:50 String? → LangAvailability
 ) {
 
     /**
@@ -105,8 +112,9 @@ class BatchRunner(
      *       change(add)-hyungchul-2026-10-11-12:51 수집을 시작하면 먼저 modelHold(config) 로 선택 모델 전부를 사용 중으로 표시하고, 어떤 경로로 끝나든(정상·예외·취소) 해제한다.
      * 출력: 이어하기 manifest 를 읽을 수 없거나 설정이 다르면, 또는 새 실행인데 manifest 가 이미 있으면 IllegalStateException(결과를 건드리지 않음).
      *       change(add)-hyungchul-2026-10-11-19:03 시스템 엔진 멈춤은 예외 없이 Paused 이벤트 후 정상 종료한다.
+     *       change(add)-hyungchul-2026-10-11-21:50 실행 전 언어 확인이 일시적으로 실패(Transient)한 조합이 있으면 나머지를 실행한 뒤 Paused 이벤트로 정상 종료한다.
      *       결과 쓰기 실패가 이어지면 IOException. 수집 취소 시 CancellationException.
-     * 리턴: RunEvent 흐름(Progress/ItemDone/Finished, 엔진 멈춤이면 Paused 로 끝남)
+     * 리턴: RunEvent 흐름(Progress/ItemDone/Finished, 엔진 멈춤·언어 확인 일시 실패면 Paused 로 끝남)
      */
     // change(add)-hyungchul-2026-10-11-02:14: 단계 표시(MODEL_LOAD/VAD_INIT) 정리·기록, 닫기·저장 실패 로그, RUN_FAILED 로그
     fun run(config: RunConfig): Flow<RunEvent> = flow {
@@ -170,8 +178,9 @@ class BatchRunner(
                 else state.log("RERUN_CRASHED", "-", "-", "-", "CRASH_OR_KILLED 항목 ${cleared.size}개의 ERROR.txt·detail·CSV 행을 지우고 다시 실행") // 기록
             }
             recordUnsupported(config, combosByModel, state) // 미지원 조합 기록
-            val unavailable = checkAvailability(config, combosByModel, state) // 실행 전 언어 사용 가능 확인(정리 이후, 모델 × 언어 1회) // change(add)-hyungchul-2026-10-11-19:10
-            val work = catalogWork.map { (spec, pairs) -> spec to pairs.filterNot { (_, it) -> (spec.id to it.lang) in unavailable } } // 쓸 수 없는 언어 조합은 실행 목록에서 뺌 // change(add)-hyungchul-2026-10-11-19:10
+            val pendingLangs = catalogWork.flatMap { (spec, pairs) -> pairs.filterNot { (c, it) -> outputs.isDone(c, it) }.map { (_, it) -> spec.id to it.lang } }.toSet() // 남은 항목이 있는 (모델 id, 폴더명) // change(add)-hyungchul-2026-10-11-21:50
+            val skipped = checkAvailability(config, combosByModel, pendingLangs, state) // 실행 전 언어 사용 가능 확인(정리 이후, 남은 항목이 있는 모델 × 언어 1회) // change(add)-hyungchul-2026-10-11-19:10 // change(add)-hyungchul-2026-10-11-21:50 종류별 결과·남은 항목 기준
+            val work = catalogWork.map { (spec, pairs) -> spec to pairs.filterNot { (_, it) -> (spec.id to it.lang) in skipped } } // 쓸 수 없는(영구·일시) 언어 조합은 실행 목록에서 뺌 // change(add)-hyungchul-2026-10-11-19:10 // change(add)-hyungchul-2026-10-11-21:50 일시 실패 포함
             val runTotal = work.sumOf { it.second.size } // 실제 실행 목록의 전체 항목 수 // change(add)-hyungchul-2026-10-11-19:10
             var done = 0 // 끝난 항목 수(건너뛴 항목 포함)
             for ((spec, pairs) in work) { // 모델 순서대로
@@ -205,6 +214,15 @@ class BatchRunner(
                 } finally {
                     closeAndLog(load.engine, "${spec.algo}_${spec.model}", state) // 모델 단위 해제 보장(실패는 기록)
                 }
+            }
+            val transient = skipped.values.filterIsInstance<LangAvailability.Transient>() // 일시적 확인 실패로 건너뛴 조합 // change(add)-hyungchul-2026-10-11-21:50
+            if (transient.isNotEmpty()) { // 건너뛴 항목이 남아 있으면 완료가 아니라 일시정지 // change(add)-hyungchul-2026-10-11-21:50
+                val first = transient.first() // 안내할 서비스(설정 열기 대상)
+                val reason = transient.map { "${it.serviceLabel} 상태 확인 실패(${it.reason})" }.distinct().joinToString("; ") + " — 강제 중지 후 이어하기" // 일시정지 사유(서비스·사유별 1번)
+                state.update { it.copy(pausedReason = reason) } // 사유 기록(finishedAt 은 null 유지 → 이어하기 대상)
+                state.log("RUN_PAUSED", "-", "-", "PAUSED", reason) // 일시정지 로그
+                emit(RunEvent.Paused(reason, first.servicePackage, first.serviceLabel)) // 일시정지 이벤트(마지막, Finished 없음)
+                return // 정상 반환 — VAD 는 finally 로 닫힘(모델 엔진은 모델 단위 finally 에서 이미 닫힘)
             }
             state.update { it.copy(finishedAt = now()) } // 종료 기록
             val fin = state.finished() // 집계
@@ -335,19 +353,28 @@ class BatchRunner(
      *       사유가 있으면 그 모델의 모든 조합을 "combo|lang" 으로 manifest.unsupported 에 더하고 unavailableReasons 에 사유를 기록한다(로그 LANG_UNAVAILABLE).
      *       사용 가능하면 그 키가 unavailableReasons 에 있을 때만(= 이전 확인에서 불가로 기록됐던 조합) unsupported·unavailableReasons 에서 뺀다
      *       (카탈로그 언어 미지원으로 들어간 항목은 unavailableReasons 에 키가 없어 그대로 남음). 바뀐 경우에만 manifest 를 저장한다.
-     * 입력: config(실행 설정), combosByModel(모델별 조합), state(실행 상태)
+     *       change(add)-hyungchul-2026-10-11-21:50 (Important 1) 남은 항목이 없는 (모델, 언어)는 부르지 않는다(pendingLangs 에 없으면 건너뜀 — 기존 기록도 그대로).
+     *       위의 "사유가 있으면" 은 Unsupported(영구)만이다. Transient(일시)는 unsupported·unavailableReasons 를 건드리지 않고(기존 기록 유지) 로그 LANG_CHECK_FAILED 만 남긴다.
+     * 입력: config(실행 설정), combosByModel(모델별 조합), pendingLangs(change(add)-hyungchul-2026-10-11-21:50 남은 항목이 있는 (모델 id, 폴더명) 집합), state(실행 상태)
      * 출력: manifest 저장, 로그. 취소 시 CancellationException, availability 예외는 그대로 전파(조용히 가능으로 간주하지 않음)
-     * 리턴: 쓸 수 없는 (모델 id, 입력 언어 폴더명) 쌍의 집합
+     * 리턴: change(add)-hyungchul-2026-10-11-21:50 이번 실행에서 건너뛸 (모델 id, 입력 언어 폴더명) → 결과(Unsupported 또는 Transient) 맵(이전: 쓸 수 없는 쌍의 집합)
      */
-    private suspend fun checkAvailability(config: RunConfig, combosByModel: List<Pair<ModelSpec, List<Combo>>>, state: RunState): Set<Pair<String, String>> {
+    private suspend fun checkAvailability(config: RunConfig, combosByModel: List<Pair<ModelSpec, List<Combo>>>, pendingLangs: Set<Pair<String, String>>, state: RunState): Map<Pair<String, String>, LangAvailability> { // change(add)-hyungchul-2026-10-11-21:50 pendingLangs·반환 형식
         val unsupported = LinkedHashSet(state.manifest.unsupported) // 기존 기록(이어하기)
         val reasons = LinkedHashMap(state.manifest.unavailableReasons) // 기존 사유(이어하기)
-        val unavailable = LinkedHashSet<Pair<String, String>>() // 이번에 쓸 수 없는 (모델 id, 폴더명)
+        val skipped = LinkedHashMap<Pair<String, String>, LangAvailability>() // 이번에 건너뛸 (모델 id, 폴더명) → 결과 // change(add)-hyungchul-2026-10-11-21:50
         val langs = config.items.map { it.lang }.distinct() // 입력 언어 폴더
         for ((spec, combos) in combosByModel) for (lang in langs) { // 모델 × 언어(각 1회)
             val engineLang = InputScanner.LANG_FOLDERS[lang] ?: continue // 알 수 없는 폴더는 건너뜀(InputItem.engineLang 이 이미 거부)
             if (engineLang !in spec.languages) continue // 카탈로그 미지원은 recordUnsupported 가 처리(확인 불필요)
-            val reason = availability(spec, engineLang) // 사용 가능 확인(null = 가능)
+            if ((spec.id to lang) !in pendingLangs) continue // 남은 항목이 없으면 확인하지 않음(서비스 호출·시간 초과 방지) // change(add)-hyungchul-2026-10-11-21:50
+            val result = availability(spec, engineLang) // 사용 가능 확인(종류 있는 결과) // change(add)-hyungchul-2026-10-11-21:50
+            if (result is LangAvailability.Transient) { // 일시적 확인 실패 → 기록하지 않고 이번 실행에서만 건너뜀 // change(add)-hyungchul-2026-10-11-21:50
+                skipped[spec.id to lang] = result // 건너뛸 대상(끝에 일시정지)
+                state.log("LANG_CHECK_FAILED", "${spec.algo}_${spec.model}", lang, "SKIPPED", "${result.reason} — 이번 실행에서 건너뛰고 일시정지(이어하기에서 다시 확인)") // 로그
+                continue // unsupported·unavailableReasons 는 건드리지 않음
+            }
+            val reason = (result as? LangAvailability.Unsupported)?.reason // 영구 사유(사용 가능이면 null) // change(add)-hyungchul-2026-10-11-21:50
             for (c in combos) { // 그 모델의 조합마다
                 val key = "${c.name}|$lang" // manifest 키
                 if (reason != null) { // 쓸 수 없음
@@ -359,14 +386,14 @@ class BatchRunner(
                 }
             }
             if (reason != null) { // 쓸 수 없는 조합
-                unavailable.add(spec.id to lang) // 실행 목록에서 뺄 대상
+                skipped[spec.id to lang] = result // 실행 목록에서 뺄 대상 // change(add)-hyungchul-2026-10-11-21:50
                 state.log("LANG_UNAVAILABLE", "${spec.algo}_${spec.model}", lang, "UNSUPPORTED", reason) // 로그
             }
         }
         if (unsupported.toList() != state.manifest.unsupported || reasons != state.manifest.unavailableReasons) { // 바뀐 경우만 저장
             state.update { it.copy(unsupported = unsupported.toList(), unavailableReasons = reasons.toMap()) } // 저장
         }
-        return unavailable // 쓸 수 없는 쌍
+        return skipped // 건너뛸 쌍과 결과 // change(add)-hyungchul-2026-10-11-21:50
     }
 
     /**

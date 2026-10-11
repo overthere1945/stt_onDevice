@@ -1,6 +1,7 @@
 // 파일명: SystemEnginesSectionTest.kt
 // 목적: 모델 화면의 "시스템 엔진" 영역(ModelsViewModel.systemRows·downloadSystem)과 상태 확인 제한 시간 래퍼(withStatusTimeout)를 검증 (2차 작업 7)
 // 기능: 가짜 SystemEngineStatus 로 엔진별·언어별 상태 행 구성, 다운로드 진행 중 busyLang·완료/실패 뒤 상태 재조회·안내 메시지 1회, 15 초 제한 시간 처리를 확인한다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) 시간 초과는 CheckFailed(일시적 확인 실패)로, 취소 안내 문구는 "앱의 다운로드 추적을 끝냈습니다(…)" 로 확인한다.
 //       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) 취소 버튼 동작(끝나지 않는 다운로드 취소 → busyLang 해제·재조회·취소 안내)과 느린 새로고침 + 빠른 다운로드 완료 경합(최종 Available)을 더했다.
 // change(add)-hyungchul-2026-10-11-19:52
 package com.cowork.stt_ondevice.ui.models // 모델 화면 테스트 패키지
@@ -213,7 +214,7 @@ class SystemEnginesSectionTest {
         assertEquals(guide, withTimeout(2_000) { vm.messages.first() }) // 안내
         vm.cancelSystemDownload(SystemEngineKind.MLKIT_BASIC) // 취소
         withTimeout(2_000) { vm.systemRows.first { rs -> rs.first { it.kind == SystemEngineKind.MLKIT_BASIC }.busyLang == null } } // 진행 표시 해제 대기
-        assertEquals("다운로드 요청을 취소했습니다", withTimeout(2_000) { vm.messages.first() }.substringAfter(": ")) // 취소 안내
+        assertEquals("앱의 다운로드 추적을 끝냈습니다(이미 시작된 서비스 다운로드는 계속될 수 있으니 [새로고침]으로 확인하세요)", withTimeout(2_000) { vm.messages.first() }.substringAfter(": ")) // 취소 안내 // change(add)-hyungchul-2026-10-11-21:50 문구 변경
         var waited = 0 // 대기 횟수
         while (fake.callCount(SystemEngineKind.MLKIT_BASIC, "en") <= before && waited++ < 40) delay(50) // 재조회 대기(최대 2 초)
         assertTrue(fake.callCount(SystemEngineKind.MLKIT_BASIC, "en") > before) // 상태 재조회
@@ -255,7 +256,7 @@ class SystemEnginesSectionTest {
 
     /**
      * 목적: 상태 확인 제한 시간
-     * 기능: 15 초 안에 끝나는 상태는 그대로, 끝나지 않으면(가상 시간 15 초 초과) Unavailable("상태 확인 시간 초과") 를 돌려준다. 정확히 15 초 직전에는 아직 대기 중이다.
+     * 기능: 15 초 안에 끝나는 상태는 그대로, 끝나지 않으면(가상 시간 15 초 초과) CheckFailed("상태 확인 시간 초과")(change(add)-hyungchul-2026-10-11-21:50 Unavailable → CheckFailed) 를 돌려준다. 정확히 15 초 직전에는 아직 대기 중이다.
      * 입력: 없음 / 출력: 없음 / 리턴: 없음
      */
     @Test
@@ -270,13 +271,13 @@ class SystemEnginesSectionTest {
         advanceTimeBy(2) // 15 초 초과
         runCurrent()
         job.join() // 종료 대기
-        assertEquals(LanguageStatus.Unavailable("상태 확인 시간 초과"), result) // 시간 초과
+        assertEquals(LanguageStatus.CheckFailed("상태 확인 시간 초과"), result) // 시간 초과(일시적 확인 실패) // change(add)-hyungchul-2026-10-11-21:50
         assertEquals(StatusReasons.TIMEOUT, "상태 확인 시간 초과") // 상수 문구
         var custom: LanguageStatus? = null // 사용자 지정 시간
         val job2 = launch { custom = withStatusTimeout(timeoutMs = 100) { awaitCancellation() } } // 100 ms
         advanceTimeBy(101) // 초과
         runCurrent()
         job2.join()
-        assertEquals(LanguageStatus.Unavailable(StatusReasons.TIMEOUT), custom) // 지정 시간도 적용
+        assertEquals(LanguageStatus.CheckFailed(StatusReasons.TIMEOUT), custom) // 지정 시간도 적용 // change(add)-hyungchul-2026-10-11-21:50
     }
 }

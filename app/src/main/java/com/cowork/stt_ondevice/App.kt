@@ -5,6 +5,7 @@
 //       지연 생성 싱글턴으로 보유하고, 배치 실행기(BatchRunner)를 실제 의존성으로 조립하는 newBatchRunner() 를 제공한다.
 //       change(add)-hyungchul-2026-10-11-12:51 newBatchRunner 는 실행 시작 때 선택한 ASR 모델 전부와 선택 프리셋에 필요한 VAD 계열 모델 전부를 ModelStore.acquireAll 로 잡고 실행 끝에 놓는다(최종 리뷰 I-4).
 //       change(add)-hyungchul-2026-10-11-19:18 (2차 작업 6) newBatchRunner 에 시스템 엔진 생성기(SystemEngines.create)와 실행 전 언어 확인(SystemEngines.unavailableReason)을 연결한다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) 실행 전 언어 확인은 종류 있는 결과(SystemEngines.availability → LangAvailability)로 연결한다(1차 엔진은 항상 Available).
 //       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) USER VAD 프리셋 저장소(userPresetStore — filesDir/user_presets.json)와 기본+USER 합본 조회(presetRegistry)를 싱글턴으로 보유한다.
 //       저장소는 락·임시 파일명이 인스턴스 단위라 반드시 이 인스턴스 하나만 쓴다.
 //       ModelStore 의 사용 횟수와 ModelInstaller 의 동시 설치 방지는 인스턴스 단위이므로(Task 19 리뷰) 서비스·화면 ViewModel 모두
@@ -18,6 +19,7 @@ import com.cowork.stt_ondevice.core.device.DeviceInfo // change(add)-hyungchul-2
 import com.cowork.stt_ondevice.core.device.EnvSnapshot // change(add)-hyungchul-2026-10-11-02:40 발열·배터리 스냅샷
 import com.cowork.stt_ondevice.core.device.ResourceSampler // change(add)-hyungchul-2026-10-11-02:40 메모리·CPU 샘플러
 import com.cowork.stt_ondevice.core.storage.AppDirs // change(add)-hyungchul-2026-10-11-02:40 앱 폴더 구조
+import com.cowork.stt_ondevice.engine.LangAvailability // change(add)-hyungchul-2026-10-11-21:50 실행 전 언어 확인 결과 종류
 import com.cowork.stt_ondevice.engine.ManagedEngine // change(add)-hyungchul-2026-10-11-02:40 acquire/release 묶은 엔진 생성기
 import com.cowork.stt_ondevice.engine.system.SystemEngines // change(add)-hyungchul-2026-10-11-19:18 시스템 엔진 생성·언어 확인
 import com.cowork.stt_ondevice.model.Downloader // change(add)-hyungchul-2026-10-11-02:40 다운로더
@@ -86,6 +88,7 @@ class App : Application() { // change(add)-hyungchul-2026-10-11-02:40 본문 추
      *       device = 지금 수집한 DeviceInfo. 실행(run)마다 새로 만든다(실행기 자체는 상태가 없지만 device 를 실행 시점 값으로 맞추기 위함).
      *       change(add)-hyungchul-2026-10-11-12:51 modelHold = 선택 ASR 모델 + 선택 프리셋 계열의 카탈로그 VAD 모델(있는 것만)을 modelStore.acquireAll 로 실행 내내 사용 중 표시.
      *       change(add)-hyungchul-2026-10-11-19:18 engineFactory 의 시스템 spec 은 SystemEngines.create 로 만들고, availability = 시스템 spec 이면 SystemEngines.unavailableReason(아니면 null).
+     *       change(add)-hyungchul-2026-10-11-21:50 availability = 시스템 spec 이면 SystemEngines.availability(종류 있는 결과), 아니면 LangAvailability.Available.
      * 입력: 없음
      * 출력: 기기 정보 수집·폴더 조회 실패 시 그 예외
      * 리턴: BatchRunner
@@ -98,7 +101,7 @@ class App : Application() { // change(add)-hyungchul-2026-10-11-02:40 본문 추
         env = ::envSnapshotOrNull, // 환경 스냅샷(읽기 실패는 null — 추정치로 채우지 않음) // change(add)-hyungchul-2026-10-11-03:00 runCatching → Exception 만 잡고 로그
         device = DeviceInfo.collect(this), // 기기 정보
         modelHold = { cfg -> modelStore.acquireAll(cfg.models + cfg.presets.map { it.family }.distinct().mapNotNull { ModelCatalog.vadModel(it) }) }, // 선택 모델 전부 보호 // change(add)-hyungchul-2026-10-11-12:51
-        availability = { spec, lang -> if (spec.isSystem) SystemEngines.unavailableReason(this, spec, lang) else null }, // 실행 전 언어 확인(시스템 엔진만) // change(add)-hyungchul-2026-10-11-19:18
+        availability = { spec, lang -> if (spec.isSystem) SystemEngines.availability(this, spec, lang) else LangAvailability.Available }, // 실행 전 언어 확인(시스템 엔진만, 종류 있는 결과) // change(add)-hyungchul-2026-10-11-19:18 // change(add)-hyungchul-2026-10-11-21:50 LangAvailability
     )
 
     // change(add)-hyungchul-2026-10-11-03:00

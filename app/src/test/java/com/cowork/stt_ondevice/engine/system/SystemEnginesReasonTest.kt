@@ -3,9 +3,11 @@
 // 기능: 가짜 SystemEngineStatus 로 사용 가능 → null, 다운로드 필요·다운로드 중·사용 불가·시간 초과 → 작업 6 의 사유 문구, 예외 → "상태 확인 실패(<클래스>: <메시지>)",
 //       취소·VirtualMachineError 는 그대로 전파되는지 확인한다.
 //       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) 플랫폼 "언어 미설치" 사유의 "(설치됨: …)" 목록을 정확한 문구로 단언한다(다운로드 필요·미지원 두 분기, 목록 없음·여러 개·조회 실패).
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) 시간 초과는 CheckFailed 로 들어오며, availability 가 상태 종류로 Available/Unsupported/Transient 를 가르는지 확인한다.
 // change(add)-hyungchul-2026-10-11-19:52
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지 테스트
 
+import com.cowork.stt_ondevice.engine.LangAvailability // change(add)-hyungchul-2026-10-11-21:50 실행 전 확인 결과 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.SystemCatalog // 시스템 카탈로그
 import com.cowork.stt_ondevice.model.SystemEngineKind // 시스템 엔진 종류
@@ -57,7 +59,7 @@ class SystemEnginesReasonTest {
         assertEquals("언어 미설치(en-US) — Speech Services by Google 언어 팩 다운로드 필요(상태 DOWNLOADABLE)", reason(mlkit, "en") { LanguageStatus.Downloadable }) // 미설치
         assertEquals("언어 팩 다운로드 중(en-US, 상태 DOWNLOADING)", reason(mlkit, "en") { LanguageStatus.Downloading }) // 받는 중
         assertEquals("이 기기에서 사용할 수 없음(ko-KR, 상태 UNAVAILABLE)", reason(mlkit, "ko") { LanguageStatus.Unavailable(StatusReasons.MLKIT_UNSUPPORTED) }) // 미지원
-        assertEquals("상태 확인 시간 초과(en-US, 15 초) — Speech Services by Google 응답 없음", reason(mlkit, "en") { LanguageStatus.Unavailable(StatusReasons.TIMEOUT) }) // 시간 초과
+        assertEquals("상태 확인 시간 초과(en-US, 15 초) — Speech Services by Google 응답 없음", reason(mlkit, "en") { LanguageStatus.CheckFailed(StatusReasons.TIMEOUT) }) // 시간 초과 // change(add)-hyungchul-2026-10-11-21:50 Unavailable → CheckFailed
         assertEquals("언어 팩 설치 대기 중(en-US)", reason(platform, "en") { LanguageStatus.Downloading }) // 플랫폼 대기
         assertEquals("마이크(RECORD_AUDIO) 권한 없음 — 앱 권한에서 허용 필요", reason(platform, "ko") { LanguageStatus.Unavailable("마이크(RECORD_AUDIO) 권한 없음 — 앱 권한에서 허용 필요") }) // 그 밖 사유는 그대로
     }
@@ -100,6 +102,27 @@ class SystemEnginesReasonTest {
         } catch (e: OutOfMemoryError) {
             assertEquals("oom", e.message) // 그대로
         }
+    }
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /**
+     * 목적: 실행 전 확인 결과 종류 판별(Important 1)
+     * 기능: Available → Available, 시간 초과·조회 예외(CheckFailed) → Transient(사유, 서비스 패키지·이름), 다운로드 필요·미지원·모르는 언어 → Unsupported.
+     *       사유 문구가 "상태 확인 실패" 로 시작하는 Unavailable 이라도 종류가 Unavailable 이면 Unsupported(문자열이 아니라 종류로 판별).
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun availabilityClassifiesByStatusKind() = runBlocking {
+        /** 목적: 가짜 조회기로 availability 호출 / 입력: spec, lang, body / 리턴: LangAvailability */
+        suspend fun avail(spec: ModelSpec, lang: String, body: () -> LanguageStatus): LangAvailability = SystemEngines.availability(fake(body = body), spec, lang) // 호출
+        assertEquals(LangAvailability.Available, avail(mlkit, "ko") { LanguageStatus.Available }) // 사용 가능
+        val timeout = SystemEngineKind.MLKIT_BASIC.let { k -> LangAvailability.Transient("상태 확인 시간 초과(en-US, 15 초) — ${k.serviceLabel} 응답 없음", k.servicePackage, k.serviceLabel) } // 기대 시간 초과
+        assertEquals(timeout, avail(mlkit, "en") { LanguageStatus.CheckFailed(StatusReasons.TIMEOUT) }) // 시간 초과 → 일시
+        val p = SystemEngineKind.PLATFORM_ONDEVICE // 플랫폼 종류
+        assertEquals(LangAvailability.Transient("상태 확인 실패(IllegalStateException: boom)", p.servicePackage, p.serviceLabel), avail(platform, "en") { throw IllegalStateException("boom") }) // 조회 예외 → 일시
+        assertEquals(LangAvailability.Unsupported("언어 미설치(en-US) — Speech Services by Google 언어 팩 다운로드 필요(상태 DOWNLOADABLE)"), avail(mlkit, "en") { LanguageStatus.Downloadable }) // 미설치 → 영구
+        assertEquals(LangAvailability.Unsupported("상태 확인 실패(가짜)"), avail(mlkit, "en") { LanguageStatus.Unavailable("상태 확인 실패(가짜)") }) // 문구가 아니라 종류로 판별
+        assertEquals(LangAvailability.Unsupported("지원하지 않는 언어: 'fr'"), avail(mlkit, "fr") { error("조회하면 안 됨") }) // 모르는 언어 → 영구
     }
 
     /** 목적: 알 수 없는 언어 / 기능: 태그 표에 없는 언어는 조회 없이 기존 사유 / 리턴: 없음 */
