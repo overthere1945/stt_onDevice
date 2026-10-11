@@ -3,9 +3,17 @@
 // 기능: RunService.events(StateFlow<RunUiState>)를 그대로 그린다(별도 ViewModel 없음 — 상태는 서비스 쪽 프로세스 메모리에 있음).
 //       Idle: 안내 문구. Running: 진행 막대(done/total)·현재 작업 3줄·경과 시간(1초마다 갱신)·오류 수·최근 완료 항목·거부된 시작 요청 사유·취소(확인 대화상자).
 //       Finished/Failed/Cancelled: runId 와 상태별 건수 또는 원인, "결과 보기" 버튼(onOpenResults 로 결과 탭의 그 run 을 연다).
+//       change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) 화면을 상태를 받아 그리는 RunProgressContent(state, onOpenResults, onOpenSettings)와 RunService.events 에 연결하는 껍데기 RunProgressScreen 으로 나눈다(화면 테스트용).
+//       Paused: "<서비스 이름> 가 응답하지 않습니다…" 문구 + 단계 안내(① 설정 열기 ② 강제 중지 ③ 이어하기) + [설정 열기](그 서비스 앱 정보 화면) + [이어하기](결과 탭에서 그 run 을 연다).
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
 
+import android.content.ActivityNotFoundException // 설정 화면을 열 수 없음 // change(add)-hyungchul-2026-10-11-19:03
+import android.content.Context // 컨텍스트 // change(add)-hyungchul-2026-10-11-19:03
+import android.content.Intent // 인텐트 // change(add)-hyungchul-2026-10-11-19:03
+import android.net.Uri // 패키지 URI // change(add)-hyungchul-2026-10-11-19:03
+import android.provider.Settings // 앱 정보 설정 화면 액션 // change(add)-hyungchul-2026-10-11-19:03
+import android.widget.Toast // 짧은 알림 // change(add)-hyungchul-2026-10-11-19:03
 import androidx.compose.foundation.layout.Arrangement // 배치 간격
 import androidx.compose.foundation.layout.Column // 세로 배치
 import androidx.compose.foundation.layout.fillMaxSize // 가득 채우기
@@ -38,16 +46,30 @@ import java.util.Locale // 숫자 서식 로캘
 
 // change(add)-hyungchul-2026-10-11-03:31
 /**
- * 목적: 진행 화면
- * 기능: 파일 머리말 참조.
+ * 목적: 진행 화면(서비스 연결 껍데기)
+ * 기능: RunService.events 를 구독해 RunProgressContent 에 넘기고, 설정 열기 요청은 openAppSettings 로 처리한다. // change(add)-hyungchul-2026-10-11-19:03 내용 부분을 RunProgressContent 로 분리
  * 입력: onOpenResults(runId — 결과 탭에서 그 run 열기)
  * 출력: 화면 표시
  * 리턴: Unit
  */
 @Composable
 fun RunProgressScreen(onOpenResults: (String) -> Unit) {
-    val context = LocalContext.current // 컨텍스트
+    val context = LocalContext.current // 컨텍스트(Activity 문맥이라 NEW_TASK 불필요) // change(add)-hyungchul-2026-10-11-19:03
     val state by RunService.events.collectAsStateWithLifecycle() // 실행 상태
+    RunProgressContent(state = state, onOpenResults = onOpenResults, onOpenSettings = { pkg -> openAppSettings(context, pkg) }) // 상태 그리기 // change(add)-hyungchul-2026-10-11-19:03
+}
+
+// change(add)-hyungchul-2026-10-11-19:03
+/**
+ * 목적: 진행 화면 내용(상태를 받아 그림)
+ * 기능: 파일 머리말 참조. 서비스를 직접 구독하지 않아 화면 테스트에서 상태를 주입할 수 있다(취소 버튼만 RunService.cancel 을 부름).
+ * 입력: state(실행 상태), onOpenResults(runId — 결과 탭에서 그 run 열기), onOpenSettings(서비스 패키지 — 그 앱의 설정 화면 열기)
+ * 출력: 화면 표시
+ * 리턴: Unit
+ */
+@Composable
+fun RunProgressContent(state: RunUiState, onOpenResults: (String) -> Unit, onOpenSettings: (String) -> Unit) {
+    val context = LocalContext.current // 컨텍스트
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) } // 경과 시간 계산용 현재 시각
     var confirmCancel by remember { mutableStateOf(false) } // 취소 확인 대화상자
     var cancelRequested by remember { mutableStateOf<String?>(null) } // 취소를 요청한 runId
@@ -65,7 +87,7 @@ fun RunProgressScreen(onOpenResults: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(8.dp), // 간격
     ) {
         Text("진행", style = MaterialTheme.typography.headlineSmall) // 제목
-        when (val s = state) {
+        when (val s = state) { // change(add)-hyungchul-2026-10-11-19:03 state 는 인자로 받음
             RunUiState.Idle -> Text("실행 중인 작업이 없습니다. 실행 탭에서 설정한 뒤 시작하세요.", style = MaterialTheme.typography.bodyLarge) // 안내
             is RunUiState.Running -> {
                 Text("실행 중: ${s.runId}", style = MaterialTheme.typography.titleMedium) // 실행 ID
@@ -124,6 +146,16 @@ fun RunProgressScreen(onOpenResults: (String) -> Unit) {
                 Text("끝난 항목의 결과는 남아 있습니다. 결과 탭에서 이 실행을 '이어하기' 로 계속할 수 있습니다.", style = MaterialTheme.typography.bodyMedium) // 안내
                 Button(onClick = { onOpenResults(s.runId) }, modifier = Modifier.fillMaxWidth()) { Text("결과 보기") } // 결과 탭
             }
+            is RunUiState.Paused -> { // change(add)-hyungchul-2026-10-11-19:03 엔진 멈춤 일시정지
+                Text("실행 일시정지: ${s.runId}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error) // 제목
+                Text("${s.serviceLabel} 가 응답하지 않습니다.", style = MaterialTheme.typography.bodyLarge) // 핵심 문구
+                Text(s.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) // 상세 사유
+                Text("① [설정 열기]를 눌러 ${s.serviceLabel} 의 앱 정보 화면을 엽니다.", style = MaterialTheme.typography.bodyMedium) // 1단계
+                Text("② 그 화면에서 \"강제 중지\"를 누릅니다.", style = MaterialTheme.typography.bodyMedium) // 2단계
+                Text("③ 이 앱으로 돌아와 [이어하기]를 누릅니다.", style = MaterialTheme.typography.bodyMedium) // 3단계
+                Button(onClick = { onOpenSettings(s.servicePackage) }, modifier = Modifier.fillMaxWidth()) { Text("설정 열기") } // 서비스 앱 정보 화면
+                OutlinedButton(onClick = { onOpenResults(s.runId) }, modifier = Modifier.fillMaxWidth()) { Text("이어하기") } // 결과 탭에서 이 run 의 이어하기 사용
+            }
         }
     }
 }
@@ -151,4 +183,21 @@ private fun LabeledLine(label: String, value: String) {
 private fun formatElapsed(ms: Long): String {
     val total = (ms.coerceAtLeast(0) / 1000) // 전체 초
     return String.format(Locale.ROOT, "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60) // H:MM:SS
+}
+
+// change(add)-hyungchul-2026-10-11-19:03
+/**
+ * 목적: 다른 앱의 앱 정보 설정 화면 열기
+ * 기능: Settings.ACTION_APPLICATION_DETAILS_SETTINGS + package:<servicePackage> 로 startActivity 한다(Activity 문맥이라 NEW_TASK 불필요).
+ *       열 수 없으면 짧은 알림으로 알리고 앱은 계속 동작한다.
+ * 입력: context(Activity 컨텍스트), servicePackage(설정을 열 앱의 패키지)
+ * 출력: 설정 화면 표시 또는 알림
+ * 리턴: Unit
+ */
+private fun openAppSettings(context: Context, servicePackage: String) {
+    try {
+        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", servicePackage, null))) // 앱 정보 화면
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(context, "설정 화면을 열 수 없습니다. 기기 설정 > 앱에서 직접 찾아 강제 중지하세요.", Toast.LENGTH_LONG).show() // 열 수 없음 안내
+    }
 }

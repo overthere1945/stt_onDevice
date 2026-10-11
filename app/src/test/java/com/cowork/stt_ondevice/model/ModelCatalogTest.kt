@@ -2,6 +2,7 @@
 // 목적: 생성된 모델 카탈로그(ModelCatalog/ModelCatalogData)의 내용 계약 검증
 // 기능: Phase 1 ASR 모델 집합, SHA-256 형식, 언어, maxChunkSec, .en 금지, VAD 모델 존재·파일 이름, id 중복, 단일 파일 다운로드 ↔ 파일 연결,
 //       sherpa 파일 역할 ↔ 설정 필드 연결을 확인한다.
+//       change(add)-hyungchul-2026-10-11-18:21 시스템 엔진 항목(파일 없음)이 합쳐졌으므로 파일·다운로드·Phase 1 집합 단언은 시스템 항목을 제외(!isSystem)하고 검사한다(2차 작업 2).
 package com.cowork.stt_ondevice.model // 모델 메타 테스트 패키지
 
 import com.cowork.stt_ondevice.vad.VadEngineFactory // VAD 팩토리(기대 파일 이름 상수)
@@ -27,7 +28,7 @@ class ModelCatalogTest {
      */
     @Test
     fun catalogHasAllPhase1Asr() {
-        val byAlgo = ModelCatalog.asr.groupBy({ it.algo }, { it.model }).mapValues { it.value.toSet() } // algo → model 집합
+        val byAlgo = ModelCatalog.asr.filter { !it.isSystem }.groupBy({ it.algo }, { it.model }).mapValues { it.value.toSet() } // algo → model 집합 // change(add)-hyungchul-2026-10-11-18:21 시스템 항목 제외
         val zipformer = byAlgo.getValue("sherpa-zipformer") // 오프라인 zipformer 모델들
         val enZipformer = zipformer.filter { it.startsWith("en-") } // EN 항목
         assertEquals(1, enZipformer.size) // EN 1종
@@ -40,7 +41,7 @@ class ModelCatalogTest {
             "sherpa-omnilingual" to setOf("ctc300m-v1-int8", "ctc300m-v2-int8", "ctc1b-v2-int8"), // Omnilingual
             "vosk" to setOf("small-ko-0.22", "small-en-us-0.15"), // Vosk
         )
-        assertEquals(expected, byAlgo) // 정확히 같은 집합
+        assertEquals(expected, byAlgo) // 정확히 같은 집합(Phase 1 엔진만)
         assertTrue(ModelCatalog.asr.all { it.kind == ModelKind.ASR }) // asr 목록은 ASR 만
     }
 
@@ -54,8 +55,9 @@ class ModelCatalogTest {
     @Test
     fun everyFileHasSha256() {
         val hex64 = Regex("^[0-9a-f]{64}$") // SHA-256 형식
-        assertTrue("카탈로그가 비어 있음", ModelCatalog.all.isNotEmpty()) // 빈 카탈로그로 통과하지 않도록 // change(add)-hyungchul-2026-10-10-20:00
-        for (spec in ModelCatalog.all) { // 항목마다
+        val fileBased = ModelCatalog.all.filter { !it.isSystem } // 파일 기반 항목만(시스템 엔진은 파일 없음) // change(add)-hyungchul-2026-10-11-18:21
+        assertTrue("카탈로그가 비어 있음", fileBased.isNotEmpty()) // 빈 카탈로그로 통과하지 않도록 // change(add)-hyungchul-2026-10-10-20:00
+        for (spec in fileBased) { // 항목마다 // change(add)-hyungchul-2026-10-11-18:21
             assertTrue("${spec.id} 파일 없음", spec.files.isNotEmpty()) // 파일 1개 이상
             for (f in spec.files) { // 파일마다
                 assertTrue("${spec.id}/${f.path} sha256", hex64.matches(f.sha256)) // 형식

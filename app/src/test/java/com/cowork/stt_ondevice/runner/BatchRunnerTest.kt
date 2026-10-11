@@ -4,6 +4,12 @@
 //       결과 파일(txt/ERROR.txt/result.csv/요약 CSV/detail JSON/run_manifest.json/로그)과 엔진 호출 기록을 확인한다.
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1·I-4) 처음 중단된 단계는 다시 시도·두 번째는 CRASH_OR_KILLED, 완료 run 의 CRASH_OR_KILLED 항목 다시 실행(rerunCrashed),
 //       실행 동안 선택 모델 전부의 사용 표시(ModelStore 사용 횟수, 끝·실패·취소·거부 때 해제)를 확인한다.
+//       change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리 도중 죽은 run 을 일반 이어하기로 열면 정리가 먼저 다시 수행되는지(rerunCleanupPending) 확인한다.
+//       change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) 엔진 멈춤(EngineStalledException) → 항목 미기록·일시정지 이벤트·크래시 미집계, 이어하기로 멈춘 항목부터 재개를 확인한다.
+//       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 실행 전 언어 사용 가능 확인(availability) 결과가 unsupported·unavailableReasons 에 기록되는지, 이어하기에서 이제 사용 가능해진 조합만 빠지는지,
+//       실시간 배속 공급 엔진의 detail rtf 가 null 인지 확인한다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) 일시적 확인 실패(Transient)는 기록 없이 건너뛰고 일시정지로 끝나 이어하기에서 실행되는지,
+//       일부 항목이 끝난 조합이 이어하기에서 Unsupported 가 되면 끝난 결과는 그대로이고 남은 항목만 미지원으로 남는지(집계 포함), 남은 항목이 없는 조합은 확인하지 않는지 확인한다.
 // change(add)-hyungchul-2026-10-11-01:47
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -17,12 +23,15 @@ import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
 import com.cowork.stt_ondevice.engine.AsrEngine // 엔진 계약
 import com.cowork.stt_ondevice.engine.ChunkText // chunk 전사 결과
 import com.cowork.stt_ondevice.engine.EngineException // 엔진 오류
+import com.cowork.stt_ondevice.engine.LangAvailability // 실행 전 언어 확인 결과 종류 // change(add)-hyungchul-2026-10-11-21:50
 import com.cowork.stt_ondevice.engine.PrepareInfo // 준비 결과
+import com.cowork.stt_ondevice.engine.system.EngineStalledException // 시스템 엔진 멈춤 예외 // change(add)-hyungchul-2026-10-11-19:03
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 판정
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 모델 저장소(사용 횟수) // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.model.Runtime // 런타임
+import com.cowork.stt_ondevice.model.SystemEngineKind // 시스템 엔진 종류 // change(add)-hyungchul-2026-10-11-19:03
 import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식
 import com.cowork.stt_ondevice.model.VoskConfig // 엔진 설정(가짜용)
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
@@ -186,6 +195,8 @@ class BatchRunnerTest {
     private var engineOf: (ModelSpec) -> FakeEngine = { FakeEngine(it, calls) } // 엔진 생성 규칙(테스트별 교체)
     private var vadOf: (VadFamily) -> VadEngine = { FakeVad(it, detects) } // VAD 생성 규칙(테스트별 교체)
     private var holdOf: (RunConfig) -> AutoCloseable = { AutoCloseable { } } // 모델 사용 표시 규칙(테스트별 교체) // change(add)-hyungchul-2026-10-11-12:51
+    private val availabilityCalls: MutableList<String> = Collections.synchronizedList(mutableListOf()) // 언어 확인 호출 기록("모델id|엔진언어") // change(add)-hyungchul-2026-10-11-19:10
+    private var availabilityOf: suspend (ModelSpec, String) -> LangAvailability = { _, _ -> LangAvailability.Available } // 언어 사용 가능 확인 규칙(테스트별 교체) // change(add)-hyungchul-2026-10-11-19:10 // change(add)-hyungchul-2026-10-11-21:50 String? → LangAvailability
     private var device = DeviceInfo("samsung", "SM-S938N", "SM8750", "16", 36, "arm64-v8a", 11800L, "1.0 (1)") // 고정 기기
 
     /** 목적: 앱 폴더. 기능: 임시 폴더 루트의 AppDirs. 입력: 없음. 출력: 없음. 리턴: AppDirs */
@@ -203,6 +214,7 @@ class BatchRunnerTest {
         env = { EnvSnapshot(0, 0.5f, 80, true) }, // 고정 환경
         device = device, // 기기
         modelHold = { cfg -> holdOf(cfg) }, // 모델 사용 표시 // change(add)-hyungchul-2026-10-11-12:51
+        availability = { spec, lang -> availabilityCalls.add("${spec.id}|$lang"); availabilityOf(spec, lang) }, // 언어 사용 가능 확인(호출 기록) // change(add)-hyungchul-2026-10-11-19:10
     )
 
     /** 목적: 가짜 모델. 기능: algo "fake", model=id 인 ModelSpec. 입력: id, languages, maxChunkSec. 출력: 없음. 리턴: ModelSpec */
@@ -882,6 +894,44 @@ class BatchRunnerTest {
         assertTrue(OutputLayout.log(runDir, runId).readLines().any { it.contains("\tRERUN_CRASHED\t") && it.contains("1개") }) // 다시 실행 로그
     }
 
+    // change(add)-hyungchul-2026-10-11-18:14
+    /**
+     * 목적: 다시 실행 정리 도중 죽은 run 의 일반 이어하기(2차 작업 1)
+     * 기능: 크래시 항목(m1/02)이 있는 run 을 "다시 실행 정리 중 죽은 상태"로 만든다 — manifest finishedAt=null, rerunCleanupPending=true,
+     *       그 항목의 CSV 행은 이미 없고 ERROR.txt 는 남음. 이 run 을 일반 이어하기(resume=true, rerunCrashed=false)로 시작하면
+     *       정리가 먼저 다시 수행되어 그 항목이 다시 실행되고, 두 CSV 에 그 항목이 정확히 1행이며 끝난 뒤 rerunCleanupPending 이 false 이다.
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun rerunCleanupInterruptedIsRedoneOnPlainResume() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/01 만 완료
+        val key = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]) // m1/02 키
+        manifest().copy(inFlight = key, inFlightAttempts = mapOf(key to 1)).write(OutputLayout.manifest(runDir)) // 두 번째 중단 흉내
+        runner().run(cfg.copy(resume = true)).toList() // 이어하기 → m1/02 CRASH_OR_KILLED
+        val dir = File(runDir, "kr/${combo("m1", "SILERO")}/customer") // m1 조합 폴더
+        assertTrue(File(dir, "02.ERROR.txt").readText().contains("code: CRASH_OR_KILLED")) // 크래시 기록
+        val comboCsv = OutputLayout.resultCsv(runDir, "kr", combo("m1", "SILERO")) // 조합 CSV
+        val summary = OutputLayout.summaryCsv(runDir, runId) // 요약 CSV
+        CsvFiles.removeRows(comboCsv, mapOf("file" to "02.wav")) // 행 정리까지만 끝난 상태: 조합 행 없음
+        CsvFiles.removeRows(summary, mapOf("file" to "02.wav")) // 요약 행 없음
+        manifest().copy(finishedAt = null, rerunCleanupPending = true).write(OutputLayout.manifest(runDir)) // 정리 도중 죽은 manifest
+        assertTrue(File(dir, "02.ERROR.txt").isFile) // ERROR.txt 는 남음
+        assertEquals(listOf("01.wav"), rows(comboCsv).map { it["file"] }) // 02 행 없음
+        calls.clear() // 기록 초기화
+        val events = runner().run(cfg.copy(resume = true, rerunCrashed = false)).toList() // 일반 이어하기
+        assertEquals(listOf("m1|0.10-2.90"), calls.toList()) // 정리가 다시 수행되어 그 항목이 다시 전사됨
+        assertFalse(File(dir, "02.ERROR.txt").exists()) // 크래시 기록 제거
+        assertTrue(File(dir, "02.txt").isFile) // 새 결과
+        assertEquals(listOf("01.wav" to "OK", "02.wav" to "OK"), rows(comboCsv).map { it["file"] to it["status"] }) // 조합 CSV 항목마다 정확히 1행
+        val sm = rows(summary) // 요약 행
+        assertEquals(listOf("01.wav", "02.wav"), sm.map { it["file"] }) // 요약도 정확히 1행씩
+        assertEquals(RunEvent.Finished(1, 0, 0, 0), events.last()) // 이번 실행 = 다시 실행한 1건
+        assertFalse(manifest().rerunCleanupPending) // 표식 해제
+        assertNotNull(manifest().finishedAt) // 다시 완료
+    }
+
     // change(add)-hyungchul-2026-10-11-12:51
     /**
      * 목적: 실행 동안 선택 모델 전부 사용 표시(I-4)
@@ -936,5 +986,232 @@ class BatchRunnerTest {
         cancelDuringTranscribe { during = store.useCountOf(spec("m1")) } // 전사 중 취소
         assertEquals(1, during) // 실행 중에는 사용 중
         assertEquals(0, store.useCountOf(spec("m1"))) // 취소 후 해제
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:03
+    /**
+     * 목적: 엔진 멈춤 → 배치 일시정지 (2차 작업 4)
+     * 기능: 3 항목 중 2번째에서 EngineStalledException → 마지막 이벤트 Paused(Finished 없음), 1번째 항목만 결과가 있고 2번째는 txt·ERROR.txt·CSV 행이 없다.
+     *       manifest 는 inFlight=null, inFlightAttempts 비어 있음, finishedAt=null, pausedReason=예외 메시지. 엔진은 닫힘.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun stallPausesRunWithoutWritingItem() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("kr", "customer", "03", 4.0)) // 길이로 구분(끝 1.9/2.9/3.9)
+        val stall = EngineStalledException(SystemEngineKind.MLKIT_BASIC, "Speech Services by Google 가 응답하지 않습니다(세션 2)") // 멈춤 예외
+        engineOf = { FakeEngine(it, calls, failWhen = { c -> c.endSec in 2.85..2.95 }, failError = stall) } // 2번째 항목에서 멈춤
+        val events = runner().run(config(listOf(spec("m1")), listOf("SILERO"), files)).toList() // 실행(정상 반환해야 함)
+        val last = events.last() as RunEvent.Paused // 마지막은 일시정지
+        assertEquals(stall.message, last.reason) // 사유 = 예외 메시지
+        assertEquals(SystemEngineKind.MLKIT_BASIC.servicePackage, last.servicePackage) // 서비스 패키지
+        assertEquals(SystemEngineKind.MLKIT_BASIC.serviceLabel, last.serviceLabel) // 서비스 이름
+        assertTrue(events.none { it is RunEvent.Finished }) // 종료 이벤트 없음
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/01.txt").isFile) // 1번째 항목 결과 있음
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").exists()) // 2번째 txt 없음
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.ERROR.txt").exists()) // 2번째 ERROR.txt 없음
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/03.txt").exists()) // 3번째 실행 안 함
+        assertEquals(listOf("01.wav"), rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")).map { it["file"] }) // CSV 에는 1번째만
+        val m = manifest() // manifest
+        assertNull(m.inFlight) // 진행 중 표시 해제
+        assertTrue(m.inFlightAttempts.isEmpty()) // 중단 횟수 비어 있음
+        assertNull(m.finishedAt) // 끝나지 않음(이어하기 대상)
+        assertEquals(stall.message, m.pausedReason) // 일시정지 사유 기록
+        assertTrue(created.all { it.closed }) // 엔진 닫힘
+        assertTrue(OutputLayout.log(runDir, runId).readLines().any { it.contains("\tRUN_PAUSED\t") }) // 로그
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:03
+    /**
+     * 목적: 일시정지 후 이어하기 (2차 작업 4)
+     * 기능: 멈춘 run 을 정상 엔진으로 resume=true 로 다시 실행하면 2·3번째 항목만 엔진을 부르고, 조합 CSV 는 3행(중복 없음),
+     *       pausedReason 은 지워지고, CRASH_OR_KILLED 는 어디에도 없다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun resumeAfterPauseContinuesFromStalledItem() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("kr", "customer", "03", 4.0)) // 파일 3개
+        val stall = EngineStalledException(SystemEngineKind.MLKIT_BASIC, "멈춤") // 멈춤 예외
+        engineOf = { FakeEngine(it, calls, failWhen = { c -> c.endSec in 2.85..2.95 }, failError = stall) } // 2번째에서 멈춤
+        val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).toList() // 일시정지까지
+        calls.clear() // 이어하기 호출만 보려고 비움
+        engineOf = { FakeEngine(it, calls) } // 정상 엔진
+        val events = runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertEquals(listOf("m1|0.10-2.90", "m1|0.10-3.90"), calls.toList()) // 2·3번째 항목만 실행
+        assertTrue(events.last() is RunEvent.Finished) // 정상 종료
+        assertEquals(listOf("01.wav", "02.wav", "03.wav"), rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")).map { it["file"] }) // 3행, 중복 없음
+        val m = manifest() // manifest
+        assertNull(m.pausedReason) // 사유 지워짐
+        assertNotNull(m.finishedAt) // 종료 기록
+        assertNull(m.inFlight) // 진행 중 없음
+        assertFalse(OutputLayout.log(runDir, runId).readText().contains("CRASH_OR_KILLED")) // 크래시 기록 없음
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer").listFiles()!!.none { it.name.endsWith(".ERROR.txt") }) // ERROR.txt 없음
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 사용할 수 없는 언어 건너뛰기 (2차 작업 5)
+     * 기능: availability 가 en 에만 "언어 미설치(en-US)" 를 돌려주면 en 항목은 실행되지 않고 en 결과·detail·VAD 폴더가 없으며,
+     *       manifest.unsupported 에 "<combo>|en", unavailableReasons 에 같은 키로 사유가 남는다. ko 항목은 정상 실행. 언어 확인은 모델 × 언어마다 1회.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun unavailableLanguageIsSkippedAndRecorded() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("en", "vLog", "01", 2.0)) // 한국어 2 + 영어 1
+        availabilityOf = { _, lang -> if (lang == "en") LangAvailability.Unsupported("언어 미설치(en-US)") else LangAvailability.Available } // 영어만 사용 불가 // change(add)-hyungchul-2026-10-11-21:50 종류 있는 결과
+        val events = runner().run(config(listOf(spec("m1")), listOf("SILERO", "SILERO_SAFE"), files)).toList() // 프리셋 2개로 실행(확인은 1회여야 함)
+        assertEquals(listOf("m1|ko", "m1|en"), availabilityCalls.toList()) // 모델 × 언어마다 1회(프리셋·파일 수와 무관)
+        assertFalse(File(runDir, "en").exists()) // en 결과 폴더 없음
+        assertFalse(File(runDir, "details/en").exists()) // en detail 없음
+        assertFalse(File(runDir, "vad_segments/SILERO/en").exists()) // en VAD 계산 없음
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/01.txt").isFile) // ko 는 정상
+        assertEquals(4, calls.size) // ko 2파일 × 2프리셋만 전사
+        val m = manifest() // manifest
+        assertEquals(listOf("fake_m1_SILERO|en", "fake_m1_SILERO_SAFE|en"), m.unsupported) // 미지원 기록
+        assertEquals(mapOf("fake_m1_SILERO|en" to "언어 미설치(en-US)", "fake_m1_SILERO_SAFE|en" to "언어 미설치(en-US)"), m.unavailableReasons) // 사유 기록
+        assertEquals(RunEvent.Finished(4, 0, 0, 2), events.last()) // 집계(미지원 2조합)
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 이어하기에서 이제 사용 가능해진 언어 복구 (2차 작업 5)
+     * 기능: 영어 불가로 시작한 run 을 중간에 멈춘 뒤 availability 가 모두 null 로 이어하면 en 항목이 실행되고 unavailableReasons 가 비며,
+     *       카탈로그 언어 미지원(ko 전용 m2 × en) 기록은 unsupported 에 그대로 남는다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun resumeDropsNowAvailableLanguage() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("en", "vLog", "01", 2.0)) // 파일 3개
+        val models = listOf(spec("m1"), spec("m2", languages = setOf("ko"))) // m2 는 카탈로그상 ko 전용
+        availabilityOf = { _, lang -> if (lang == "en") LangAvailability.Unsupported("언어 미설치(en-US)") else LangAvailability.Available } // 영어 사용 불가 // change(add)-hyungchul-2026-10-11-21:50 종류 있는 결과
+        runner().run(config(models, listOf("SILERO"), files)).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // 1개만 하고 중단
+        val before = manifest() // 중단 직후
+        assertNull(before.finishedAt) // 끝나지 않음
+        assertEquals(setOf("fake_m1_SILERO|en", "fake_m2_SILERO|en"), before.unsupported.toSet()) // m1 은 불가, m2 는 카탈로그 미지원(기록 순서는 검사하지 않음)
+        assertEquals(mapOf("fake_m1_SILERO|en" to "언어 미설치(en-US)"), before.unavailableReasons) // 사유는 m1 만(카탈로그 미지원은 사유 없음)
+        availabilityOf = { _, _ -> LangAvailability.Available } // 이제 모두 사용 가능 // change(add)-hyungchul-2026-10-11-21:50 종류 있는 결과
+        calls.clear() // 기록 초기화
+        val events = runner().run(config(models, listOf("SILERO"), files, resume = true)).toList() // 이어하기
+        assertTrue(File(runDir, "en/fake_m1_SILERO/vLog/01.txt").isFile) // en 항목 실행됨
+        assertTrue(calls.contains("m1|0.10-1.90")) // en 파일(2초) 전사 호출
+        val after = manifest() // 이어하기 후
+        assertTrue(after.unavailableReasons.isEmpty()) // 사유 비어 있음
+        assertEquals(listOf("fake_m2_SILERO|en"), after.unsupported) // 카탈로그 미지원은 유지
+        assertEquals(RunEvent.Finished(4, 0, 0, 1), events.last()) // 이번 실행 집계(m1 kr02·en01 + m2 kr01·kr02)
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 실시간 배속 공급 엔진의 rtf 비움 (2차 작업 5)
+     * 기능: streaming 이 PACED_REALTIME 인 모델의 detail.rtf 는 null, 일반 모델은 값이 있다(transcribeSec 는 둘 다 측정).
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun pacedRealtimeModelHasNoRtf() = runBlocking {
+        val it1 = item("kr", "customer", "01", 2.0) // 파일
+        val paced = spec("m1").copy(streaming = StreamingKind.PACED_REALTIME) // 실시간 배속 공급 모델
+        runner().run(config(listOf(paced, spec("m2")), listOf("SILERO"), listOf(it1))).toList() // 실행
+        val d1 = AppJson.decodeFromString(DetailJson.serializer(), OutputLayout.detail(runDir, it1, combo("m1", "SILERO")).readText()) // paced detail
+        val d2 = AppJson.decodeFromString(DetailJson.serializer(), OutputLayout.detail(runDir, it1, combo("m2", "SILERO")).readText()) // 일반 detail
+        assertNull(d1.rtf) // rtf 측정 안 함
+        assertNotNull(d1.transcribeSec) // 전사 시간은 측정
+        assertNotNull(d2.rtf) // 일반 모델은 rtf 있음
+    }
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /**
+     * 목적: 일시적 확인 실패는 영구 미지원으로 남지 않음 (최종 리뷰 수정 Important 1)
+     * 기능: m1 의 en 만 Transient(상태 확인 시간 초과)이면 m1·en 항목은 기록 없이 건너뛰고 m1·kr 과 m2(kr·en)는 정상 실행된다.
+     *       실행은 Paused(서비스 패키지·이름, "… 상태 확인 실패(…) — 강제 중지 후 이어하기")로 끝나고 Finished 가 없으며, finishedAt=null, unsupported·unavailableReasons 는 비어 있다.
+     *       이어하기에서 Available 이면 남은 m1·en 항목만 실행되고 Finished 로 끝나며, 남은 항목이 없는 (모델, 언어)에는 언어 확인을 부르지 않는다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun transientUnavailableKeepsRunResumable() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("en", "vLog", "01", 4.0)) // 한국어 2 + 영어 1(4초 — 끝 3.9 로 구분)
+        val models = listOf(spec("m1"), spec("m2")) // 모델 2개
+        val kind = SystemEngineKind.MLKIT_BASIC // 응답하지 않는 서비스
+        val why = "상태 확인 시간 초과(en-US, 15 초) — ${kind.serviceLabel} 응답 없음" // 일시 사유
+        availabilityOf = { s, lang -> if (s.id == "m1" && lang == "en") LangAvailability.Transient(why, kind.servicePackage, kind.serviceLabel) else LangAvailability.Available } // m1 영어만 일시 실패
+        val cfg = config(models, listOf("SILERO"), files) // 설정
+        val events = runner().run(cfg).toList() // 실행(정상 반환해야 함)
+        val last = events.last() as RunEvent.Paused // 마지막은 일시정지
+        assertEquals("${kind.serviceLabel} 상태 확인 실패($why) — 강제 중지 후 이어하기", last.reason) // 일시정지 사유
+        assertEquals(kind.servicePackage, last.servicePackage) // 서비스 패키지
+        assertEquals(kind.serviceLabel, last.serviceLabel) // 서비스 이름
+        assertTrue(events.none { it is RunEvent.Finished }) // 종료 이벤트 없음
+        assertFalse(File(runDir, "en/fake_m1_SILERO").exists()) // m1 영어 결과 없음(건너뜀)
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").isFile) // m1 한국어는 실행
+        assertTrue(File(runDir, "en/fake_m2_SILERO/vLog/01.txt").isFile) // 다른 모델의 영어는 실행
+        assertEquals(5, events.count { it is RunEvent.ItemDone }) // m1 kr 2 + m2 kr 2 + m2 en 1
+        val m = manifest() // manifest
+        assertNull(m.finishedAt) // 끝나지 않음(이어하기 대상)
+        assertTrue(m.unsupported.isEmpty()) // 미지원으로 기록하지 않음
+        assertTrue(m.unavailableReasons.isEmpty()) // 사유도 기록하지 않음
+        assertEquals(last.reason, m.pausedReason) // 일시정지 사유 저장
+        assertNull(m.inFlight) // 진행 중 표시 없음
+        val log = OutputLayout.log(runDir, runId).readText() // 로그
+        assertTrue(log.contains("\tRUN_PAUSED\t")) // 일시정지 로그
+        assertTrue(log.contains("\tLANG_CHECK_FAILED\t")) // 일시 실패 로그
+        assertFalse(log.contains("\tLANG_UNAVAILABLE\t")) // 영구 미지원 로그 없음
+        assertFalse(log.contains("\tRUN_END\t")) // 종료 로그 없음
+        calls.clear() // 이어하기 호출만 보려고 비움
+        availabilityCalls.clear() // 언어 확인 호출 기록 비움
+        availabilityOf = { _, _ -> LangAvailability.Available } // 이제 응답함
+        val resumed = runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertEquals(listOf("m1|en"), availabilityCalls.toList()) // 남은 항목이 있는 (모델, 언어)만 확인
+        assertEquals(listOf("m1|0.10-3.90"), calls.toList()) // 건너뛴 m1 영어 항목만 실행
+        assertEquals(RunEvent.Finished(1, 0, 0, 0), resumed.last()) // 정상 종료(이번 실행 1건)
+        val after = manifest() // 이어하기 후
+        assertNotNull(after.finishedAt) // 종료 기록
+        assertNull(after.pausedReason) // 사유 지워짐
+        assertTrue(after.unsupported.isEmpty()) // 미지원 없음
+        assertTrue(File(runDir, "en/fake_m1_SILERO/vLog/01.txt").isFile) // m1 영어 결과 생김
+    }
+
+    // change(add)-hyungchul-2026-10-11-21:50
+    /**
+     * 목적: 일부가 끝난 조합이 이어하기에서 영구 사용 불가가 될 때 (작업 5 에서 미뤄둔 테스트, 현재 동작 고정)
+     * 기능: kr 2파일 중 1개를 끝내고 멈춘 뒤 이어하기에서 ko 가 Unsupported 이면, 끝난 01 의 txt·CSV 행은 그대로 남고 남은 02 는 실행·기록(txt·ERROR.txt·CSV 행)되지 않으며
+     *       manifest.unsupported 에 "fake_m1_SILERO|kr", unavailableReasons 에 사유가 남고 run 은 완료된다. 이번 실행 집계는 Finished(0, 0, 0, 1)(미지원 1조합).
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun partiallyDoneComboBecomesUnsupportedOnResume() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // 1개만 하고 중단
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/01.txt").isFile) // 첫 항목 끝남
+        calls.clear() // 이어하기 호출만 보려고 비움
+        availabilityCalls.clear() // 언어 확인 기록 비움
+        availabilityOf = { _, lang -> if (lang == "ko") LangAvailability.Unsupported("언어 미설치(ko-KR)") else LangAvailability.Available } // 이제 한국어 사용 불가
+        val events = runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertEquals(listOf("m1|ko"), availabilityCalls.toList()) // 남은 항목이 있어 1회 확인
+        assertTrue(calls.isEmpty()) // 전사 없음
+        assertTrue(events.none { it is RunEvent.ItemDone }) // 새로 끝난 항목 없음
+        assertEquals(RunEvent.Finished(0, 0, 0, 1), events.last()) // 집계: 처리 0건, 미지원 1조합
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/01.txt").isFile) // 끝난 결과는 그대로
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").exists()) // 남은 항목 txt 없음
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.ERROR.txt").exists()) // 남은 항목 ERROR.txt 없음
+        assertEquals(listOf("01.wav"), rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")).map { it["file"] }) // CSV 에는 끝난 1행만
+        val m = manifest() // manifest
+        assertEquals(listOf("fake_m1_SILERO|kr"), m.unsupported) // 미지원 기록(조합 단위)
+        assertEquals(mapOf("fake_m1_SILERO|kr" to "언어 미설치(ko-KR)"), m.unavailableReasons) // 사유 기록
+        assertNotNull(m.finishedAt) // 완료(영구 미지원은 일시정지가 아님)
+        assertNull(m.pausedReason) // 일시정지 아님
     }
 }

@@ -4,6 +4,9 @@
 //       → 상태(OK/NO_MATCH/ERROR) 결정. 파일 단위 예외는 stage/code 로 기록하고 다음 항목이 계속되게 한다(오류 격리).
 //       자원 측정(ResourceSampler)은 SupervisorJob 자식 범위에서 돌려 샘플러 실패가 실행을 취소하지 않게 하고, 항상 stop 한다.
 //       코루틴이 취소되면 감시 코루틴이 engine.cancel() 을 불러 네이티브 전사를 멈춘다(엔진은 Job 취소를 스스로 감지하지 않음).
+//       change(add)-hyungchul-2026-10-11-18:37 chunk 결과에 시스템 엔진 세션 기록(ChunkText.session → ChunkJson.session)을 함께 담는다(2차 작업 3).
+//       change(add)-hyungchul-2026-10-11-19:03 시스템 엔진 멈춤(EngineStalledException)은 항목 오류로 기록하지 않고 그대로 던진다(배치가 일시정지하도록, 2차 작업 4).
+//       change(add)-hyungchul-2026-10-11-19:10 실시간 배속 공급 엔진(streaming == PACED_REALTIME)은 rtf 를 측정하지 않고 null 로 둔다(2차 작업 5).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.audio.PcmConverter // 16k mono 변환
@@ -15,11 +18,14 @@ import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
 import com.cowork.stt_ondevice.engine.AsrEngine // 엔진 계약
 import com.cowork.stt_ondevice.engine.ChunkText // chunk 전사 결과
 import com.cowork.stt_ondevice.engine.PrepareInfo // 준비 결과
+import com.cowork.stt_ondevice.engine.system.EngineStalledException // 시스템 엔진 멈춤 예외 // change(add)-hyungchul-2026-10-11-19:03
+import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식(실시간 배속 공급 판정) // change(add)-hyungchul-2026-10-11-19:10
 import com.cowork.stt_ondevice.output.ChunkJson // chunk 결과 JSON
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
 import com.cowork.stt_ondevice.output.EngineMetaJson // 엔진 메타 JSON
 import com.cowork.stt_ondevice.output.EnvSnapshotJson // 환경 JSON
 import com.cowork.stt_ondevice.output.ErrorJson // 오류 JSON
+import com.cowork.stt_ondevice.output.SessionJson // 세션 기록 JSON // change(add)-hyungchul-2026-10-11-18:37
 import com.cowork.stt_ondevice.segment.AudioChunk // 엔진 입력 chunk
 import com.cowork.stt_ondevice.segment.ChunkPlanner // chunk 분할기
 import com.cowork.stt_ondevice.vad.VadCache // VAD 캐시
@@ -89,7 +95,7 @@ internal class ItemProcessor(
      *       chunk 가 0개면 엔진을 부르지 않고 NO_MATCH. 예외는 현재 단계의 오류로 기록(취소는 다시 던짐).
      *       transcribe_sec 는 러너가 같은 시계로 잰 chunk 호출 시간의 합(엔진 간 같은 측정 방식), chunk JSON 의 inferSec 는 엔진 보고값.
      * 입력: combo(조합), item(입력 항목), model(준비된 모델), vad(이 프리셋 계열의 VAD 엔진), cache(VAD 캐시)
-     * 출력: 코루틴 취소 시 CancellationException
+     * 출력: 코루틴 취소 시 CancellationException. change(add)-hyungchul-2026-10-11-19:03 시스템 엔진이 멈추면 EngineStalledException 을 그대로 던진다(항목 결과 없음 — 샘플러는 finally 로 정지).
      * 리턴: DetailJson(OK/NO_MATCH/ERROR)
      */
     suspend fun process(combo: Combo, item: InputItem, model: PreparedModel, vad: VadEngine, cache: VadCache): DetailJson {
@@ -133,12 +139,14 @@ internal class ItemProcessor(
                 val tc = clock() // 호출 시간 측정 시작
                 val r = transcribeCancellable(model.engine, chunk, item.engineLang) // 취소 연동 전사
                 sum += secSince(tc) // 호출 시간 누적
-                chunks.add(ChunkJson.from(chunk, r.text, r.rawText, r.inferSec)) // chunk 결과
+                chunks.add(ChunkJson.from(chunk, r.text, r.rawText, r.inferSec, r.session?.let(SessionJson::from))) // chunk 결과(시스템 엔진은 세션 기록 포함) // change(add)-hyungchul-2026-10-11-18:37
                 if (detectedLang == null) detectedLang = r.detectedLang // 첫 감지 언어
             }
             transcribeSec = sum // 전사 시간 합(chunk 0개면 0)
         } catch (e: CancellationException) {
             throw e // 취소 전파(샘플러는 finally 에서 종료)
+        } catch (e: EngineStalledException) {
+            throw e // 시스템 엔진 멈춤은 항목 오류로 삼키지 않고 배치로 전파(일시정지, 샘플러는 finally 에서 종료) // change(add)-hyungchul-2026-10-11-19:03
         } catch (t: Throwable) {
             currentCoroutineContext().ensureActive() // 취소로 인한 ABORTED 면 오류로 기록하지 않고 취소 전파
             error = RunErrors.toError(t, stage, "${stage}_FAILED") ?: throw t // 격리 가능한 오류만 기록
@@ -159,7 +167,7 @@ internal class ItemProcessor(
             vadPresetId = combo.preset.id, vadReused = vadReused, vadFrameScoresAvailable = scoresAvailable, // VAD 정보
             startedAt = startedAt, audioSec = audioSec, preprocessSec = preprocessSec, vadSec = vadSec, loadSec = model.info.loadSec, // 시간
             transcribeSec = ts, elapsedSec = elapsed, // 전사·전체 시간
-            rtf = if (ts != null && au != null && au > 0.0) ts / au else null, // 실시간 배율
+            rtf = if (combo.spec.streaming != StreamingKind.PACED_REALTIME && ts != null && au != null && au > 0.0) ts / au else null, // 실시간 배율(실시간 배속 공급 엔진은 측정 안 함 → null) // change(add)-hyungchul-2026-10-11-19:10
             cpuTimeSec = stats?.cpuTimeSec, pssPeakMb = stats?.pssPeakMb, // 자원
             envStart = envStart, envEnd = envJson(), // 환경
             chunks = chunks, // chunk 결과

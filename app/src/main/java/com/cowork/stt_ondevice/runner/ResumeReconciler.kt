@@ -14,6 +14,7 @@
 //   change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-3) 여러 항목을 ERROR 로 기록할 때(markAll) CSV 찢긴 줄 정리를 한 번만 하고 행은 replaceRows=false 로 붙인다
 //       (대상은 완료 표시가 없는 항목이라 기존 행이 있을 수 없음 — 항목마다 요약 CSV 전체를 다시 읽던 O(n²) 제거).
 //   change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1) clearCrashed: "CRASH_OR_KILLED 항목 다시 실행" 모드에서 그 항목들의 ERROR.txt·detail·CSV 행을 지운다.
+//   change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 지우는 순서를 행 → 파일로 바꾸고, 호출자가 manifest.rerunCleanupPending 표식으로 감싸 도중에 죽어도 다시 정리한다.
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
@@ -168,14 +169,15 @@ internal class ResumeReconciler(
     /**
      * 목적: "CRASH_OR_KILLED 항목 다시 실행" 준비(최종 리뷰 I-1)
      * 기능: pairs 중 ERROR.txt 의 코드가 CRASH_OR_KILLED 인 항목을 찾아 ERROR.txt·detail JSON 과 조합 CSV·요약 CSV 의 그 행들을 지운다
-     *       (CSV 는 파일마다 한 번만 다시 씀). 이후 그 항목들은 미완료가 되어 본 실행 루프가 다시 처리한다. 다른 오류(LOAD_FAILED 등)·정상 결과는 건드리지 않는다.
+     *       (CSV 는 파일마다 한 번만 다시 씀).
+     *       change(add)-hyungchul-2026-10-11-18:14 지우는 순서는 CSV 행 먼저 → 결과 파일(ERROR.txt 마지막)이다. 호출자(BatchRunner)가 manifest.rerunCleanupPending 으로 감싸므로, 도중에 죽어도 다음 이어하기가 이 함수를 다시 불러 끝까지 정리한다(멱등). 이후 그 항목들은 미완료가 되어 본 실행 루프가 다시 처리한다. 다른 오류(LOAD_FAILED 등)·정상 결과는 건드리지 않는다.
      * 입력: pairs(이번 설정에서 실행 대상인 (조합, 항목) 전체)
      * 출력: 파일 삭제·CSV 재작성, 실패 시 IOException
      * 리턴: 지운 (조합, 항목) 목록
      */
     fun clearCrashed(pairs: List<Pair<Combo, InputItem>>): List<Pair<Combo, InputItem>> {
         val crashed = pairs.filter { (c, it) -> outputs.isCrashed(c, it) } // 크래시 기록 항목
-        outputs.removeResults(crashed) // 결과 파일·행 제거(없으면 아무것도 안 함)
+        outputs.removeResults(crashed) // 행 먼저 → 파일 제거(없으면 아무것도 안 함) // change(add)-hyungchul-2026-10-11-18:14 순서 변경
         return crashed // 지운 항목
     }
 }

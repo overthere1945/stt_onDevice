@@ -2,7 +2,9 @@
 // 목적: 실행 설정 화면 ViewModel(RunSetupViewModel)의 조합 수 계산·모델 선택 순서·runId 형식·미설치 모델/VAD 모델 미설치 프리셋 선택 거부·maxChunk 검증을 검증
 // 기능: 임시 폴더 ModelStore 에 합성 모델을 직접 설치(파일+표식)하고, 고정 입력 목록을 돌려주는 스캐너로 ViewModel 을 만든 뒤
 //       선택 동작과 comboCount/buildConfig 결과를 확인한다. 작업 디스패처는 즉시 실행 테스트 디스패처로 바꿔 refresh 가 바로 끝나게 한다.
+//       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 시스템 엔진 모델의 maxChunk 입력이 RunConfig 와 같은 범위(0 초 초과 60 초 이하)·문구로 검증되는지 확인한다.
 //       change(add)-hyungchul-2026-10-11-03:59 마이크 녹음 파일 미리 선택(preselect)과 SAF 음원 가져오기 작업(runImport)의 메시지·목록 갱신도 확인한다.
+//       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) ViewModel 의 presets 인자가 공급 함수가 되어 호출부를 { VadPresets.all } 로 고쳤다(동작 변화 없음).
 package com.cowork.stt_ondevice.ui.run // 실행 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
@@ -13,6 +15,7 @@ import com.cowork.stt_ondevice.model.ModelFile // 모델 파일 정보
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 모델 저장소
+import com.cowork.stt_ondevice.model.SystemCatalog // 시스템 엔진 카탈로그 // change(add)-hyungchul-2026-10-11-19:10
 import com.cowork.stt_ondevice.model.VadModelConfig // VAD 모델 설정
 import com.cowork.stt_ondevice.model.sha256Hex // SHA-256 도우미
 import com.cowork.stt_ondevice.model.testSpec // 테스트용 ModelSpec
@@ -59,6 +62,36 @@ class RunSetupViewModelTest {
     private val missing = testSpec("missing", emptyList(), files) // 설치하지 않을 모델
     private val sileroModel: ModelSpec = testSpec("silero-vad", emptyList(), files).copy(kind = ModelKind.VAD, languages = emptySet(), engineConfig = VadModelConfig(VadFamily.SILERO)) // Silero VAD 모델(미설치로 둠)
 
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 시스템 엔진 maxChunk 입력 검증 (2차 작업 5)
+     * 기능: 시스템 엔진 모델에 0·61 은 RunConfig 와 같은 문구의 오류(덮어쓰기에 안 들어감), 60 은 허용, 일반 모델 0 은 기존대로 허용.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun systemMaxChunkRangeIsValidatedLikeRunConfig() {
+        val sys = SystemCatalog.all.first { it.id == "mlkit-basic-x4" } // 시스템 엔진(파일 없음 → 항상 READY)
+        val vm = RunSetupViewModel(
+            scanner = { InputScanResult(kr + en, emptyList()) }, catalog = listOf(both, sys), store = store, presets = { VadPresets.all },
+            vadModelOf = { null }, io = dispatcher, // 고정 입력·합성 카탈로그
+        )
+        selectAllItems(vm) // 입력
+        vm.togglePreset("NONE") // 프리셋
+        vm.toggleModel("mlkit-basic-x4") // 시스템 모델
+        vm.toggleModel("both") // 일반 모델
+        val now = LocalDateTime.of(2026, 10, 11, 19, 10, 0) // 고정 시각
+        for (bad in listOf("0", "61")) { // 범위 밖
+            vm.setMaxChunkText("mlkit-basic-x4", bad) // 입력
+            assertEquals("시스템 엔진 최대 조각 길이는 0 초 초과 60 초 이하여야 합니다: mlkit-basic-x4=${bad.toDouble()}", vm.state.value.maxChunk.getValue("mlkit-basic-x4").error) // RunConfig 와 같은 문구
+            assertNotNull(vm.validationError()) // 실행 불가
+        }
+        assertFalse(vm.setMaxChunk("mlkit-basic-x4", 61.0)) // 숫자 API 도 거부
+        vm.setMaxChunkText("mlkit-basic-x4", "60") // 상한
+        assertNull(vm.state.value.maxChunk.getValue("mlkit-basic-x4").error) // 허용
+        assertEquals(mapOf("mlkit-basic-x4" to 60.0), vm.buildConfig(now).maxChunkOverride) // RunConfig 생성도 통과
+        assertTrue(vm.setMaxChunk("both", 0.0)) // 일반 모델 0(무제한)은 기존대로 허용
+    }
+
     /** 목적: 입력 항목 만들기 / 기능: 파일은 실제로 만들지 않는다(스캐너 결과 흉내) / 입력: lang, rel, stem / 리턴: InputItem */
     private fun item(lang: String, rel: String, stem: String) = InputItem(lang, rel, stem, File("/input/$lang/$rel/$stem.wav")) // 항목
 
@@ -87,7 +120,7 @@ class RunSetupViewModelTest {
         scanner = { InputScanResult(kr + en, emptyList()) }, // 고정 입력(오류 없음) // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
         catalog = listOf(koOnly, both, third, missing), // 합성 카탈로그
         store = store, // 저장소
-        presets = VadPresets.all, // 실제 프리셋 26종
+        presets = { VadPresets.all }, // 실제 프리셋 26종 // change(add)-hyungchul-2026-10-11-20:15 공급 함수
         vadModelOf = { family -> if (family == VadFamily.SILERO) sileroModel else null }, // Silero 만 모델 있음(미설치)
         io = dispatcher, // 즉시 실행
     )
@@ -250,7 +283,7 @@ class RunSetupViewModelTest {
     fun preselectAndImportRefresh() {
         var items = kr + en // 스캐너가 돌려줄 목록(바뀔 수 있음)
         var scans = 0 // 스캔 횟수
-        val vm = RunSetupViewModel({ scans++; InputScanResult(items, emptyList()) }, listOf(koOnly, both), store, VadPresets.all, { null }, dispatcher) // ViewModel // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
+        val vm = RunSetupViewModel({ scans++; InputScanResult(items, emptyList()) }, listOf(koOnly, both), store, { VadPresets.all }, { null }, dispatcher) // ViewModel // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
         vm.toggleLang("kr") // kr 끄기
         val mic = item("kr", "mic", "20261011_120000") // 새 녹음 파일
         items = items + mic // 목록에 생김
@@ -282,7 +315,7 @@ class RunSetupViewModelTest {
     @Test
     fun inputErrorsShown() {
         var errors = listOf("kr/customer: 01.WAV, 01.wav — 겹침") // 스캐너 오류
-        val vm = RunSetupViewModel({ InputScanResult(kr, errors) }, listOf(koOnly), store, VadPresets.all, { null }, dispatcher) // ViewModel
+        val vm = RunSetupViewModel({ InputScanResult(kr, errors) }, listOf(koOnly), store, { VadPresets.all }, { null }, dispatcher) // ViewModel
         assertEquals(errors, vm.state.value.inputErrors) // 오류 표시
         errors = emptyList() // 사용자가 파일을 정리함
         vm.refresh() // 다시 읽기

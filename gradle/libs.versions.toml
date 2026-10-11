@@ -1,6 +1,7 @@
 # 파일명: gradle/libs.versions.toml
 # 목적: 프로젝트 전체 의존성·플러그인 버전을 한 곳에서 고정하는 버전 카탈로그
 # 기능: Compose 전환(Task 1)에 필요한 라이브러리/플러그인 버전 선언 (appcompat/material/constraintlayout 제거)
+#       change(add)-hyungchul-2026-10-11-20:32 Compose 화면 계측 테스트 라이브러리(ui-test-junit4·ui-test-manifest) 선언 — 2차 작업 10
 
 [versions]
 agp = "9.4.1"
@@ -27,6 +28,8 @@ jna = "5.18.1"
 commonsCompress = "1.28.0"
 # change(add)-hyungchul-2026-10-10-15:43: LiteRT(구 TensorFlow Lite) — Google Maven 최신 안정판(2026-10-10 조회, 2.3.0) 고정. Yamnet VAD 실행용
 litert = "2.3.0"
+# change(add)-hyungchul-2026-10-11-19:18: ML Kit GenAI 음성 인식(Basic = SODA, com.google.android.tts) — 실기기 실험(spike)에서 확인한 버전 고정(2차 작업 6)
+mlkitGenaiSpeech = "1.0.0-alpha1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -42,6 +45,9 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+# change(add)-hyungchul-2026-10-11-20:32: Compose 화면 계측 테스트(createComposeRule)와 그 테스트용 빈 Activity 매니페스트(BOM 이 버전 관리) — 2차 작업 10
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
@@ -60,6 +66,8 @@ jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 # change(add)-hyungchul-2026-10-10-15:43: Yamnet VAD 용 LiteRT 안드로이드 런타임(org.tensorflow.lite.Interpreter, arm64 libLiteRt.so·liblitert_jni.so 포함)
 litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
+# change(add)-hyungchul-2026-10-11-19:18: 시스템 엔진 ML Kit GenAI Basic 음성 인식(파이프 입력 AudioSource.fromPfd)
+mlkit-genai-speech = { group = "com.google.mlkit", name = "genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

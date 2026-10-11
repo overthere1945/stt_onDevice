@@ -4,6 +4,10 @@
 //       change(add)-hyungchul-2026-10-11-02:40 프로세스 전역 객체 그래프(AppDirs·ModelStore·Downloader·ModelInstaller·VadEngineFactory)를
 //       지연 생성 싱글턴으로 보유하고, 배치 실행기(BatchRunner)를 실제 의존성으로 조립하는 newBatchRunner() 를 제공한다.
 //       change(add)-hyungchul-2026-10-11-12:51 newBatchRunner 는 실행 시작 때 선택한 ASR 모델 전부와 선택 프리셋에 필요한 VAD 계열 모델 전부를 ModelStore.acquireAll 로 잡고 실행 끝에 놓는다(최종 리뷰 I-4).
+//       change(add)-hyungchul-2026-10-11-19:18 (2차 작업 6) newBatchRunner 에 시스템 엔진 생성기(SystemEngines.create)와 실행 전 언어 확인(SystemEngines.unavailableReason)을 연결한다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) 실행 전 언어 확인은 종류 있는 결과(SystemEngines.availability → LangAvailability)로 연결한다(1차 엔진은 항상 Available).
+//       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) USER VAD 프리셋 저장소(userPresetStore — filesDir/user_presets.json)와 기본+USER 합본 조회(presetRegistry)를 싱글턴으로 보유한다.
+//       저장소는 락·임시 파일명이 인스턴스 단위라 반드시 이 인스턴스 하나만 쓴다.
 //       ModelStore 의 사용 횟수와 ModelInstaller 의 동시 설치 방지는 인스턴스 단위이므로(Task 19 리뷰) 서비스·화면 ViewModel 모두
 //       반드시 여기 있는 같은 인스턴스를 써야 한다(App.from(context).modelStore 등). 새로 만들면 보호가 깨진다.
 package com.cowork.stt_ondevice // 앱 루트 패키지
@@ -15,16 +19,22 @@ import com.cowork.stt_ondevice.core.device.DeviceInfo // change(add)-hyungchul-2
 import com.cowork.stt_ondevice.core.device.EnvSnapshot // change(add)-hyungchul-2026-10-11-02:40 발열·배터리 스냅샷
 import com.cowork.stt_ondevice.core.device.ResourceSampler // change(add)-hyungchul-2026-10-11-02:40 메모리·CPU 샘플러
 import com.cowork.stt_ondevice.core.storage.AppDirs // change(add)-hyungchul-2026-10-11-02:40 앱 폴더 구조
+import com.cowork.stt_ondevice.engine.LangAvailability // change(add)-hyungchul-2026-10-11-21:50 실행 전 언어 확인 결과 종류
 import com.cowork.stt_ondevice.engine.ManagedEngine // change(add)-hyungchul-2026-10-11-02:40 acquire/release 묶은 엔진 생성기
+import com.cowork.stt_ondevice.engine.system.SystemEngines // change(add)-hyungchul-2026-10-11-19:18 시스템 엔진 생성·언어 확인
 import com.cowork.stt_ondevice.model.Downloader // change(add)-hyungchul-2026-10-11-02:40 다운로더
 import com.cowork.stt_ondevice.model.InstallState // change(add)-hyungchul-2026-10-11-02:40 설치 상태
 import com.cowork.stt_ondevice.model.ModelCatalog // change(add)-hyungchul-2026-10-11-02:40 모델 카탈로그(VAD 모델 조회)
 import com.cowork.stt_ondevice.model.ModelInstaller // change(add)-hyungchul-2026-10-11-02:40 모델 설치기
 import com.cowork.stt_ondevice.model.ModelStore // change(add)-hyungchul-2026-10-11-02:40 모델 저장소
+import com.cowork.stt_ondevice.model.isSystem // change(add)-hyungchul-2026-10-11-19:18 시스템 엔진 여부
 import com.cowork.stt_ondevice.runner.BatchRunner // change(add)-hyungchul-2026-10-11-02:40 배치 실행기
+import com.cowork.stt_ondevice.vad.PresetRegistry // change(add)-hyungchul-2026-10-11-20:15 기본+USER 프리셋 합본 조회
+import com.cowork.stt_ondevice.vad.UserPresetStore // change(add)-hyungchul-2026-10-11-20:15 USER 프리셋 저장소
 import com.cowork.stt_ondevice.vad.VadEngineFactory // change(add)-hyungchul-2026-10-11-02:40 VAD 엔진 생성기
 import com.cowork.stt_ondevice.vad.VadFamily // change(add)-hyungchul-2026-10-11-02:40 VAD 계열
 import java.io.File // change(add)-hyungchul-2026-10-11-02:40 파일
+import java.time.OffsetDateTime // change(add)-hyungchul-2026-10-11-20:15 USER 프리셋 생성 시각
 
 // change(add)-hyungchul-2026-10-10-11:56
 /**
@@ -50,6 +60,12 @@ class App : Application() { // change(add)-hyungchul-2026-10-11-02:40 본문 추
     /** VAD 엔진 생성기 — 계열의 카탈로그 VAD 모델이 READY 일 때만 그 폴더를 넘긴다(NONE/WEBRTC/TEN 은 모델 불필요). */
     val vadEngineFactory: VadEngineFactory by lazy { VadEngineFactory(::vadModelDir) } // change(add)-hyungchul-2026-10-11-02:40 VAD 생성기 싱글턴
 
+    /** USER VAD 프리셋 저장소 — 앱 내부 files 폴더의 user_presets.json. 인스턴스 단위 락이라 하나만 둔다. */
+    val userPresetStore: UserPresetStore by lazy { UserPresetStore(File(filesDir, "user_presets.json"), now = { OffsetDateTime.now().toString() }) } // change(add)-hyungchul-2026-10-11-20:15 USER 프리셋 저장소 싱글턴
+
+    /** 기본 프리셋 + USER 프리셋 합본 조회 — 실행 설정·이어하기가 같은 창구를 쓴다. */
+    val presetRegistry: PresetRegistry by lazy { PresetRegistry(userPresetStore) } // change(add)-hyungchul-2026-10-11-20:15 프리셋 합본 싱글턴
+
     // change(add)-hyungchul-2026-10-11-02:40
     /**
      * 목적: VAD 계열의 설치된 모델 폴더 조회
@@ -71,18 +87,21 @@ class App : Application() { // change(add)-hyungchul-2026-10-11-02:40 본문 추
      *       vadFactory = vadEngineFactory.create, samplerFactory = 항목마다 새 ResourceSampler, env = envSnapshotOrNull()(Exception 만 null + 로그),
      *       device = 지금 수집한 DeviceInfo. 실행(run)마다 새로 만든다(실행기 자체는 상태가 없지만 device 를 실행 시점 값으로 맞추기 위함).
      *       change(add)-hyungchul-2026-10-11-12:51 modelHold = 선택 ASR 모델 + 선택 프리셋 계열의 카탈로그 VAD 모델(있는 것만)을 modelStore.acquireAll 로 실행 내내 사용 중 표시.
+     *       change(add)-hyungchul-2026-10-11-19:18 engineFactory 의 시스템 spec 은 SystemEngines.create 로 만들고, availability = 시스템 spec 이면 SystemEngines.unavailableReason(아니면 null).
+     *       change(add)-hyungchul-2026-10-11-21:50 availability = 시스템 spec 이면 SystemEngines.availability(종류 있는 결과), 아니면 LangAvailability.Available.
      * 입력: 없음
      * 출력: 기기 정보 수집·폴더 조회 실패 시 그 예외
      * 리턴: BatchRunner
      */
     fun newBatchRunner(): BatchRunner = BatchRunner(
         dirs = dirs, // 앱 폴더
-        engineFactory = ManagedEngine.factory(modelStore), // 사용 횟수를 묶은 엔진 생성
+        engineFactory = ManagedEngine.factory(modelStore, systemCreate = { SystemEngines.create(this, it) }), // 사용 횟수를 묶은 엔진 생성(시스템 엔진 포함) // change(add)-hyungchul-2026-10-11-19:18
         vadFactory = vadEngineFactory::create, // VAD 엔진 생성(모델 없으면 VadUnavailableException)
         samplerFactory = { ResourceSampler() }, // 항목마다 새 샘플러(1회용)
         env = ::envSnapshotOrNull, // 환경 스냅샷(읽기 실패는 null — 추정치로 채우지 않음) // change(add)-hyungchul-2026-10-11-03:00 runCatching → Exception 만 잡고 로그
         device = DeviceInfo.collect(this), // 기기 정보
         modelHold = { cfg -> modelStore.acquireAll(cfg.models + cfg.presets.map { it.family }.distinct().mapNotNull { ModelCatalog.vadModel(it) }) }, // 선택 모델 전부 보호 // change(add)-hyungchul-2026-10-11-12:51
+        availability = { spec, lang -> if (spec.isSystem) SystemEngines.availability(this, spec, lang) else LangAvailability.Available }, // 실행 전 언어 확인(시스템 엔진만, 종류 있는 결과) // change(add)-hyungchul-2026-10-11-19:18 // change(add)-hyungchul-2026-10-11-21:50 LangAvailability
     )
 
     // change(add)-hyungchul-2026-10-11-03:00

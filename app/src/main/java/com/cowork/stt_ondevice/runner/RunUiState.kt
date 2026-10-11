@@ -3,6 +3,7 @@
 // 기능: Idle(실행 없음) / Running(진행 중, 최근 진행률·완료 항목·거부 알림) / Finished(정상 종료 집계) / Failed(비정상 종료) / Cancelled(사용자 취소).
 //       RunState.kt 의 RunState 는 BatchRunner 내부의 manifest·로그 관리용(internal)이라 이름이 겹치지 않게 별도 파일·이름으로 둔다.
 //       값은 프로세스 안에서만 유지된다(프로세스가 죽으면 Idle 로 다시 시작 — 이어하기는 같은 runId·resume=true 로 새로 시작).
+//       change(add)-hyungchul-2026-10-11-19:03 Paused(시스템 엔진 멈춤으로 일시정지 — 실행 중 아님, 강제 중지 안내·이어하기 대상) 추가(2차 작업 4).
 //       change(add)-hyungchul-2026-10-11-03:31 Running 에 오류 수(errorCount)와 시작 시각(startedAtMs)을 더해 진행 화면이 표시한다.
 // change(add)-hyungchul-2026-10-11-02:40
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
@@ -51,4 +52,11 @@ sealed interface RunUiState {
      * 입력: runId(실행 ID — 같은 runId 와 resume=true 로 이어서 실행할 수 있음)
      */
     data class Cancelled(val runId: String) : RunUiState
+
+    // change(add)-hyungchul-2026-10-11-19:03
+    /**
+     * 목적: 일시정지(시스템 엔진이 재시도 후에도 응답하지 않음). 실행 중이 아니므로 새 실행 시작도 허용된다.
+     * 입력: runId(실행 ID — 같은 runId 와 resume=true 로 이어서 실행), reason(멈춤 사유), servicePackage(설정 열기 대상 패키지), serviceLabel(그 서비스 표시 이름)
+     */
+    data class Paused(val runId: String, val reason: String, val servicePackage: String, val serviceLabel: String) : RunUiState
 }

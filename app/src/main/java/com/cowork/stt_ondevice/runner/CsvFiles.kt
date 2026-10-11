@@ -6,6 +6,7 @@
 //       - containsRow: 지정한 열 값이 모두 같은 행이 있는지 본다(행 중복 추가 방지).
 //       - removeRows: 지정한 열 값이 모두 같은 행을 지우고 원자적으로 다시 쓴다(재시도·크래시 정리 시 중복/상충 행 방지).
 //       - change(add)-hyungchul-2026-10-11-12:51 removeRowsWhere: 조건에 맞는 행을 한 번 읽고 한 번 써서 지운다(여러 항목의 행을 한꺼번에 지울 때 — CRASH_OR_KILLED 다시 실행).
+//       change(add)-hyungchul-2026-10-11-18:14 onFullRead: 파일 전체를 읽을 때마다 불리는 테스트 전용 관찰 훅(운영 코드는 null) — 읽기 횟수를 시간 대신 세어 O(n²) 회귀를 막는다.
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.output.AtomicFile // 원자적 쓰기
@@ -19,6 +20,15 @@ import java.io.RandomAccessFile // 파일 길이 자르기
  */
 internal object CsvFiles {
 
+    // change(add)-hyungchul-2026-10-11-18:14
+    /**
+     * 목적: 파일 전체 읽기 관찰 훅(테스트 전용)
+     * 기능: readRecords·removeRowsWhere·truncatePartialLastLine 이 CSV 파일 전체를 읽을 때마다 호출된다. 운영 코드는 항상 null 로 둔다.
+     *       항목 수와 상관없이 읽기 횟수가 일정한지를 시간 대신 횟수로 검증하는 데 쓴다.
+     */
+    @Volatile
+    internal var onFullRead: ((File) -> Unit)? = null // 읽기 관찰 훅(기본 null)
+
     /**
      * 목적: 반쯤 쓴 마지막 줄 제거
      * 기능: 파일이 CRLF 로 끝나지 않으면 마지막 CRLF 바로 뒤까지만 남긴다. CRLF 가 하나도 없으면(헤더조차 미완성) 파일을 지운다
@@ -29,6 +39,7 @@ internal object CsvFiles {
      */
     fun truncatePartialLastLine(file: File): Boolean {
         if (!file.isFile || file.length() == 0L) return false // 점검 대상 없음
+        onFullRead?.invoke(file) // 전체 읽기 관찰(테스트 훅) // change(add)-hyungchul-2026-10-11-18:14
         val bytes = file.readBytes() // 전체 바이트
         val n = bytes.size // 길이
         if (n >= 2 && bytes[n - 2] == '\r'.code.toByte() && bytes[n - 1] == '\n'.code.toByte()) return false // 정상 종료
@@ -107,6 +118,7 @@ internal object CsvFiles {
      */
     fun readRecords(file: File, completeOnly: Boolean = false): List<Map<String, String>> {
         if (!file.isFile) return emptyList() // 파일 없음
+        onFullRead?.invoke(file) // 전체 읽기 관찰(테스트 훅) // change(add)-hyungchul-2026-10-11-18:14
         val raws = splitRawRecords(file.readText(Charsets.UTF_8).removePrefix("\uFEFF"), completeOnly) // 레코드 원문(change(add)-hyungchul-2026-10-11-03:59 끝나지 않은 꼬리 처리)
         if (raws.isEmpty()) return emptyList() // 내용 없음
         val header = parseFields(raws.first()) // 헤더
@@ -139,6 +151,7 @@ internal object CsvFiles {
      */
     fun removeRowsWhere(file: File, drop: (Map<String, String>) -> Boolean): Int {
         if (!file.isFile) return 0 // 파일 없음
+        onFullRead?.invoke(file) // 전체 읽기 관찰(테스트 훅) // change(add)-hyungchul-2026-10-11-18:14
         val raws = splitRawRecords(file.readText(Charsets.UTF_8).removePrefix("\uFEFF")) // 레코드 원문
         if (raws.size < 2) return 0 // 데이터 행 없음
         val header = parseFields(raws.first()) // 헤더

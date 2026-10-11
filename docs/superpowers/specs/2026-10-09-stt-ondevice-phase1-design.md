@@ -173,9 +173,14 @@ data class VadOutput(val segments: List<SpeechSegment>, val frameHopSec: Double,
 | MarbleNet v2.0 | PC에서 NeMo로 export한 ONNX + 전처리(구현 시 NeMo preprocessor 설정 그대로 포팅) | 20 ms | NVIDIA Open Model License ✔(조건 준수) |
 | Yamnet | LiteRT + yamnet.tflite, 0.975 s window, speech class 점수 | 구현 시 확정 | Apache-2.0 ✔ |
 
-### 7.3 프리셋 (초기값 — USER 프리셋 편집은 Phase 2 로 미룸)
+### 7.3 프리셋 (초기값 — USER 프리셋은 Phase 2 설계서 §5)
 
-> <!-- change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-5, 결정 R46) --> **USER 프리셋 편집은 Phase 1 에 구현하지 않고 Phase 2 로 미룬다.**
+> <!-- change(add)-hyungchul-2026-10-11-20:32 (2차 작업 10) "Phase 2 로 연기" 문구를 Phase 2 설계서 참조로 바꿈 -->
+> **USER 프리셋(기존 프리셋 복사 → 값 변경 → `USER_<이름>` 저장, 저장 후 불변, 이어하기 호환)은 Phase 2 에서 구현했다.
+> 규칙·저장 형식·이어하기 동일성은 [Phase 2 설계서 §5](2026-10-11-stt-ondevice-phase2-design.md#5-user-vad-프리셋)를 따른다.**
+> 아래는 Phase 1 당시 기록이다.
+>
+> <!-- change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-5, 결정 R46) --> (Phase 1 기록) USER 프리셋 편집은 Phase 1 에 구현하지 않았다.
 > Phase 1 의 `SILERO_USER` 는 아래 표의 고정 값(0.4/250/300/100/∞)을 쓰는 일반 프리셋이며 앱에서 값을 바꿀 수 없다.
 > 미루는 이유: 이어하기는 manifest 에 기록된 프리셋 `id`·`params` 가 지금 값과 같은지로 같은 설정인지 판단한다. 편집 값을 앱에 영구 저장하지 않고
 > 화면에서만 바꾸게 하면 앱을 다시 켤 때 값이 기본값으로 돌아가 이어하기가 "설정 다름" 으로 거부되거나, 같은 id 에 다른 값의 결과가 섞일 수 있다.
@@ -357,8 +362,8 @@ output_stt/<run_id>/
 ## 12. 화면
 
 1. **모델**: 카탈로그 목록(그룹/크기/언어/라이선스·상업 상태/설치 상태), 다운로드·취소·import·삭제·검증.
-2. **실행 설정**: 언어(kr/en), 입력 파일 트리(체크), 엔진/모델 체크(선택 순서 표시), VAD 프리셋 체크(그룹별 접기, 값 표시 — USER 편집은 Phase 2, §7.3),
-   chunk 모드/maxChunk/threads, 예상 조합 수 표시 → 실행. <!-- change(add)-hyungchul-2026-10-11-12:51 USER 편집 Phase 2 로 미룸(I-5) -->
+2. **실행 설정**: 언어(kr/en), 입력 파일 트리(체크), 엔진/모델 체크(선택 순서 표시), VAD 프리셋 체크(그룹별 접기, 값 표시 — USER 프리셋은 Phase 2 설계서 §5),
+   chunk 모드/maxChunk/threads, 예상 조합 수 표시 → 실행. <!-- change(add)-hyungchul-2026-10-11-12:51 USER 편집 Phase 2 로 미룸(I-5) --> <!-- change(add)-hyungchul-2026-10-11-20:32 Phase 2 설계서 §5 참조로 바꿈 -->
 3. **진행**: 현재 모델/VAD/파일, 전체 진행률, 경과 시간, 오류 수, 취소.
 4. **결과**: run 목록 → 조합별 OK/ERROR 수, 파일별 전사 미리보기, SAF로 결과 내보내기.
 5. **마이크**: 녹음/정지 → WAV 저장 → 이 파일로 실행 설정 화면 이동.

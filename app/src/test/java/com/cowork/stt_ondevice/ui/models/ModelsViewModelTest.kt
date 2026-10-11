@@ -3,6 +3,7 @@
 // 기능: 임시 폴더 ModelStore/ModelInstaller 와 테스트용 ModelSpec 으로 rows 가 설치 상태를 반영하는지, 사용 중 모델 삭제가 한국어 오류 메시지로 거부되는지,
 //       실제 카탈로그가 ASR(algo별) → VAD 모델 그룹으로 묶이고 라벨이 한국어인지, import 폴더 경로 안내와 폴더 해석·실행이 맞는지 확인한다.
 //       change(add)-hyungchul-2026-10-11-03:59 SAF 가져오기(importFromSaf): import/<id>/saf_* 임시 폴더로 복사 → 설치 → 임시 폴더 정리를 확인한다.
+//       change(add)-hyungchul-2026-10-11-18:21 그룹 구성 테스트가 화면용 목록(catalogForScreen, 시스템 엔진 제외)을 쓴다(2차 작업 2).
 package com.cowork.stt_ondevice.ui.models // 모델 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
@@ -139,11 +140,12 @@ class ModelsViewModelTest {
      */
     @Test
     fun groupingAndBadges() {
-        val vm = newVm(ModelCatalog.all) // 실제 카탈로그
+        val screen = ModelsViewModel.catalogForScreen(ModelCatalog.all) // 화면용 카탈로그(시스템 엔진 제외) // change(add)-hyungchul-2026-10-11-18:21
+        val vm = newVm(screen) // 실제 카탈로그 // change(add)-hyungchul-2026-10-11-18:21 화면용 목록
         val rows = vm.rows.value // 전체 행
-        assertEquals(ModelCatalog.all.size, rows.size) // 모든 모델 표시
+        assertEquals(screen.size, rows.size) // 모든 모델 표시 // change(add)-hyungchul-2026-10-11-18:21
         val asrRows = rows.filter { it.group != ModelsViewModel.VAD_GROUP } // ASR 행
-        assertEquals(ModelCatalog.asr.map { it.algo }, asrRows.map { it.group }) // ASR 은 algo 그룹
+        assertEquals(screen.filter { it.kind == ModelKind.ASR }.map { it.algo }, asrRows.map { it.group }) // ASR 은 algo 그룹 // change(add)-hyungchul-2026-10-11-18:21
         val vadRows = rows.filter { it.group == ModelsViewModel.VAD_GROUP } // VAD 행
         assertEquals(ModelCatalog.all.count { it.kind == ModelKind.VAD }, vadRows.size) // VAD 개수
         assertEquals("VAD 모델", ModelsViewModel.VAD_GROUP) // 그룹 이름

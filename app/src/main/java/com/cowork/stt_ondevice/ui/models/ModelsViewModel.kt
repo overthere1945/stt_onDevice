@@ -5,6 +5,13 @@
 //       SAF(Uri) 가져오기는 Task 30 에서 이 클래스의 importFrom(id, source: File) 앞단에 Uri → 임시 파일/폴더 복사를 붙여 추가한다(확장 지점).
 //       change(add)-hyungchul-2026-10-11-03:59 importFromSaf(id, copy): import/<id>/saf_<시각>/ 임시 폴더로 복사(화면이 SafBridge.importModel 로 만든 함수) → resolveImportSource 와 같은 규칙으로 원본 결정
 //       → installer.importFrom → 임시 폴더 삭제(성공·실패·취소 모두, 사용자의 원본은 SAF 쪽에 그대로 있음).
+//       change(add)-hyungchul-2026-10-11-18:21 catalogForScreen(list): 시스템 엔진 항목을 뺀 목록 — 팩토리가 모델 화면 목록에 쓴다(2차 작업 2).
+//       change(add)-hyungchul-2026-10-11-19:52 (2차 작업 7) 시스템 엔진 영역: systemRows(엔진 2개 × 언어 ko·en 상태, busyLang), refreshSystem()(상태 다시 조회), downloadSystem(kind, lang)(Google 공식 다운로드 요청 —
+//       동의 창은 사용자가 직접 누름, 끝나면 그 언어 상태 재조회), canDownloadSystem(kind). 생성자 끝의 systemStatus 가 null 이면 영역이 숨겨진다(systemRows 가 빈 목록).
+//       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) cancelSystemDownload(kind): 동의 창을 닫아 끝나지 않는 다운로드를 취소하고 busyLang 을 풀며 상태를 다시 조회한다. 새로고침 결과가 그 사이 끝난 다운로드의 갱신을 덮지 않게
+//       세대 번호(systemClock·downloadStamp)로 오래된 조회 결과를 버린다.
+//       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정) LanguageStatus.CheckFailed(일시적 확인 실패)도 화면에는 "사용 불가(사유)" 로 보인다.
+//       다운로드 [취소] 안내를 "앱의 다운로드 추적을 끝냈습니다(…[새로고침]으로 확인하세요)" 로 바꿨다(이미 시작된 서비스 다운로드는 멈추지 않으므로).
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
 import androidx.lifecycle.ViewModel // 뷰모델 기본 클래스
@@ -12,6 +19,11 @@ import androidx.lifecycle.ViewModelProvider // 뷰모델 팩토리 인터페이�
 import androidx.lifecycle.viewModelScope // 뷰모델 코루틴 범위
 import com.cowork.stt_ondevice.App // 앱 전역 객체
 import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
+import com.cowork.stt_ondevice.engine.system.AndroidSystemEngineStatus // change(add)-hyungchul-2026-10-11-19:52 Android 상태 조회 구현
+import com.cowork.stt_ondevice.engine.system.DownloadEvent // change(add)-hyungchul-2026-10-11-19:52 다운로드 이벤트
+import com.cowork.stt_ondevice.engine.system.LanguageStatus // change(add)-hyungchul-2026-10-11-19:52 언어 상태
+import com.cowork.stt_ondevice.engine.system.SystemEngineStatus // change(add)-hyungchul-2026-10-11-19:52 상태 조회 계약
+import com.cowork.stt_ondevice.engine.system.safeStatus // change(add)-hyungchul-2026-10-11-19:52 예외를 사유로 바꾸는 조회
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 상태
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
 import com.cowork.stt_ondevice.model.ModelCatalog // 카탈로그
@@ -19,17 +31,23 @@ import com.cowork.stt_ondevice.model.ModelInstaller // 설치기
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 저장소
+import com.cowork.stt_ondevice.model.SystemEngineKind // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 종류
+import com.cowork.stt_ondevice.model.isSystem // 시스템 엔진 여부 // change(add)-hyungchul-2026-10-11-18:21
 import kotlinx.coroutines.CancellationException // 취소 예외
 import kotlinx.coroutines.CoroutineDispatcher // 디스패처 타입
 import kotlinx.coroutines.CoroutineStart // 코루틴 시작 방식
 import kotlinx.coroutines.Dispatchers // 디스패처
 import kotlinx.coroutines.Job // 작업 핸들
+import kotlinx.coroutines.async // change(add)-hyungchul-2026-10-11-19:52 상태 병렬 조회
+import kotlinx.coroutines.awaitAll // change(add)-hyungchul-2026-10-11-19:52 병렬 조회 대기
+import kotlinx.coroutines.coroutineScope // change(add)-hyungchul-2026-10-11-19:52 병렬 조회 범위
 import kotlinx.coroutines.channels.Channel // 일회성 메시지 채널
 import kotlinx.coroutines.flow.Flow // 흐름
 import kotlinx.coroutines.flow.MutableStateFlow // 변경 가능한 상태 흐름
 import kotlinx.coroutines.flow.StateFlow // 읽기 전용 상태 흐름
 import kotlinx.coroutines.flow.asStateFlow // 읽기 전용 변환
 import kotlinx.coroutines.flow.receiveAsFlow // 채널 → 흐름
+import kotlinx.coroutines.flow.transformWhile // change(add)-hyungchul-2026-10-11-19:52 끝 이벤트까지만 수집
 import kotlinx.coroutines.flow.update // 원자적 갱신
 import kotlinx.coroutines.launch // 코루틴 시작
 import kotlinx.coroutines.withContext // 컨텍스트 전환
@@ -38,6 +56,7 @@ import java.io.FileNotFoundException // 파일 없음
 import java.time.LocalDateTime // change(add)-hyungchul-2026-10-11-03:59 임시 폴더 이름 시각
 import java.time.format.DateTimeFormatter // change(add)-hyungchul-2026-10-11-03:59 시각 서식
 import java.util.concurrent.ConcurrentHashMap // 스레드 안전 맵
+import java.util.concurrent.atomic.AtomicLong // change(add)-hyungchul-2026-10-11-20:05 조회 세대 번호
 
 // change(add)-hyungchul-2026-10-11-03:09
 /**
@@ -57,6 +76,20 @@ data class ModelRow(
     val state: InstallState, // 설치 상태
     val progress: Float?, // 진행률(0~1) 또는 null
     val hasDownload: Boolean, // 다운로드 가능 여부(false 면 import 전용)
+)
+
+// change(add)-hyungchul-2026-10-11-19:52
+/**
+ * 목적: 모델 화면 "시스템 엔진" 카드 1개의 값
+ * 기능: 엔진 종류·제목·라이선스 문구·언어별 상태(ko, en 순서)·다운로드 중인 언어를 담는다. langs 가 비어 있으면 아직 조회 전이다.
+ * 입력: kind(엔진 종류), title(카드 제목), license(라이선스 문구), langs(앱 언어 코드 → 상태 목록), busyLang(다운로드 중인 앱 언어 코드 또는 null)
+ */
+data class SystemEngineRow(
+    val kind: SystemEngineKind, // 엔진 종류
+    val title: String, // 카드 제목
+    val license: String, // 라이선스 문구
+    val langs: List<Pair<String, LanguageStatus>>, // 언어별 상태
+    val busyLang: String?, // 다운로드 중인 언어
 )
 
 // change(add)-hyungchul-2026-10-11-03:09
@@ -106,12 +139,30 @@ fun InstallState.koreanLabel(): String = when (this) {
     InstallState.CORRUPT -> "손상" // 손상
 }
 
+// change(add)-hyungchul-2026-10-11-19:52
+/**
+ * 목적: 언어 상태의 한국어 라벨
+ * 기능: Available=사용 가능, Downloadable=다운로드 필요, Downloading=다운로드 중, Unavailable=사용 불가(사유)
+ *       change(add)-hyungchul-2026-10-11-21:50 CheckFailed(일시적 확인 실패)=사용 불가(사유) — 이전과 같은 표시
+ * 입력: 없음(수신 객체)
+ * 출력: 없음
+ * 리턴: 한국어 문자열
+ */
+fun LanguageStatus.koreanLabel(): String = when (this) {
+    LanguageStatus.Available -> "사용 가능" // 바로 사용
+    LanguageStatus.Downloadable -> "다운로드 필요" // 언어 팩 필요
+    LanguageStatus.Downloading -> "다운로드 중" // 받는 중
+    is LanguageStatus.Unavailable -> "사용 불가($reason)" // 사유
+    is LanguageStatus.CheckFailed -> "사용 불가($reason)" // 확인 실패 사유(이전과 같은 표시) // change(add)-hyungchul-2026-10-11-21:50
+}
+
 // change(add)-hyungchul-2026-10-11-03:09
 /**
  * 목적: 모델 관리 화면 ViewModel
  * 기능: 위 파일 머리말 참조. 앱 전역 store/installer 와 같은 인스턴스를 받아야 사용 횟수·동시 설치 보호가 유지된다.
  * 입력: store(모델 저장소), installer(설치기), catalog(표시할 모델 목록, 기본은 전체 카탈로그), importRoot(adb push 가져오기 루트: files/import),
- *       io(오래 걸리는 작업용 디스패처 — 테스트에서 교체)
+ *       io(오래 걸리는 작업용 디스패처 — 테스트에서 교체),
+ *       systemStatus(change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 상태 조회기 — null 이면 시스템 엔진 영역 숨김, 기본 null)
  */
 class ModelsViewModel(
     private val store: ModelStore, // 모델 저장소
@@ -119,6 +170,7 @@ class ModelsViewModel(
     private val catalog: List<ModelSpec> = ModelCatalog.all, // 표시 목록
     private val importRoot: File, // 가져오기 루트
     private val io: CoroutineDispatcher = Dispatchers.IO, // 작업 디스패처
+    private val systemStatus: SystemEngineStatus? = null, // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 상태 조회기(null 이면 영역 숨김)
 ) : ViewModel() {
 
     private val specs: Map<String, ModelSpec> = catalog.associateBy { it.id } // id → spec
@@ -129,6 +181,11 @@ class ModelsViewModel(
     private val messageChannel = Channel<String>(Channel.BUFFERED) // 일회성 메시지(스낵바)
     private val _importPrompt = MutableStateFlow<ImportPrompt?>(null) // 가져오기 안내
     private val _verifyReport = MutableStateFlow<VerifyReport?>(null) // 검증 결과
+    private val _systemRows = MutableStateFlow(initialSystemRows(systemStatus)) // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 카드(내부)
+    private val systemJobs = ConcurrentHashMap<SystemEngineKind, Job>() // change(add)-hyungchul-2026-10-11-19:52 엔진별 진행 중인 다운로드(엔진당 1개)
+    @Volatile private var systemRefreshJob: Job? = null // change(add)-hyungchul-2026-10-11-19:52 진행 중인 전체 상태 조회
+    private val systemClock = AtomicLong(0) // change(add)-hyungchul-2026-10-11-20:05 세대 번호 발급기(새로고침 시작·다운로드 상태 갱신마다 증가)
+    private val downloadStamp = ConcurrentHashMap<Pair<SystemEngineKind, String>, Long>() // change(add)-hyungchul-2026-10-11-20:05 (엔진, 언어) → 다운로드 쪽이 마지막으로 상태를 갱신한 세대
 
     /** 목적: 화면에 그릴 행 목록 / 기능: 카탈로그 순서(ASR → VAD), 상태가 바뀔 때마다 갱신 */
     val rows: StateFlow<List<ModelRow>> = _rows.asStateFlow() // 읽기 전용 노출
@@ -142,8 +199,140 @@ class ModelsViewModel(
     /** 목적: 검증 결과 상태 / 기능: null 이면 대화상자 없음 */
     val verifyReport: StateFlow<VerifyReport?> = _verifyReport.asStateFlow() // 읽기 전용 노출
 
+    /** 목적: 시스템 엔진 카드 목록 / 기능: 엔진 2개 × 언어 ko·en 의 상태. systemStatus 가 null 이면 빈 목록(영역 숨김), 조회 전에는 langs 가 빈 카드 */
+    val systemRows: StateFlow<List<SystemEngineRow>> = _systemRows.asStateFlow() // change(add)-hyungchul-2026-10-11-19:52 읽기 전용 노출
+
     init {
         refresh() // 첫 상태 읽기
+        refreshSystem() // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 상태 첫 조회
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:52
+    /**
+     * 목적: 시스템 엔진 상태 전체 다시 조회
+     * 기능: 엔진 × 언어(ko, en) 상태를 병렬로 조회해(각 15 초 제한, 예외는 사유로) 카드에 반영한다. 이미 조회 중이면 그것을 취소하고 새로 시작한다. 다운로드 중 표시(busyLang)는 건드리지 않는다.
+     *       systemStatus 가 null 이면 아무 일도 없다.
+     * 입력: 없음
+     * 출력: systemRows 갱신
+     * 리턴: 없음
+     */
+    fun refreshSystem() {
+        val status = systemStatus ?: return // 조회기 없음 → 영역 숨김
+        systemRefreshJob?.cancel() // 이전 조회 취소
+        val started = systemClock.incrementAndGet() // change(add)-hyungchul-2026-10-11-20:05 이 조회의 세대(이보다 늦게 갱신된 언어는 이 결과로 덮지 않음)
+        systemRefreshJob = viewModelScope.launch(io) { // 백그라운드에서
+            val results = coroutineScope { // 병렬 조회
+                SYSTEM_KINDS.flatMap { kind -> SYSTEM_LANGS.map { lang -> async { Triple(kind, lang, status.safeStatus(kind, lang)) } } }.awaitAll() // 4개 동시
+            }
+            _systemRows.update { rows -> rows.map { row -> row.copy(langs = SYSTEM_LANGS.map { lang -> // 상태 반영(busyLang 유지)
+                val newer = (downloadStamp[row.kind to lang] ?: 0L) > started // change(add)-hyungchul-2026-10-11-20:05 조회 시작 뒤에 다운로드가 갱신한 언어인가
+                val old = row.langs.firstOrNull { it.first == lang }?.second // 현재 값
+                lang to if (newer && old != null) old else results.first { it.first == row.kind && it.second == lang }.third // 더 새로운 값이 있으면 오래된 조회 결과를 버림
+            }) } }
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:52
+    /**
+     * 목적: 시스템 엔진 언어 팩 다운로드 요청
+     * 기능: 엔진당 1개 작업으로 systemStatus.download 를 수집한다. 시작하면 busyLang 을 그 언어로 두고 안내 메시지
+     *       "Google 동의 창이 뜨면 직접 확인을 눌러 주세요(앱이 대신 누르지 않습니다)." 를 1번 낸다. 동의 창은 Google 서비스가 띄우며 사용자가 직접 누른다.
+     *       Failed 이벤트·예외는 "<제목> <언어> 다운로드 실패 — 원인" 메시지. 끝나면(Done·Failed·예외) 그 언어 상태를 다시 조회하고 busyLang 을 푼다.
+     *       다운로드를 요청할 수 없는 엔진(플랫폼 API 33)이거나 이미 다운로드 중이면 안내만 내고 시작하지 않는다.
+     * 입력: kind(엔진 종류), engineLang(앱 언어 "ko"/"en")
+     * 출력: 메시지 발행, systemRows 갱신
+     * 리턴: 없음
+     */
+    fun downloadSystem(kind: SystemEngineKind, engineLang: String) {
+        val status = systemStatus ?: return // 조회기 없음
+        val title = systemTitle(kind) // 카드 제목
+        if (!status.canDownload(kind)) return post("$title: 이 기기(Android 버전)에서는 앱에서 다운로드를 요청할 수 없습니다. Android 14 이상이 필요하며, 시스템 설정의 음성 인식 설정에서 받을 수 있습니다") // 불가
+        val running = systemJobs[kind] // 이 엔진의 기존 다운로드
+        if (running != null && !running.isCompleted) return post("$title: 이미 다운로드가 진행 중입니다") // 엔진당 1개
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) { // 시작 전에 등록하려고 지연 시작
+            setSystemBusy(kind, engineLang) // 진행 표시
+            post("Google 동의 창이 뜨면 직접 확인을 눌러 주세요(앱이 대신 누르지 않습니다).") // 안내(1회)
+            try {
+                var failure: String? = null // 실패 원인
+                try {
+                    withContext(io) { status.download(kind, engineLang).transformWhile { ev -> emit(ev); ev is DownloadEvent.Progress }.collect { ev -> if (ev is DownloadEvent.Failed) failure = ev.message } } // Done/Failed 를 받으면 흐름이 안 끝나도 수집 종료(진행은 "다운로드 중" 표시로 충분)
+                } catch (e: CancellationException) {
+                    throw e // 취소는 그대로
+                } catch (e: VirtualMachineError) {
+                    throw e // OOM 등은 그대로
+                } catch (e: Throwable) {
+                    failure = "${e.javaClass.simpleName}: ${e.message}" // 예외를 실패 원인으로
+                }
+                if (failure != null) post("$title ${languageLabel(setOf(engineLang))} 다운로드 실패 — $failure") // 한국어 실패 메시지
+                val fresh = withContext(io) { status.safeStatus(kind, engineLang) } // 그 언어 상태 재조회
+                downloadStamp[kind to engineLang] = systemClock.incrementAndGet() // change(add)-hyungchul-2026-10-11-20:05 이 언어의 갱신 세대 기록(늦은 새로고침 결과 차단)
+                _systemRows.update { rows -> rows.map { row -> if (row.kind == kind) row.copy(langs = row.langs.map { (l, st) -> if (l == engineLang) l to fresh else l to st }, busyLang = null) else row } } // 상태 반영 + 진행 표시 해제
+            } finally {
+                setSystemBusy(kind, null) // 취소돼도 진행 표시 해제
+            }
+        }
+        // change(add)-hyungchul-2026-10-11-20:05 취소 시(사용자 [취소]·동의 창을 닫아 멈춘 경우) 안내 + 상태 재조회는 아래 invokeOnCompletion 에서 처리
+        systemJobs[kind] = job // 등록
+        job.invokeOnCompletion { cause -> // 끝나면
+            systemJobs.remove(kind, job) // 제거
+            if (cause is CancellationException) { // change(add)-hyungchul-2026-10-11-20:05 취소로 끝남
+                post("$title: 앱의 다운로드 추적을 끝냈습니다(이미 시작된 서비스 다운로드는 계속될 수 있으니 [새로고침]으로 확인하세요)") // 취소 안내(실제 다운로드는 멈추지 않을 수 있음) // change(add)-hyungchul-2026-10-11-21:50
+                recheckSystem(kind, engineLang, status) // 그 언어 상태 재조회
+            }
+        }
+        job.start() // 시작
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 진행 중인 시스템 엔진 다운로드 취소
+     * 기능: 그 엔진의 다운로드 작업을 취소한다. 동의 창을 닫아 터미널 이벤트가 없어 "다운로드 중"에 멈춘 경우의 탈출구이다.
+     *       취소되면 busyLang 이 풀리고 "앱의 다운로드 추적을 끝냈습니다(…)" 안내(change(add)-hyungchul-2026-10-11-21:50 문구 변경)가 나오며 그 언어 상태를 다시 조회한다. 진행 중이 아니면 아무 일도 없다.
+     *       (이미 Google 서비스가 시작한 실제 다운로드를 멈추는 것은 아니다 — 앱의 추적만 끝낸다. 상태는 [새로고침]으로 다시 확인.)
+     * 입력: kind(엔진 종류)
+     * 출력: 메시지 발행, systemRows 갱신
+     * 리턴: 없음
+     */
+    fun cancelSystemDownload(kind: SystemEngineKind) {
+        systemJobs[kind]?.cancel() // 작업 취소(완료 처리에서 안내·재조회)
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 한 언어 상태만 다시 조회해 반영
+     * 기능: 백그라운드에서 safeStatus 로 조회해 그 언어 상태를 갱신한다(다운로드 취소 뒤 사용). 갱신 세대를 기록해 늦은 새로고침이 덮지 않게 한다. busyLang 은 건드리지 않는다.
+     * 입력: kind(엔진 종류), lang(앱 언어), status(조회기)
+     * 출력: systemRows 갱신
+     * 리턴: 없음
+     */
+    private fun recheckSystem(kind: SystemEngineKind, lang: String, status: SystemEngineStatus) {
+        viewModelScope.launch(io) { // 백그라운드에서
+            val fresh = status.safeStatus(kind, lang) // 재조회
+            downloadStamp[kind to lang] = systemClock.incrementAndGet() // 갱신 세대 기록
+            _systemRows.update { rows -> rows.map { row -> if (row.kind == kind) row.copy(langs = row.langs.map { (l, st) -> if (l == lang) l to fresh else l to st }) else row } } // 그 언어만 반영
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:52
+    /**
+     * 목적: 앱에서 다운로드를 요청할 수 있는지
+     * 기능: systemStatus.canDownload(kind) (조회기가 없으면 false). 화면이 [다운로드] 버튼 표시에 쓴다.
+     * 입력: kind(엔진 종류)
+     * 출력: 없음
+     * 리턴: 가능하면 true
+     */
+    fun canDownloadSystem(kind: SystemEngineKind): Boolean = systemStatus?.canDownload(kind) == true // 가능 여부
+
+    // change(add)-hyungchul-2026-10-11-19:52
+    /**
+     * 목적: 다운로드 중 표시 바꾸기
+     * 기능: 그 엔진 카드의 busyLang 만 바꾼다(다른 값은 그대로).
+     * 입력: kind(엔진 종류), lang(다운로드 중인 언어 또는 null)
+     * 출력: systemRows 갱신
+     * 리턴: 없음
+     */
+    private fun setSystemBusy(kind: SystemEngineKind, lang: String?) {
+        _systemRows.update { rows -> rows.map { if (it.kind == kind) it.copy(busyLang = lang) else it } } // 해당 카드만
     }
 
     /**
@@ -445,6 +634,9 @@ class ModelsViewModel(
 
     companion object {
         const val VAD_GROUP = "VAD 모델" // VAD 모델 그룹 이름
+        private val SYSTEM_KINDS: List<SystemEngineKind> = SystemEngineKind.entries // change(add)-hyungchul-2026-10-11-19:52 카드 순서(ML Kit → 플랫폼)
+        private val SYSTEM_LANGS: List<String> = listOf("ko", "en") // change(add)-hyungchul-2026-10-11-19:52 언어 순서
+        const val SYSTEM_LICENSE = "Google 서비스 약관 적용" // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 라이선스 문구
         private const val PROGRESS_STEP = 0.005f // 진행률 반영 최소 변화(0.5%)
         private const val MB = 1024L * 1024L // 1MB 바이트
         private val STAGE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss") // change(add)-hyungchul-2026-10-11-03:59 SAF 임시 폴더 이름 서식
@@ -472,6 +664,40 @@ class ModelsViewModel(
             return sorted.joinToString(", ") { when (it) { "ko" -> "한국어"; "en" -> "영어"; else -> it } } // 라벨
         }
 
+        // change(add)-hyungchul-2026-10-11-19:52
+        /**
+         * 목적: 시스템 엔진 카드 제목
+         * 기능: ML Kit → "ML Kit GenAI Basic (Speech Services by Google)", 플랫폼 → "Android 온디바이스 인식기 (Android System Intelligence)".
+         * 입력: kind(엔진 종류)
+         * 출력: 없음
+         * 리턴: 제목 문자열
+         */
+        fun systemTitle(kind: SystemEngineKind): String = when (kind) {
+            SystemEngineKind.MLKIT_BASIC -> "ML Kit GenAI Basic (${kind.serviceLabel})" // ML Kit
+            SystemEngineKind.PLATFORM_ONDEVICE -> "Android 온디바이스 인식기 (${kind.serviceLabel})" // 플랫폼
+        }
+
+        // change(add)-hyungchul-2026-10-11-19:52
+        /**
+         * 목적: 시스템 엔진 카드 초기값
+         * 기능: 조회기가 있으면 엔진마다 langs 가 빈(조회 전) 카드, 없으면 빈 목록.
+         * 입력: status(상태 조회기 또는 null)
+         * 출력: 없음
+         * 리턴: 카드 목록
+         */
+        private fun initialSystemRows(status: SystemEngineStatus?): List<SystemEngineRow> =
+            if (status == null) emptyList() else SYSTEM_KINDS.map { SystemEngineRow(it, systemTitle(it), SYSTEM_LICENSE, emptyList(), null) } // 조회 전 카드
+
+        // change(add)-hyungchul-2026-10-11-18:21
+        /**
+         * 목적: 모델 화면에 보일 카탈로그 고르기
+         * 기능: 시스템 엔진 항목(파일이 없어 받기·삭제 대상이 아님)을 뺀다. 원래 순서는 유지한다.
+         * 입력: list(카탈로그 전체)
+         * 출력: 없음
+         * 리턴: 시스템 항목을 뺀 목록
+         */
+        fun catalogForScreen(list: List<ModelSpec>): List<ModelSpec> = list.filterNot { it.isSystem } // 시스템 항목 제외
+
         /**
          * 목적: 앱 전역 객체로 ViewModel 팩토리 만들기
          * 기능: App 의 modelStore/modelInstaller/dirs 싱글턴을 그대로 넘긴다(새 인스턴스를 만들면 사용 횟수 보호가 깨진다).
@@ -483,7 +709,7 @@ class ModelsViewModel(
             @Suppress("UNCHECKED_CAST") // 요청 클래스는 ModelsViewModel 뿐
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(ModelsViewModel::class.java)) { "지원하지 않는 ViewModel: ${modelClass.name}" } // 다른 타입 거부
-                return ModelsViewModel(app.modelStore, app.modelInstaller, ModelCatalog.all, app.dirs.importDir) as T // 싱글턴 주입
+                return ModelsViewModel(app.modelStore, app.modelInstaller, catalogForScreen(ModelCatalog.all), app.dirs.importDir, systemStatus = AndroidSystemEngineStatus(app)) as T // 싱글턴 주입 // change(add)-hyungchul-2026-10-11-18:21 시스템 항목 제외 // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 상태 조회기
             }
         }
     }

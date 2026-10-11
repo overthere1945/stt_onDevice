@@ -16,6 +16,17 @@
     <!-- change(add)-hyungchul-2026-10-11-12:51: 모델 다운로드(Downloader, HTTPS) — 일반 권한(설치 시 자동 허용). 지금까지는 라이브러리 병합에 기대고 있어 앱이 직접 명시(최종 리뷰 M-4) -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- change(add)-hyungchul-2026-10-11-19:18: 시스템 엔진(2차 작업 6) — 패키지 가시성(Android 11+).
+         com.google.android.tts(ML Kit Basic 음성 서비스)·com.google.android.as(온디바이스 인식기)의 versionName 을 결과 engine_version 에 기록하고,
+         RecognitionService 를 찾을 수 있게 한다(없으면 "패키지 없음"으로 잘못 기록됨). -->
+    <queries>
+        <package android:name="com.google.android.tts" />
+        <package android:name="com.google.android.as" />
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <!-- change(add)-hyungchul-2026-10-10-11:56: android:name=".App" 로 커스텀 Application 등록 -->
     <application
         android:name=".App"
