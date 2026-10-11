@@ -17,7 +17,7 @@
 | 3. PC `run_eval.py` 에서 모든 조합이 `<algo>_<model>_<VAD>` 로 페어링 | **통과** | T26(`tools/check_pairing.sh`), 3.6(42 조합)·3.7·3.8(kr 24·en 30 발화 전부) |
 | 4. VAD Kotlin 포팅이 Python 원본과 허용오차 내 일치 | **통과(9 계열)** | 5절 |
 | 5. 측정 불가 값은 빈 값 | **통과** | T23·T25(빈 값 규칙 테스트) |
-| (추가) release 빌드 실기기 | **실패** — 앱 시작 크래시(WorkManager/Room, R8) | 3.3 |
+| (추가) release 빌드 실기기 | **통과** — 처음 시작 크래시(Room 생성자 제거)를 keep 규칙으로 수정(R45) | 3.3 |
 
 ## 2. 1차·2차 검증 (PC)
 
@@ -74,17 +74,23 @@
     `sherpaQwen3Transcribes`(load 3.78 s, 0–20 s 7.66 s, 0–30 s 13.94 s), `RunServiceInstrumentedTest` 3개, `DeviceInfoInstrumentedTest` 3개 통과.
 - 이 테스트가 끝나며 앱이 제거돼 앱 폴더(이전 모델·음원·결과·T30 산출물·tmp 부분 다운로드)가 함께 지워졌습니다(사용자 승인 사항).
 
-### 3.3 release 빌드 기기 확인(R31) — **실패: 앱 시작 즉시 크래시**
-- 절차: `apksigner sign --ks ~/.android/debug.keystore … app-release-unsigned.apk`(빌드 설정 변경 없음) → `adb install` → 앱 실행.
-- 결과: 첫 화면 전에 프로세스 종료.
-  `RuntimeException: Unable to get provider androidx.startup.InitializationProvider … Failed to create an instance of class androidx.work.impl.WorkDatabase.canonicalName`
-  (`androidx.work.WorkManagerInitializer` → Room `WorkDatabase_Impl` 생성 실패).
-- 해석: WorkManager 는 LiteRT 의존성이 병합해 온 것(R21)이고, release 의 `optimization { packageScope = androidx.**, kotlin.**, kotlinx.** }` 로 R8 이
-  androidx 코드를 최적화하면서 Room 의 생성 클래스 이름 계산이 깨진 것으로 보입니다(mapping 상 `WorkDatabase_Impl` 클래스 자체는 이름 유지).
-  원인 확정·수정은 하지 않았습니다(빌드 설정 변경 금지).
-- 따라서 **release 에서 Vosk(JNA)·whisper 네이티브 로드 확인은 미수행**입니다(앱이 그 전에 종료). debug APK 는 다시 설치해 아래 작업을 했습니다.
-- 다음 조치 후보: WorkManager 초기화 제거(`tools:node="remove"` 로 `WorkManagerInitializer` — R21 재평가와 함께), 또는 Room/WorkManager 를
-  최적화 범위에서 빼거나 keep 규칙 추가 → release 재확인.
+### 3.3 release 빌드 기기 확인(R31) — 처음 실패 → keep 규칙 추가 후 **통과**(R45)
+- 절차: `apksigner sign --ks ~/.android/debug.keystore … app-release-unsigned.apk`(서명만 로컬 debug 키) → `adb install` → 앱 실행.
+- 1차(10:58): 첫 화면 전에 프로세스 종료.
+  `RuntimeException: Unable to get provider androidx.startup.InitializationProvider … Failed to create an instance of class androidx.work.impl.WorkDatabase…`
+- 원인: LiteRT 의존성이 병합해 온 WorkManager(R21)가 앱 시작 때 Room DB `WorkDatabase` 를 만들고, Room 은 생성 클래스 `WorkDatabase_Impl` 을
+  인자 없는 생성자로 리플렉션 생성합니다. room-runtime 2.5.0 소비자 규칙(`-keep class * extends androidx.room.RoomDatabase`)은 클래스만 남겨서,
+  release R8(`optimization.packageScope = androidx.**`)이 `WorkDatabase_Impl.<init>()` 를 지웠습니다(`mapping/release/usage.txt` 에 제거 기록,
+  `seeds.txt` 에는 클래스만 있음).
+- 수정: `app/src/main/keepRules/rules.keep` 에 `-keep class * extends androidx.room.RoomDatabase { <init>(); }` 추가(생성자만 남기는 최소 범위).
+  재빌드 후 `seeds.txt` 에 `WorkDatabase_Impl: WorkDatabase_Impl()` 가 남고 usage.txt 에서 빠진 것을 확인. 매니페스트(WorkManagerInitializer)는 바꾸지 않았습니다.
+- 2차(12:25): release 를 같은 키로 `install -r`(앱 데이터 유지) → **시작 정상, FATAL 0**.
+  run `20261011_122655`: kr/Customer_Service/01.wav × {whisper tiny, vosk ko} × {NONE, SILERO} → **OK 4 · ERROR 0**
+  (whisper load 0.13 s, vosk load 2.01 s — release 에서 JNA·libvosk·whisper.cpp JNI·ORT(Silero) 로드와 전사 동작 확인).
+  whisper tiny 결과 txt 는 debug 매트릭스(3.6)와 **바이트 단위로 같았습니다**. vosk 결과는 달랐는데, debug 에서 같은 조합을 다시 돌린 run `20261011_122926` 도
+  이전 debug 결과와 달라 **Vosk 출력이 실행마다 조금씩 바뀌는 현상**으로 판단했습니다(release 와 무관, 7절).
+- 확인 뒤 debug APK 를 다시 설치했습니다(데이터 유지 — 모델 8개·음원 54개 그대로).
+- `tools/check_16kb.sh` release 11/11 정렬, `./gradlew :app:testDebugUnitTest --rerun` 323 테스트 통과(실패·건너뜀 0).
 
 ### 3.4 모델 설치 (debug 재설치 후)
 - `tools/adb/push_models.sh` 로 8개(whisper tiny 폴더, silero 폴더, pyannote tar.bz2, fsmn 3파일 폴더, vosk ko/en zip, zipformer-ko·qwen3 tar.bz2)를
@@ -219,14 +225,14 @@ en (n_utt = 1)
 
 ## 4. 엔진·모델별 완료 표 (요구사항 문서 §12 형식)
 
-- 체크포인트 확인 = `tools/hash_models.py` 로 실제 다운로드·크기·SHA-256 고정(T18). Android build = 2절 debug APK 에 엔진 포함(release 는 3.3 크래시).
+- 체크포인트 확인 = `tools/hash_models.py` 로 실제 다운로드·크기·SHA-256 고정(T18). Android build = 2절 APK 에 엔진 포함(release 는 3.3 에서 tiny·vosk ko 실행 확인).
 - 실제 load·file 전사 = S22 Ultra. "배치" 는 3.6·3.7 의 앱 배치 실행(전체 파일), "계측" 은 계측 테스트(0–20/30 s 구간).
 - mic = 녹음 → WAV → 같은 배치 경로(T30, 모델 공통). streaming = 실시간 partial UI 는 Phase 2 범위(미지원). offline = 3.9 미수행.
 - 정확도 확인 = 사용자 PC 평가기로 실제 기기 결과 채점(smoke).
 
 | 엔진·모델 | 체크포인트 확인 | Android build | 실제 load | file 전사 | mic/streaming | offline | 정확도 확인 | 미완료·원인 |
 |---|---|---|---|---|---|---|---|---|
-| whispercpp tiny | 수행 | 성공(debug) | 성공(0.07 s) | 성공(배치 2파일×6프리셋, 54파일 2회) | mic 녹음→전사 경로 공통 / streaming 미지원 | 미수행 | 수행(3.6·3.7) | release 크래시(3.3), S25 미수행 |
+| whispercpp tiny | 수행 | 성공(debug·release) | 성공(0.07 s) | 성공(배치 2파일×6프리셋, 54파일 2회) | mic 녹음→전사 경로 공통 / streaming 미지원 | 미수행 | 수행(3.6·3.7) | S25·오프라인 미수행 |
 | whispercpp base | 수행 | 성공 | 성공(계측) | 성공(계측 0–5 s) | 위와 같음 | 미수행 | 미수행 | 배치·채점 미수행 |
 | whispercpp small | 수행 | 성공 | 미수행 | 미수행 | 위와 같음 | 미수행 | 미수행 | 기기 미설치(466 MB) |
 | whispercpp medium | 수행 | 성공 | 미수행 | 미수행 | 위와 같음 | 미수행 | 미수행 | 미설치(1.46 GB). 메모리·발열 미측정 |
@@ -240,8 +246,8 @@ en (n_utt = 1)
 | sherpa-omnilingual ctc300m-v1-int8 | 수행 | 성공 | 성공(T21 계측) | 성공(계측) | 위와 같음 | 미수행 | 미수행 | 배치 미수행 |
 | sherpa-omnilingual ctc300m-v2-int8 | 수행 | 성공 | 성공(T21 계측) | 성공(계측) | 위와 같음 | 미수행 | 미수행 | 배치 미수행 |
 | sherpa-omnilingual ctc1b-v2-int8 | 수행 | 성공 | 성공(T21 계측) | 성공(계측) | 위와 같음 | 미수행 | 미수행 | 배치·메모리 측정 미수행 |
-| vosk small-ko-0.22 | 수행 | 성공(debug) | 성공(3.53 s) | 성공(배치 kr 1파일×6) | 위와 같음 | 미수행 | 수행(3.6, WER 100 % 초과) | release(R8·JNA) 확인 못 함(3.3) |
-| vosk small-en-us-0.15 | 수행 | 성공(debug) | 성공(0.82 s) | 성공(배치 en 1파일×6) | 위와 같음 | 미수행 | 수행(3.6) | 위와 같음 |
+| vosk small-ko-0.22 | 수행 | 성공(debug·release) | 성공(3.53 s) | 성공(배치 kr 1파일×6) | 위와 같음 | 미수행 | 수행(3.6, WER 100 % 초과) | 실행마다 출력이 조금씩 다름(7절) |
+| vosk small-en-us-0.15 | 수행 | 성공(debug) | 성공(0.82 s) | 성공(배치 en 1파일×6) | 위와 같음 | 미수행 | 수행(3.6) | release 는 ko 만 확인 |
 
 ## 5. VAD 계열별 정합성 (골든 테스트)과 기기 확인
 
@@ -285,12 +291,14 @@ en (n_utt = 1)
 | R40 | manifest 에 입력 목록 저장, 이어하기는 같은 설정·입력일 때만 |
 | R41·R43 | adb push 폴더 권한 문제 → 스크립트가 shell 소유 항목만 chmod |
 | R44 | 비행기 모드 등 기기 설정 변경 금지. 기기 테스트 산출물은 목록 보고 후 사용자 승인으로 정리(8절) |
+| R45 | release 시작 크래시를 1차 범위에서 수정 — Room 생성 클래스 생성자 keep 규칙 추가(3.3) |
 
 ## 7. 알려진 문제·미완료와 다음 조치
 
 | 항목 | 상태 | 다음 조치 |
 |---|---|---|
-| **release 빌드 시작 크래시** | WorkManager(LiteRT 의존) 초기화 중 Room 생성 클래스 실패(3.3) | WorkManagerInitializer 제거 또는 R8 범위/keep 조정 후 release 재확인(Vosk·whisper 포함) |
+| release 빌드 | 시작 크래시를 keep 규칙으로 수정, tiny·vosk ko 확인(3.3) | 다른 엔진(sherpa 등)의 release 실행은 미확인 — 필요 시 같은 방식으로 확인 |
+| **Vosk 출력 비결정성** | 같은 파일·설정에서 실행마다 Vosk 텍스트가 조금씩 다름(3.3: debug 2회·release 1회 모두 다름) | 원인 조사(블록 입력 경계·Vosk 내부 설정), 평가 시 반복 실행 평균 고려 |
 | S25 Ultra 측정 | 미수행(기기 없음) | S25 Ultra 연결 후 3.6~3.8 반복 |
 | 오프라인 확인 | 미수행(R44) | 3.9 절차를 사용자가 수행 |
 | 16 KB 페이지 기기 실행 | 미수행(S22 는 4 KB) | ELF·zip 정렬만 확인됨. 16 KB 기기·에뮬레이터에서 설치·실행 |
@@ -302,7 +310,7 @@ en (n_utt = 1)
 | vosk-ko WER 100 % 초과 | 삽입 오류 많음(3.6, 파일 1개) | 전체 파일로 재확인 |
 | 라이선스 UNVERIFIED | 한국어 zipformer 2종(KsponSpeech 이용조건 미확인) | 상업 이용 전 확인 |
 | PC 평가기 EN 정답의 화자 라벨 | EN WER 과대 가능 | 평가기 쪽 별건 |
-| LiteRT 병합 권한·WorkManager(R21) | 유지 중, release 크래시 원인과 연관 | 위 release 조치와 함께 재평가 |
+| LiteRT 병합 권한·WorkManager(R21) | 유지 중(WorkManager 는 keep 규칙으로 release 에서도 동작) | 필요 시 재평가 |
 
 ## 8. 기기 테스트 산출물 정리 (2026-10-11 정리 완료)
 
@@ -319,10 +327,11 @@ en (n_utt = 1)
 
 | 경로 | 내용 |
 |---|---|
-| debug 앱 `com.cowork.stt_ondevice` | 이번 빌드(debug 키 서명) |
+| debug 앱 `com.cowork.stt_ondevice` | 이번 빌드(debug 키 서명, R45 keep 규칙 포함) |
 | `$A/models/` | whispercpp-tiny, sherpa-zipformer-ko, sherpa-qwen3asr 0.6B, vosk ko/en, vad silero/pyannote/fsmn (설치됨) |
 | `$A/input_sound/{kr,en}/{Customer_Service,Friends_Conversation,vLog}/` | `Documents/input_sound` 에서 SAF 로 가져온 사용자 음원 54개(사본) |
 | `$A/output_stt/20261011_112228` | 매트릭스 smoke 결과(3.6) |
 | `$A/output_stt/20261011_114231` | 54파일 × tiny × SILERO_DEFAULT(3.7) |
 | `$A/output_stt/20261011_115617` | 54파일 × tiny × NONE(3.8 화면 끔 확인) |
+| `$A/output_stt/20261011_122655`, `20261011_122926` | release 확인 run(4건), debug Vosk 반복성 확인 run(1건) — 3.3 |
 | 앱의 SAF 접근 권한 | `Documents/input_sound` 폴더 읽기 허용(가져오기 때 "허용") |

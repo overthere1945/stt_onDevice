@@ -14,6 +14,14 @@
 #   JNA 는 libvosk.so 심볼과 Structure/Callback 필드를 리플렉션으로 찾으므로 R8 이 이름을 바꾸거나 지우면 안 된다.
 #   다만 현재 app/build.gradle.kts 의 release optimization.packageScope 가 androidx/kotlin/kotlinx 로 한정되어 있어
 #   R8 이 org.vosk / com.sun.jna 를 처리하지 않는다 → 이 규칙은 지금은 효과가 없고, packageScope 를 넓힐 때를 대비한 방어용이다.
-#   release 빌드의 실제 동작(JNA 로 libvosk 호출)은 아직 기기에서 검증하지 않았다(Task 31 에서 검증 예정).
+#   release 빌드의 실제 동작(JNA 로 libvosk 호출)은 Task 31 에서 기기(S22 Ultra)로 확인했다(vosk ko 전사 OK). change(add)-hyungchul-2026-10-11-12:23
 -keep class com.sun.jna.** { *; }
 -keep class org.vosk.** { *; }
+# change(add)-hyungchul-2026-10-11-12:23 Task 31 수정(R45): release 시작 크래시 해결.
+#   LiteRT 의존성이 병합해 온 WorkManager 는 앱 시작 때(androidx.startup) Room 데이터베이스 WorkDatabase 를 만든다.
+#   Room 은 생성 클래스 WorkDatabase_Impl 을 리플렉션(인자 없는 생성자)으로 만든다.
+#   room-runtime 2.5.0 의 소비자 규칙(-keep class * extends androidx.room.RoomDatabase)은 클래스만 남기고 생성자는 남기지 않아,
+#   release R8(optimization.packageScope = androidx.**)이 쓰이지 않는 것으로 보고 <init>() 를 지웠다(usage.txt 에 기록됨)
+#   → "Failed to create an instance of …WorkDatabase" 로 앱 시작 즉시 종료.
+#   그래서 RoomDatabase 하위 클래스의 인자 없는 생성자만 추가로 남긴다(필요한 최소 범위).
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
