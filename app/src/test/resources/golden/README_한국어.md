@@ -18,6 +18,14 @@ JSON 은 주석을 달 수 없으므로 이 문서와 위 문서가 설명을 �
 | `fsmn_am.mvn` | 1 | FSMN CMVN 파일(아래) |
 | `audio/*.wav` | 4 | 골든 클립(사용자 음원 파생물, **gitignore — 저장소에 없음**). `tools/golden/make_clips.py` 로 재생성 |
 
+> change(add)-hyungchul-2026-10-11-13:57 **로컬 전용 골든(gitignore)**: 사용자 본인 음성 녹음에서 뽑은 음향 특징이 담긴 특징 골든 15개
+> (`fbank_`·`lfr_cmvn_`·`firered_fbank_`·`firered_fbank_cmvn_`·`marblenet_mel_` × `{en_customer_01_20s_plus77, kr_customer_01_20s_plus77, kr_customer_01_70s_plus55}`)는
+> 원격 저장소가 공개(PUBLIC)라서 git 에 올리지 않는다(`.gitignore` 에 패턴 등록, 파일은 로컬에 그대로 둠).
+> 합성 클립(`*_synth_silence_noise_8s_plus123.json`)·`firered_cmvn.*`·모든 구간·점수 골든은 계속 커밋한다.
+> 그래서 위 표의 특징 골든 개수(4·8) 중 **저장소에는 합성 클립 몫(1·2)만** 있고 나머지는 로컬에서 다시 만든다:
+> `tools/golden/gen_fbank.py`(fbank·lfr_cmvn), `tools/export/gen_firered_golden.py`(firered_fbank*), `tools/export/gen_marblenet_golden.py`(marblenet_mel).
+> 새로 clone 해 이 파일들이 없으면 `KaldiFbankTest`·`FireRedMarbleNetParityTest` 는 그 클립만 건너뛰고 합성 클립은 계속 검사한다.
+
 ### FireRedVAD·MarbleNet 골든 (change(add)-hyungchul-2026-10-10-14:25, Task 13)
 
 생성 스크립트·알고리즘·전처리·ONNX 입출력 설명은 **[tools/export/README_한국어.md](../../../../../tools/export/README_한국어.md)** 를 본다(6~8절).

@@ -63,3 +63,12 @@ app/src/test/resources/golden/audio/
 # --- 모델 카탈로그 도구 (change(add)-hyungchul-2026-10-10-16:12) ---
 # tools/hash_models.py 가 내려받고 해제하는 모델 캐시(약 15 GB, 공개 저장소에 넣지 않음)
 tools/models_cache/
+# --- 사용자 음성 파생 특징 골든 로컬 전용 (change(add)-hyungchul-2026-10-11-13:57) ---
+# 사용자 본인 음성 녹음에서 뽑은 음향 특징(fbank·LFR+CMVN·FireRed fbank/CMVN 적용 결과·MarbleNet log-mel)이 담긴 골든 JSON 은
+# 원격 저장소가 공개(PUBLIC)이므로 올리지 않고 로컬에만 둔다. (kr/en 고객센터 클립 15개 파일. 합성 클립 synth_* 와 구간·점수 골든은 계속 커밋)
+# 다시 만들려면 tools/golden/gen_fbank.py, tools/export/gen_firered_golden.py, tools/export/gen_marblenet_golden.py 를 실행한다.
+app/src/test/resources/golden/fbank_*_customer_*.json
+app/src/test/resources/golden/firered_fbank_*_customer_*.json
+app/src/test/resources/golden/firered_fbank_cmvn_*_customer_*.json
+app/src/test/resources/golden/lfr_cmvn_*_customer_*.json
+app/src/test/resources/golden/marblenet_mel_*_customer_*.json

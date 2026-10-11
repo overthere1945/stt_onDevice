@@ -6,6 +6,8 @@
 //       (2) 모델 확률: FireRed 오프라인/스트리밍 ONNX, MarbleNet ONNX 확률을 scores_* 골든과 |차| ≤ 1e-3 로 비교
 //       (3) detect() 끝단 구간을 FIRERED_OFFLINE·FIRERED_STREAM(0.01 s)·MARBLENET_NEMO(0.02 s) 골든과 비교(정확 일치 여부도 출력)
 //       모델(tools/export/out/, gitignore)·클립(golden/audio/, gitignore)이 없으면 Assume 으로 건너뛴다(준비된 환경에서는 SKIPPED 없어야 함).
+//       change(add)-hyungchul-2026-10-11-13:57 사용자 음성 파생 특징 골든(firered_fbank·firered_fbank_cmvn·marblenet_mel 의 kr/en customer 클립)은
+//       로컬 전용(gitignore)이라 없으면 그 클립만 건너뛰고, 항상 커밋되는 합성 클립(synth_silence_noise_8s_plus123)은 반드시 실행한다.
 package com.cowork.stt_ondevice.vad.impl // VAD 구현 테스트 패키지
 
 import com.cowork.stt_ondevice.core.audio.PcmConverter // WAV → 16 kHz mono float
@@ -58,7 +60,7 @@ class FireRedMarbleNetParityTest {
     @Test
     fun fireRedFbankMatchesGolden() {
         val fbank = KaldiFbank(windowType = KaldiWindowType.POVEY) // FireRed 설정(창만 povey)
-        for (stem in clips) { // 클립마다
+        for (stem in clipsWithGolden("firered_fbank")) { // change(add)-hyungchul-2026-10-11-13:57 골든이 있는 클립마다(합성 클립 필수)
             val audio = loadClip(stem) // 파형
             val raw = GoldenLoader.loadRaw("firered_fbank_$stem") // 골든
             assertEquals("$stem inputScale", "1", raw["inputScale"]!!.jsonPrimitive.content) // int16 값 그대로(= float × 32768)
@@ -85,7 +87,7 @@ class FireRedMarbleNetParityTest {
         assertArrayEquals("means", doubles(ref["means"]!!.jsonArray), cmvn.means, 0.0) // 평균 정확 일치
         assertArrayEquals("inverseStd", doubles(ref["inverseStdVariances"]!!.jsonArray), cmvn.inverseStd, 0.0) // 역표준편차 정확 일치
         val fbank = KaldiFbank(windowType = KaldiWindowType.POVEY) // FireRed fbank
-        for (stem in clips) { // 클립마다
+        for (stem in clipsWithGolden("firered_fbank", "firered_fbank_cmvn")) { // change(add)-hyungchul-2026-10-11-13:57 두 골든이 모두 있는 클립마다(합성 클립 필수)
             val gFbank = matrix(GoldenLoader.loadRaw("firered_fbank_$stem")["expected"]!!.jsonArray) // 골든 fbank(float32)
             val gCmvn = GoldenLoader.loadRaw("firered_fbank_cmvn_$stem") // 골든 CMVN 결과
             val expected = matrix(gCmvn["expected"]!!.jsonArray) // 앞 50 프레임
@@ -110,7 +112,7 @@ class FireRedMarbleNetParityTest {
     @Test
     fun marbleNetMelMatchesGolden() {
         val mel = NemoMelSpectrogram(resourceFile("golden/marblenet_preprocessor.json")) // 설정 파일
-        for (stem in clips) { // 클립마다
+        for (stem in clipsWithGolden("marblenet_mel")) { // change(add)-hyungchul-2026-10-11-13:57 골든이 있는 클립마다(합성 클립 필수)
             val audio = loadClip(stem) // 파형
             val raw = GoldenLoader.loadRaw("marblenet_mel_$stem") // 골든
             val feats = mel.compute(audio) // F × 80
@@ -253,6 +255,22 @@ class FireRedMarbleNetParityTest {
 
     // ---------------------------------------------------------------- 도우미
 
+    // change(add)-hyungchul-2026-10-11-13:57
+    /**
+     * 목적: 특징 골든이 실제로 있는 클립만 골라내기(사용자 음성 파생 골든은 로컬 전용이라 새 clone 에는 없음)
+     * 기능: clips 중 모든 접두어에 대해 golden/<prefix>_<clip>.json 이 클래스패스에 있는 클립만 남긴다. 없는 클립은 건너뛴다고 출력한다.
+     *       합성 클립 골든은 항상 커밋되므로 없으면 테스트를 실패시킨다(전부 건너뛰어 검증이 비는 것을 막음).
+     * 입력: prefixes(골든 파일 이름 접두어들, 예: "firered_fbank", "marblenet_mel")
+     * 출력: 건너뛴 클립 안내 로그, 합성 클립 골든이 없으면 AssertionError
+     * 리턴: 골든이 있는 클립 이름 목록(원래 순서)
+     */
+    private fun clipsWithGolden(vararg prefixes: String): List<String> {
+        val present = clips.filter { c -> prefixes.all { javaClass.classLoader!!.getResource("golden/${it}_$c.json") != null } } // 모든 접두어 파일이 있는 클립
+        assertTrue("합성 클립 골든은 항상 커밋되어야 함: ${prefixes.joinToString("/")} $SYNTH_CLIP", SYNTH_CLIP in present) // 합성 클립 필수
+        for (c in clips - present.toSet()) println("건너뜀(로컬 전용 골든 없음): ${prefixes.joinToString("/")} $c") // 건너뛴 클립 표시
+        return present // 결과
+    }
+
     /** 목적: JSON 2차원 숫자 배열 → float32 행렬. 입력: a. 리턴: 행 목록. */
     private fun matrix(a: JsonArray): List<FloatArray> = a.map { row -> row.jsonArray.let { r -> FloatArray(r.size) { r[it].jsonPrimitive.content.toFloat() } } } // 원문 → float32
 
@@ -352,6 +370,7 @@ class FireRedMarbleNetParityTest {
     }
 
     private companion object {
+        const val SYNTH_CLIP = "synth_silence_noise_8s_plus123" // change(add)-hyungchul-2026-10-11-13:57 항상 커밋되는 합성 클립 이름
         const val SCORE_TOL = 1e-3 // 모델 확률 허용 오차(brief)
         const val FEATURE_TOL_FBANK = 1e-3 // FireRed fbank·CMVN 허용 오차(brief, FSMN KaldiFbankTest 와 같음)
         const val MEL_TOL = 1e-4 // MarbleNet log-mel 허용 오차(컨트롤러 지시: 가능하면 1e-4)

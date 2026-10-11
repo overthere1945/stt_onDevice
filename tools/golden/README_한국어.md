@@ -138,6 +138,10 @@ WebRTC RAW·HANGOVER `floor(N/L)`, RING_BUFFER `floor((N−1)/L)`(L = 16·frameM
 `{"clip", "kind": "fbank"|"lfr_cmvn", "numFrames", "dim", "expected": [[...], ...], "tool", "numFramesTotal", "inputScale": 32768, "knfOptions": "<kaldi 옵션 전체 문자열>"}`.
 `fbank` 는 앞 50 프레임 × 80, `lfr_cmvn` 은 앞 10 프레임 × 400(+ `lfrM` 5, `lfrN` 1, `cmvnFile` "fsmn_am.mvn").
 
+change(add)-hyungchul-2026-10-11-13:57 **로컬 전용**: 이 8개 중 사용자 음성 클립(`kr_customer_01_20s_plus77`, `en_customer_01_20s_plus77`, `kr_customer_01_70s_plus55`) 6개는
+사용자 음성에서 파생된 특징이라 공개 저장소에 올리지 않는다(`.gitignore`, 파일은 로컬 유지). 저장소에는 합성 클립(`synth_silence_noise_8s_plus123`) 2개만 커밋된다.
+`python gen_fbank.py` 로 다시 만든다(클립 WAV 는 `make_clips.py` 로 먼저 생성). 없는 환경에서 `KaldiFbankTest` 는 그 클립만 건너뛴다.
+
 ## 6. 계열별 알고리즘 (Kotlin 포팅 기준)
 
 ### 6.1 Silero (`gen_silero.py`, `gen_maxspeech.py`)

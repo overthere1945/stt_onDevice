@@ -4,6 +4,8 @@
 //       4개 클립 모두에 대해 원소별 |차| ≤ 1e-3 로 비교하고, 전체 프레임 수(snip_edges 규칙)가 골든 numFramesTotal 과 같은지 확인한다.
 //       클립 WAV(golden/audio/, gitignore 대상)가 없으면 Assume 로 건너뛴다(새로 clone 한 환경 대비).
 //       골든이 덮지 않는 LFR 끝부분 복제 규칙은 손으로 계산한 작은 입력으로 따로 검증한다.
+//       change(add)-hyungchul-2026-10-11-13:57 사용자 음성 파생 특징 골든(kr/en customer 클립)은 공개 저장소에 올리지 않고 로컬 전용(gitignore)이다.
+//       그 파일이 없으면 해당 클립만 건너뛰고(출력에 표시), 항상 커밋되는 합성 클립(synth_silence_noise_8s_plus123)은 반드시 실행한다(테스트가 비어 버리지 않게 함).
 package com.cowork.stt_ondevice.vad.feature // 특징 추출 테스트 패키지
 
 import com.cowork.stt_ondevice.core.audio.PcmConverter // WAV → 16 kHz mono float 변환
@@ -33,6 +35,7 @@ class KaldiFbankTest {
         "synth_silence_noise_8s_plus123", // 합성 무음·잡음 8 s + 123 샘플
         "kr_customer_01_70s_plus55", // 한국어 70 s + 55 샘플
     )
+    private val synthClip = "synth_silence_noise_8s_plus123" // change(add)-hyungchul-2026-10-11-13:57 항상 커밋되는 합성 클립 이름
     private val tol = 1e-3 // 허용 오차(log 영역, brief 기준)
     private val json = Json { ignoreUnknownKeys = true } // JSON 파서
 
@@ -47,7 +50,7 @@ class KaldiFbankTest {
     @Test
     fun fbankMatchesKaldiNative() {
         val fbank = KaldiFbank() // 기본 설정(80 mel, 25/10 ms, 16 kHz)
-        for (clip in clips) { // 4개 클립 모두
+        for (clip in clipsWithGolden("fbank")) { // change(add)-hyungchul-2026-10-11-13:57 골든 파일이 있는 클립(합성 클립은 필수)
             val samples = loadClip(clip) // -1..1 파형
             val golden = loadFeature("fbank_$clip") // 골든 fbank
             val feats = fbank.compute(samples) // 전체 fbank 계산
@@ -72,7 +75,7 @@ class KaldiFbankTest {
         assertEquals("am.mvn 차원", 400, cmvn.shift.size) // AddShift 400 개
         assertEquals("am.mvn 차원", 400, cmvn.scale.size) // Rescale 400 개
         val fbank = KaldiFbank() // 기본 설정
-        for (clip in clips) { // 4개 클립 모두
+        for (clip in clipsWithGolden("lfr_cmvn")) { // change(add)-hyungchul-2026-10-11-13:57 골든 파일이 있는 클립(합성 클립은 필수)
             val samples = loadClip(clip) // -1..1 파형
             val golden = loadFeature("lfr_cmvn_$clip") // 골든 LFR+CMVN
             assertEquals("$clip lfrM", 5, golden.obj["lfrM"]!!.jsonPrimitive.content.toInt()) // 골든 LFR m = 5
@@ -106,6 +109,22 @@ class KaldiFbankTest {
         assertEquals(2, out2.size) // ceil(3/2) = 2
         assertArrayEquals(floatArrayOf(1f, 1f, 1f, 2f, 3f), out2[0], 0f) // 시작 0
         assertArrayEquals(floatArrayOf(1f, 2f, 3f, 3f, 3f), out2[1], 0f) // 시작 2, 끝 2개 복제
+    }
+
+    // change(add)-hyungchul-2026-10-11-13:57
+    /**
+     * 목적: 특징 골든이 실제로 있는 클립만 골라내기(사용자 음성 파생 골든은 로컬 전용이라 새 clone 에는 없음)
+     * 기능: clips 중 golden/<prefix>_<clip>.json 이 클래스패스에 있는 클립만 남긴다. 없는 클립은 건너뛴다고 출력한다.
+     *       합성 클립 골든은 항상 커밋되므로 없으면 테스트를 실패시킨다(전부 건너뛰어 검증이 비는 것을 막음).
+     * 입력: prefix(골든 파일 이름 접두어, 예: "fbank", "lfr_cmvn")
+     * 출력: 건너뛴 클립 안내 로그, 합성 클립 골든이 없으면 AssertionError
+     * 리턴: 골든이 있는 클립 이름 목록(원래 순서)
+     */
+    private fun clipsWithGolden(prefix: String): List<String> {
+        val present = clips.filter { javaClass.classLoader!!.getResource("golden/${prefix}_$it.json") != null } // 파일이 있는 클립만
+        assertTrue("합성 클립 골든은 항상 커밋되어야 함: ${prefix}_$synthClip", synthClip in present) // 합성 클립 필수
+        for (c in clips - present.toSet()) println("건너뜀(로컬 전용 골든 없음): ${prefix}_$c") // 건너뛴 클립 표시
+        return present // 결과
     }
 
     /**

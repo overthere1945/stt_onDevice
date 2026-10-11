@@ -297,6 +297,11 @@ min_duration_on 0.2, min_duration_off 0.2, filter_speech_first True) + `shift_le
 | `marblenet_mel_<clip>.json` | 4 | NeMo log-mel `expected[t][m] = processed_signal[0][m][t]` 앞 50 프레임, `tailFrames`(끝 4 프레임: 마스크·패딩 0 확인), `numFramesTotal`(F), `seqLen`, `numpyFloat64MaxAbsDiff` |
 | `marblenet_preprocessor.json` | 1 | 7.2 절 설정 원문·실효값·`windowValues`(400)·`melFilterbank`(80×257), `expected: null` |
 
+change(add)-hyungchul-2026-10-11-13:57 **로컬 전용**: 위 `firered_fbank_<clip>.json`·`firered_fbank_cmvn_<clip>.json`·`marblenet_mel_<clip>.json` 중 사용자 음성 클립
+(`kr_customer_01_20s_plus77`, `en_customer_01_20s_plus77`, `kr_customer_01_70s_plus55`) 9개는 사용자 음성에서 파생된 특징이라 공개 저장소에 올리지 않는다(`.gitignore`, 파일은 로컬 유지).
+합성 클립(`synth_silence_noise_8s_plus123`) 3개와 `firered_cmvn.*`, 구간·점수 골든은 계속 커밋한다.
+`gen_firered_golden.py`·`gen_marblenet_golden.py` 를 다시 실행하면 로컬 파일이 만들어진다. 없는 환경에서 `FireRedMarbleNetParityTest` 는 그 클립의 전처리 비교만 건너뛴다.
+
 - 손작성 골든(`clip = "synthetic_firered_long"`, `synthetic: true`, 음원 없음): N = 726160(4537 프레임), 확률 = 앞 1 s 0.05, 나머지 0.9,
   [1500,1505) 0.2, [2600,2604) 0.1, 3300 0.15, 끝 50 프레임 0.02(모두 float32 로 정확히 표현되는 값).
 - frameScores 길이 규칙: FireRed `1 + (N − 400)/160`(snip_edges), MarbleNet `F/2`(F = `1 + N/160` 를 짝수로 올림).
