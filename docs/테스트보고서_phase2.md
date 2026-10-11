@@ -412,6 +412,7 @@ run `20261012_013639`(01:36:39~01:37:32): kr/05 × {whispercpp-tiny, mlkit-basic
 
 - 플랫폼 백엔드는 재시도 세션의 `onError=11`(ERROR_SERVER_DISCONNECTED)을 일반 `ENGINE_ERROR` 로 돌려줍니다. 그래서 "첫 세션 감시 초과 → 재시도가 연결 끊김으로 즉시 실패" 이면 배치가 **일시정지되지 않고 그 항목만 ERROR** 가 됩니다.
   B3 계측에서 이 순서를 실제로 봤고, 앱 배치에서 재현하지는 않았습니다(미확인). 재시도 쪽 11 을 "응답 없음"으로 볼지는 설계 판단이 필요합니다.
+- **후속 수정으로 일시정지 처리** (change(add)-hyungchul-2026-10-12-02:54): 첫 시도가 멈춘 뒤 재시도가 `LANGUAGE_UNAVAILABLE`·`PERMISSION_MISSING` 이 아닌 `Failed` 로 끝나면 `EngineStalledException`(일시정지)으로 던지고, 11 은 새 코드 `SERVICE_DISCONNECTED` 로 구분합니다. PC 단위 테스트(`retryFailureAfterStallPauses` 등)로만 확인했고 실기기 재현은 하지 않았습니다.
 
 ### 9.7 기기에 남긴 상태
 

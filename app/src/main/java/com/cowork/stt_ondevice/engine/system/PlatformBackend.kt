@@ -5,7 +5,8 @@
 //              문장부호(EXTRA_ENABLE_FORMATTING=FORMATTING_OPTIMIZE_QUALITY)·FREE_FORM·PREFER_OFFLINE 인텐트로 startListening 한다.
 //              onSegmentResults 첫 후보 누적, onEndOfSegmentedSession → Completed, onError 는 오류 표대로 바꾼다
 //              (LANGUAGE_UNAVAILABLE/NOT_SUPPORTED → LANGUAGE_UNAVAILABLE, NO_MATCH/SPEECH_TIMEOUT → 음성 없음 Completed,
-//               INSUFFICIENT_PERMISSIONS → PERMISSION_MISSING, 그 밖 → ENGINE_ERROR "onError=<n>").
+//               INSUFFICIENT_PERMISSIONS → PERMISSION_MISSING, SERVER_DISCONNECTED → SERVICE_DISCONNECTED, 그 밖 → ENGINE_ERROR "onError=<n>").
+//              change(add)-hyungchul-2026-10-12-02:54 오류 표는 순수 함수 mapRecognizerError(PlatformErrors.kt)로 옮겼다(11 을 ENGINE_ERROR 와 구분).
 //              API 33 미만이면 Failed(LANGUAGE_UNAVAILABLE, "Android 13 이상 필요"), RECORD_AUDIO 미허용이면 Failed(PERMISSION_MISSING) 세션을 돌려준다.
 //       finishInput = 쓰기 쪽 닫기(EOF 가 세션 끝 신호), abort = cancel(), close = destroy(). 인식기 호출은 모두 메인 스레드(Handler/Dispatchers.Main)에서 한다.
 // change(add)-hyungchul-2026-10-11-19:18
@@ -202,7 +203,7 @@ class PlatformBackend(context: Context) : RecognitionBackend {
          */
         override fun onError(error: Int) {
             if (current === this) current = null // 듣기 끝
-            settle(mapError(error, tag, segments.toList())) // 결론
+            settle(mapRecognizerError(error, tag, segments.toList())) // 결론 // change(add)-hyungchul-2026-10-12-02:54 순수 함수로 분리
         }
 
         override fun onReadyForSpeech(params: Bundle?) = Unit // 사용 안 함
@@ -233,25 +234,5 @@ class PlatformBackend(context: Context) : RecognitionBackend {
 
         /** 목적: 중단 / 기능: 할 일 없음 */
         override fun abort() = Unit // 없음
-    }
-
-    companion object {
-        /**
-         * 목적: 플랫폼 onError → 세션 결과
-         * 기능: LANGUAGE_UNAVAILABLE(13)/LANGUAGE_NOT_SUPPORTED(12) → LANGUAGE_UNAVAILABLE, NO_MATCH(7)/SPEECH_TIMEOUT(6) → Completed(그때까지 조각),
-         *       INSUFFICIENT_PERMISSIONS(9) → PERMISSION_MISSING, 그 밖 → ENGINE_ERROR("onError=<n>").
-         * 입력: error(오류 값), tag(언어 태그), segments(그때까지 모은 조각)
-         * 출력: 없음
-         * 리턴: SessionOutcome
-         */
-        internal fun mapError(error: Int, tag: String, segments: List<String>): SessionOutcome = when (error) {
-            SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE, SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> // 언어 팩 없음·미지원
-                SessionOutcome.Failed("LANGUAGE_UNAVAILABLE", "언어 사용 불가($tag, onError=$error)") // 언어 문제
-            SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> // 음성 없음
-                SessionOutcome.Completed(segments) // 오류 아님(보통 빈 목록)
-            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> // 권한 부족
-                SessionOutcome.Failed("PERMISSION_MISSING", "권한 부족($tag, onError=$error) — 마이크(RECORD_AUDIO) 권한 확인 필요") // 권한 문제
-            else -> SessionOutcome.Failed("ENGINE_ERROR", "onError=$error") // 그 밖
-        }
     }
 }

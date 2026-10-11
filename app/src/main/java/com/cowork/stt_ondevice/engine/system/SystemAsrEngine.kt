@@ -13,6 +13,8 @@
 //       change(add)-hyungchul-2026-10-11-19:18 (2차 작업 6) 세션 열기(backend.open)도 그 조각의 감시 시간으로 묶어, 넘으면 응답 없음과 같게 처리한다(재생성 1회 재시도 → 또 넘으면 멈춤 예외).
 //       엔진 소유 범위에 CoroutineExceptionHandler 를 달고 공급 코루틴이 Throwable 까지 잡아(abort 가 던져도) 공급 쪽 예외가 앱 프로세스를 죽이지 않게 한다.
 //       LANG_TAGS 를 같은 모듈에서 쓰도록 internal 로 연다(SystemEngines 의 실행 전 언어 확인).
+//       change(add)-hyungchul-2026-10-12-02:54 (후속 수정 11) 첫 시도가 멈춤이었고 재시도 결과가 Failed 인데 코드가 LANGUAGE_UNAVAILABLE·PERMISSION_MISSING 이 아니면(예: 서비스 연결 끊김)
+//       항목 오류로 던지지 않고 EngineStalledException 으로 던져 실행이 일시정지하게 한다(망가진 서비스로 뒤 항목이 줄줄이 ERROR 가 되는 것을 막음). 멈춤 없는 Failed 는 그대로 항목 오류.
 // change(add)-hyungchul-2026-10-11-18:37
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -113,9 +115,10 @@ class SystemAsrEngine(
     /**
      * 목적: chunk 1개 전사
      * 기능: 첫 세션을 시도하고, 감시 시간 초과면 백엔드를 새로 만들어 같은 조각으로 1회 더 시도한다. 또 초과면 멈춤 예외.
+     *       change(add)-hyungchul-2026-10-12-02:54 재시도가 LANGUAGE_UNAVAILABLE·PERMISSION_MISSING 이 아닌 Failed 로 곧바로 끝나도 멈춤 예외(일시정지).
      * 입력: chunk(16 kHz mono 오디오 조각), lang(앱 언어 코드 "ko"/"en")
      * 출력: EngineException(TRANSCRIBE, UNSUPPORTED_LANGUAGE/NOT_PREPARED/ABORTED/PIPE_NOT_CONSUMED/엔진 코드/LOAD_FAILED),
-     *       두 번 응답 없음 → EngineStalledException, 코루틴 취소 → CancellationException
+     *       두 번 응답 없음 또는 멈춤 뒤 재시도의 비확정 Failed → EngineStalledException, 코루틴 취소 → CancellationException
      * 리턴: ChunkText(text, rawText, detectedLang null, inferSec, session)
      */
     override suspend fun transcribe(chunk: AudioChunk, lang: String): ChunkText {
@@ -129,7 +132,7 @@ class SystemAsrEngine(
         attempt(first, pcm, tag, watchMs, sessionSeq.incrementAndGet())?.let { return toChunkText(it, retried = false) } // 첫 세션
         val renewed = renewBackend(first) // 멈춤 → 백엔드 재생성
         val n2 = sessionSeq.incrementAndGet() // 재시도 세션 번호
-        attempt(renewed, pcm, tag, watchMs, n2)?.let { return toChunkText(it, retried = true) } // 재시도 세션
+        attempt(renewed, pcm, tag, watchMs, n2, afterStall = true)?.let { return toChunkText(it, retried = true) } // 재시도 세션 // change(add)-hyungchul-2026-10-12-02:54 멈춤 뒤 재시도 표시
         throw EngineStalledException(kind, "${kind.serviceLabel} 가 응답하지 않습니다(세션 $n2)") // 두 번 응답 없음
     }
 
@@ -142,11 +145,12 @@ class SystemAsrEngine(
      *       반환 시간 보장: awaitOutcome 은 withTimeoutOrNull 로 감시 시간에 묶이고(계약상 취소에 반응), 그 뒤에는 막히지 않는
      *       호출(Job.cancel, audio.close, abort — 계약상 즉시 반환)만 하므로 막힌 write 가 있어도 감시 시간·취소 직후 돌아온다.
      *       change(add)-hyungchul-2026-10-11-18:51
-     * 입력: b(백엔드), pcm(PCM16 LE), tag(언어 태그), watchMs(감시 시간 ms), number(세션 번호)
-     * 출력: EngineException(TRANSCRIBE, ABORTED/PIPE_NOT_CONSUMED/ENGINE_ERROR(공급 중 예외)/엔진 코드), 코루틴 취소 → CancellationException
+     *       change(add)-hyungchul-2026-10-12-02:54 afterStall 이 true(멈춤 뒤 재시도)이고 결과가 LANGUAGE_UNAVAILABLE·PERMISSION_MISSING 이 아닌 Failed 면 항목 오류 대신 EngineStalledException.
+     * 입력: b(백엔드), pcm(PCM16 LE), tag(언어 태그), watchMs(감시 시간 ms), number(세션 번호), afterStall(첫 시도가 멈춰서 하는 재시도인지, 기본 false)
+     * 출력: EngineException(TRANSCRIBE, ABORTED/PIPE_NOT_CONSUMED/ENGINE_ERROR(공급 중 예외)/엔진 코드), afterStall 의 비확정 Failed → EngineStalledException, 코루틴 취소 → CancellationException
      * 리턴: Attempt, 감시 시간 초과(세션 열기 초과 포함)면 null
      */
-    private suspend fun attempt(b: RecognitionBackend, pcm: ByteArray, tag: String, watchMs: Long, number: Int): Attempt? {
+    private suspend fun attempt(b: RecognitionBackend, pcm: ByteArray, tag: String, watchMs: Long, number: Int, afterStall: Boolean = false): Attempt? { // change(add)-hyungchul-2026-10-12-02:54 afterStall
         val t0 = clock() // 세션 시작 시각
         val session = withTimeoutOrNull(watchMs) { b.open(tag) } ?: return null // 세션 열기(감시 시간 초과 = 응답 없음) // change(add)-hyungchul-2026-10-11-19:18
         val fed = AtomicReference<FeedStats?>(null) // 공급 결과(공급 코루틴이 채움)
@@ -177,7 +181,12 @@ class SystemAsrEngine(
             feedError.get()?.let { throw EngineException("TRANSCRIBE", "ENGINE_ERROR", "공급 중 오류(세션 $number): ${it.message}", it) } // 공급 쪽 예외 // change(add)-hyungchul-2026-10-11-18:51
             return when (outcome) { // 결과별 처리
                 null -> null // 감시 시간 초과(호출자가 재시도/멈춤 처리)
-                is SessionOutcome.Failed -> throw EngineException("TRANSCRIBE", outcome.code, "${kind.serviceLabel}: ${outcome.message}") // 엔진 오류 코드 그대로
+                is SessionOutcome.Failed -> { // 엔진 오류
+                    if (afterStall && outcome.code !in ITEM_ERROR_CODES) { // 멈춤 뒤 재시도의 비확정 오류 = 서비스가 아직 망가진 것 // change(add)-hyungchul-2026-10-12-02:54
+                        throw EngineStalledException(kind, "${kind.serviceLabel} 가 응답하지 않습니다(세션 $number, 재시도 오류 ${outcome.code}: ${outcome.message})") // 일시정지 대상
+                    }
+                    throw EngineException("TRANSCRIBE", outcome.code, "${kind.serviceLabel}: ${outcome.message}") // 엔진 오류 코드 그대로
+                }
                 is SessionOutcome.Completed -> { // 정상 완료
                     val stats = fed.get() // 공급 결과
                     if (stats == null || !stats.completed) { // 공급이 끝나기 전에 완료
@@ -308,6 +317,9 @@ class SystemAsrEngine(
 
         /** 목적: 엔진 소유 범위의 처리 안 된 예외 흡수 / 기능: 공급·닫기 코루틴에서 잡히지 않은 예외를 버린다(결과는 각 코루틴이 이미 기록) */ // change(add)-hyungchul-2026-10-11-19:18
         private val IGNORE_UNCAUGHT = CoroutineExceptionHandler { _, _ -> } // 프로세스 종료 방지 // change(add)-hyungchul-2026-10-11-19:18
+
+        /** 목적: 멈춤 뒤 재시도에서도 항목 오류로 남기는 확정 오류 코드 / 기능: 서비스가 살아서 돌려준 언어·권한 오류는 일시정지가 아니라 그 항목의 오류 */ // change(add)-hyungchul-2026-10-12-02:54
+        private val ITEM_ERROR_CODES: Set<String> = setOf("LANGUAGE_UNAVAILABLE", "PERMISSION_MISSING") // 확정 오류 코드
 
         /** 목적: 감시 여유 시간 / 기능: 공급 시간 뒤 결과를 기다리는 여유(ms) */
         private const val WATCHDOG_MARGIN_MS: Long = 15_000 // 15 초

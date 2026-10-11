@@ -3,6 +3,7 @@
 // 기능: 결과 이어 붙이기·음성 없음·엔진 오류 시 파이프 닫기와 코드 전달·공급 전 완료(PIPE_NOT_CONSUMED)·
 //       응답 없음 1회 재생성 재시도·두 번 응답 없음(EngineStalledException)·공급 중 취소·배속별 감시 시간을 확인한다.
 //       change(add)-hyungchul-2026-10-11-19:18 세션 열기(open)가 감시 시간 안에 돌아오지 않으면 응답 없음과 같게 처리되는지(재생성 1회 → 또 멈춤이면 EngineStalledException) 확인한다(2차 작업 6).
+//       change(add)-hyungchul-2026-10-12-02:54 (후속 수정 11) 멈춤 뒤 재시도가 곧바로 Failed 로 끝나면 항목 오류가 아니라 EngineStalledException(일시정지)이고, 언어/권한 오류는 그대로 항목 오류이며, 멈춤 없는 Failed 는 재시도 없이 항목 오류인지 확인한다.
 // change(add)-hyungchul-2026-10-11-18:37
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 테스트 패키지
 
@@ -308,5 +309,83 @@ class SystemAsrEngineTest {
         assertEquals(1, h.backends[0].closeCount) // 첫 백엔드 닫힘
         assertEquals(listOf("ko-KR"), h.backends[1].openedLangs) // 새 백엔드로 재시도
         assertTrue(h.sessions.isEmpty()) // 세션은 하나도 열리지 않음
+    }
+
+    // change(add)-hyungchul-2026-10-12-02:54
+    /**
+     * 목적: 멈춤 뒤 재시도 오류 → 일시정지 검증
+     * 기능: 첫 세션 응답 없음 → 재시도 세션이 즉시 Failed("SERVICE_DISCONNECTED") → 항목 오류가 아니라 EngineStalledException.
+     *       메시지에 서비스 이름·세션 2·재시도 오류 코드와 사유가 들어가고, 재생성은 1회뿐이다.
+     * 입력: 없음
+     * 출력: 단언 실패 시 AssertionError
+     * 리턴: 없음
+     */
+    @Test
+    fun retryFailureAfterStallPauses() = runTest {
+        val h = harness("mlkit-basic-x1", SessionScript.NO_RESPONSE, SessionScript(SessionOutcome.Failed("SERVICE_DISCONNECTED", "서비스 연결 끊김(onError=11)"), atMs = 0)) // 응답 없음 → 즉시 서비스 끊김
+        h.engine.prepare(1) // 준비
+        try {
+            h.engine.transcribe(chunk(2.0), "ko") // 2 초 전사
+            fail("EngineStalledException 이 나야 함") // 여기 오면 실패
+        } catch (e: EngineStalledException) {
+            assertEquals(SystemEngineKind.MLKIT_BASIC, e.kind) // 종류
+            val m = e.message!! // 설명
+            assertTrue(m, m.contains("Speech Services by Google")) // 서비스 이름
+            assertTrue(m, m.contains("세션 2")) // 재시도 세션 번호
+            assertTrue(m, m.contains("재시도 오류 SERVICE_DISCONNECTED: 서비스 연결 끊김(onError=11)")) // 재시도 오류 코드와 사유
+        }
+        assertEquals(2, h.backends.size) // prepare 1 + 재생성 1
+        assertEquals(2, h.sessions.size) // 세션 2개(멈춘 것 + 재시도)
+    }
+
+    // change(add)-hyungchul-2026-10-12-02:54
+    /**
+     * 목적: 멈춤 뒤 재시도의 언어 오류는 항목 오류 검증
+     * 기능: 첫 세션 응답 없음 → 재시도가 Failed("LANGUAGE_UNAVAILABLE") → 일시정지가 아니라 EngineException(code=LANGUAGE_UNAVAILABLE).
+     *       같은 방식으로 PERMISSION_MISSING 도 항목 오류로 남는다(서비스가 살아 있어 돌려준 확정 오류).
+     * 입력: 없음
+     * 출력: 단언 실패 시 AssertionError
+     * 리턴: 없음
+     */
+    @Test
+    fun retryLanguageUnavailableAfterStallIsItemError() = runTest {
+        for (code in listOf("LANGUAGE_UNAVAILABLE", "PERMISSION_MISSING")) { // 항목 오류로 남는 두 코드
+            val h = harness("mlkit-basic-x1", SessionScript.NO_RESPONSE, SessionScript(SessionOutcome.Failed(code, "확정 오류"), atMs = 0)) // 응답 없음 → 확정 오류
+            h.engine.prepare(1) // 준비
+            try {
+                h.engine.transcribe(chunk(2.0), "ko") // 2 초 전사
+                fail("EngineException($code) 이 나야 함") // 여기 오면 실패
+            } catch (e: EngineStalledException) {
+                fail("$code 는 일시정지가 아니라 항목 오류여야 함: ${e.message}") // 일시정지면 실패
+            } catch (e: EngineException) {
+                assertEquals("TRANSCRIBE", e.stage) // 단계
+                assertEquals(code, e.code) // 엔진 코드 그대로
+            }
+            assertEquals(2, h.backends.size) // 재생성 1회까지는 했음
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-12-02:54
+    /**
+     * 목적: 멈춤 없는 Failed 는 항목 오류 검증(기존 동작)
+     * 기능: 첫 시도가 즉시 Failed("ENGINE_ERROR") → 재시도 없이 EngineException(ENGINE_ERROR). 백엔드는 재생성되지 않고 세션은 1개뿐이다.
+     * 입력: 없음
+     * 출력: 단언 실패 시 AssertionError
+     * 리턴: 없음
+     */
+    @Test
+    fun failureWithoutStallIsItemError() = runTest {
+        val h = harness("mlkit-basic-x1", SessionScript(SessionOutcome.Failed("ENGINE_ERROR", "엔진 오류"), atMs = 0)) // 첫 시도 즉시 실패
+        h.engine.prepare(1) // 준비
+        try {
+            h.engine.transcribe(chunk(2.0), "ko") // 2 초 전사
+            fail("EngineException 이 나야 함") // 여기 오면 실패
+        } catch (e: EngineStalledException) {
+            fail("멈춤 없는 Failed 는 일시정지가 아님: ${e.message}") // 일시정지면 실패
+        } catch (e: EngineException) {
+            assertEquals("ENGINE_ERROR", e.code) // 엔진 코드 그대로
+        }
+        assertEquals(1, h.backends.size) // 재생성 없음
+        assertEquals(1, h.sessions.size) // 재시도 없음
     }
 }

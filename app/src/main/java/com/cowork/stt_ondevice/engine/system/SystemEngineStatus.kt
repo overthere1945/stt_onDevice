@@ -7,6 +7,7 @@
 //                                   동의 창은 Google 서비스가 띄우며 앱이 대신 누르지 않는다.
 //       change(add)-hyungchul-2026-10-11-21:50 (최종 리뷰 수정 Important 1) 시간 초과·조회 예외·플랫폼 onError 는 Unavailable 이 아니라 CheckFailed(일시적 확인 실패)로 돌려준다.
 //       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) installedLanguages — 플랫폼 기기에 설치된 언어 목록 보조 조회(실행 전 확인의 "언어 미설치(…)(설치됨: …)" 사유용).
+//       change(add)-hyungchul-2026-10-12-02:54 (후속 수정 11) 플랫폼 지원 확인 onError 를 classifySupportError 로 분류 — 12·13 영구 미지원(Unavailable), 9 영구 권한 없음(Unavailable), 그 밖(11·14 등)은 일시 CheckFailed.
 // change(add)-hyungchul-2026-10-11-19:52
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -231,6 +232,7 @@ class AndroidSystemEngineStatus(context: Context) : SystemEngineStatus {
      * 기능: API 33 미만·RECORD_AUDIO 미허용·온디바이스 인식기 없음이면 사용 불가. 아니면 메인 스레드에서 임시 인식기로 checkRecognitionSupport 를 불러
      *       installed 에 태그가 있으면 Available, pending 이면 Downloading, supported 이면 Downloadable, 모두 아니면 Unavailable("기기 인식기가 이 언어를 지원하지 않음").
      *       change(add)-hyungchul-2026-10-11-21:50 지원 확인 onError 는 CheckFailed("상태 확인 실패(onError=<코드>)")(일시적 확인 실패).
+     *       change(add)-hyungchul-2026-10-12-02:54 단 12·13 은 Unavailable(영구 미지원), 9 는 Unavailable("마이크 권한 없음") — classifySupportError.
      * 입력: tag(BCP-47 태그)
      * 출력: 인식기 오류는 예외로 전파, 취소 시 CancellationException
      * 리턴: LanguageStatus
@@ -246,7 +248,7 @@ class AndroidSystemEngineStatus(context: Context) : SystemEngineStatus {
             try {
                 val support = checkSupport(rec, tag) // 지원 확인
                 when {
-                    support.error != null -> LanguageStatus.CheckFailed("상태 확인 실패(onError=${support.error})") // 확인 오류(일시적) // change(add)-hyungchul-2026-10-11-21:50
+                    support.error != null -> classifySupportError(support.error) // 확인 오류: 12·13 영구 미지원, 9 영구 권한 없음, 그 밖 일시 확인 실패 // change(add)-hyungchul-2026-10-11-21:50 change(add)-hyungchul-2026-10-12-02:54 분류
                     support.installed.any { it.equals(tag, ignoreCase = true) } -> LanguageStatus.Available // 설치됨
                     support.pending.any { it.equals(tag, ignoreCase = true) } -> LanguageStatus.Downloading // 설치 대기
                     support.supported.any { it.equals(tag, ignoreCase = true) } -> LanguageStatus.Downloadable // 받을 수 있음
