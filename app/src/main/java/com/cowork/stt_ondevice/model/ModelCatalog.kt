@@ -1,6 +1,7 @@
 // 파일명: ModelCatalog.kt
 // 목적: 모델 카탈로그 조회 진입점
 // 기능: 생성된 ModelCatalogData 의 전체 목록을 노출하고 id 조회, ASR 목록, VAD 계열별 모델 조회를 제공한다.
+//       change(add)-hyungchul-2026-10-11-18:21 전체 목록 = 생성 데이터 + 시스템 엔진 항목(SystemCatalog, 2차 작업 2).
 package com.cowork.stt_ondevice.model // 모델 메타 패키지
 
 import com.cowork.stt_ondevice.vad.VadFamily // VAD 계열
@@ -11,8 +12,8 @@ import com.cowork.stt_ondevice.vad.VadFamily // VAD 계열
  * 기능: 전체/ASR/VAD 조회를 제공한다. 없는 id 는 예외(다른 모델로 대체하지 않음).
  */
 object ModelCatalog {
-    /** 목적: 전체 모델 목록 / 기능: 생성 데이터 그대로(ASR → VAD 순서) */
-    val all: List<ModelSpec> = ModelCatalogData.all // 전체 목록
+    /** 목적: 전체 모델 목록 / 기능: 생성 데이터(ASR → VAD 순서) 뒤에 시스템 엔진 항목을 붙인다 */
+    val all: List<ModelSpec> = ModelCatalogData.all + SystemCatalog.all // 전체 목록 // change(add)-hyungchul-2026-10-11-18:21 시스템 항목 합침
 
     /** 목적: ASR 모델 목록 / 기능: kind == ASR 인 항목만 원래 순서로 */
     val asr: List<ModelSpec> = all.filter { it.kind == ModelKind.ASR } // ASR 만

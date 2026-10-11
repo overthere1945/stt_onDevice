@@ -5,6 +5,7 @@
 //       SAF(Uri) 가져오기는 Task 30 에서 이 클래스의 importFrom(id, source: File) 앞단에 Uri → 임시 파일/폴더 복사를 붙여 추가한다(확장 지점).
 //       change(add)-hyungchul-2026-10-11-03:59 importFromSaf(id, copy): import/<id>/saf_<시각>/ 임시 폴더로 복사(화면이 SafBridge.importModel 로 만든 함수) → resolveImportSource 와 같은 규칙으로 원본 결정
 //       → installer.importFrom → 임시 폴더 삭제(성공·실패·취소 모두, 사용자의 원본은 SAF 쪽에 그대로 있음).
+//       change(add)-hyungchul-2026-10-11-18:21 catalogForScreen(list): 시스템 엔진 항목을 뺀 목록 — 팩토리가 모델 화면 목록에 쓴다(2차 작업 2).
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
 import androidx.lifecycle.ViewModel // 뷰모델 기본 클래스
@@ -19,6 +20,7 @@ import com.cowork.stt_ondevice.model.ModelInstaller // 설치기
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 저장소
+import com.cowork.stt_ondevice.model.isSystem // 시스템 엔진 여부 // change(add)-hyungchul-2026-10-11-18:21
 import kotlinx.coroutines.CancellationException // 취소 예외
 import kotlinx.coroutines.CoroutineDispatcher // 디스패처 타입
 import kotlinx.coroutines.CoroutineStart // 코루틴 시작 방식
@@ -472,6 +474,16 @@ class ModelsViewModel(
             return sorted.joinToString(", ") { when (it) { "ko" -> "한국어"; "en" -> "영어"; else -> it } } // 라벨
         }
 
+        // change(add)-hyungchul-2026-10-11-18:21
+        /**
+         * 목적: 모델 화면에 보일 카탈로그 고르기
+         * 기능: 시스템 엔진 항목(파일이 없어 받기·삭제 대상이 아님)을 뺀다. 원래 순서는 유지한다.
+         * 입력: list(카탈로그 전체)
+         * 출력: 없음
+         * 리턴: 시스템 항목을 뺀 목록
+         */
+        fun catalogForScreen(list: List<ModelSpec>): List<ModelSpec> = list.filterNot { it.isSystem } // 시스템 항목 제외
+
         /**
          * 목적: 앱 전역 객체로 ViewModel 팩토리 만들기
          * 기능: App 의 modelStore/modelInstaller/dirs 싱글턴을 그대로 넘긴다(새 인스턴스를 만들면 사용 횟수 보호가 깨진다).
@@ -483,7 +495,7 @@ class ModelsViewModel(
             @Suppress("UNCHECKED_CAST") // 요청 클래스는 ModelsViewModel 뿐
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(ModelsViewModel::class.java)) { "지원하지 않는 ViewModel: ${modelClass.name}" } // 다른 타입 거부
-                return ModelsViewModel(app.modelStore, app.modelInstaller, ModelCatalog.all, app.dirs.importDir) as T // 싱글턴 주입
+                return ModelsViewModel(app.modelStore, app.modelInstaller, catalogForScreen(ModelCatalog.all), app.dirs.importDir) as T // 싱글턴 주입 // change(add)-hyungchul-2026-10-11-18:21 시스템 항목 제외
             }
         }
     }

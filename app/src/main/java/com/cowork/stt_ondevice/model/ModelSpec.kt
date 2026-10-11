@@ -2,6 +2,7 @@
 // 목적: ASR·VAD 모델 artifact 의 메타데이터 타입 정의
 // 기능: 모델 종류·런타임·압축 형식·스트리밍 방식 열거형, 파일/다운로드 정보, 엔진별 설정(EngineConfig), 모델 1개를 나타내는 ModelSpec 을 제공한다.
 //       실제 값은 tools/hash_models.py 가 생성하는 ModelCatalogData.kt 에 있다.
+//       change(add)-hyungchul-2026-10-11-18:21 Runtime 에 MLKIT_GENAI·PLATFORM_ONDEVICE, StreamingKind 에 PACED_REALTIME, SystemEngineConfig(시스템 엔진 설정), ModelSpec.isSystem 추가(2차 작업 2).
 package com.cowork.stt_ondevice.model // 모델 메타 패키지
 
 import com.cowork.stt_ondevice.vad.VadFamily // VAD 계열
@@ -28,6 +29,8 @@ enum class Runtime {
     VOSK, // Vosk(Kaldi)
     ORT, // ONNX Runtime 직접 사용(VAD)
     LITERT, // LiteRT(TFLite, Yamnet)
+    MLKIT_GENAI, // ML Kit GenAI Basic 음성 인식(시스템 엔진, 모델 파일 없음) // change(add)-hyungchul-2026-10-11-18:21
+    PLATFORM_ONDEVICE, // Android 온디바이스 SpeechRecognizer(시스템 엔진, 모델 파일 없음) // change(add)-hyungchul-2026-10-11-18:21
 }
 
 // change(add)-hyungchul-2026-10-10-16:12
@@ -49,6 +52,7 @@ enum class ArchiveType {
 enum class StreamingKind {
     FILE_ONLY, // 청크를 한 번에 넣어 인식
     NATIVE_STREAMING, // 엔진이 스트리밍 입력을 직접 처리
+    PACED_REALTIME, // 조각을 실시간 배속으로 공급(rtf 측정 안 함) // change(add)-hyungchul-2026-10-11-18:21
 }
 
 // change(add)-hyungchul-2026-10-10-16:12
@@ -140,6 +144,16 @@ data object VoskConfig : EngineConfig
  */
 data class VadModelConfig(val family: VadFamily) : EngineConfig // VAD 계열
 
+// change(add)-hyungchul-2026-10-11-18:21
+/**
+ * 목적: 시스템 엔진 설정
+ * 기능: 어떤 시스템 엔진인지와 오디오 공급 배속(1·2·4)을 담는다. 모델 파일이 없다.
+ * 입력: kind(시스템 엔진 종류), feedSpeed(공급 배속)
+ * 출력: 해당 없음
+ * 리턴: 해당 없음
+ */
+data class SystemEngineConfig(val kind: SystemEngineKind, val feedSpeed: Int) : EngineConfig // 시스템 엔진 종류·배속
+
 // change(add)-hyungchul-2026-10-10-16:12
 /**
  * 목적: 모델 1개의 전체 메타데이터
@@ -169,3 +183,10 @@ data class ModelSpec(
     val compatAlias: String?, // PC 평가기 폴더 별칭(없으면 null)
     val engineConfig: EngineConfig, // 엔진 설정
 )
+
+// change(add)-hyungchul-2026-10-11-18:21
+/**
+ * 목적: 시스템 엔진 항목 여부
+ * 기능: engineConfig 가 SystemEngineConfig 이면 true(모델 파일이 없어 설치·삭제 대상이 아님).
+ */
+val ModelSpec.isSystem: Boolean get() = engineConfig is SystemEngineConfig // 시스템 엔진 여부

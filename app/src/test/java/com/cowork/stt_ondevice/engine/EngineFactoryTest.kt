@@ -7,6 +7,7 @@
 //         whisper 런타임에 WhisperConfig 가 아닌 스펙은 EngineException("MODEL_LOAD","CONFIG_MISMATCH") 인지 확인한다.
 //       change(add)-hyungchul-2026-10-10-21:41 VOSK 스펙은 VoskEngine(모델 폴더 그대로)을 만들고 VoskConfig 가 아니면 CONFIG_MISMATCH 인지 확인한다.
 //         모든 ASR 런타임이 구현되었으므로 NOT_IMPLEMENTED 시험은 카탈로그에 없는 런타임(ORT)으로 바꾼 ASR 스펙으로 한다.
+//       change(add)-hyungchul-2026-10-11-18:35 시스템 엔진 항목(MLKIT_GENAI·PLATFORM_ONDEVICE)은 아직 생성기가 없어(작업 6 에서 연결) 카탈로그 전수 생성 시험에서 제외한다(2차 작업 2).
 // change(add)-hyungchul-2026-10-10-20:35
 package com.cowork.stt_ondevice.engine // 엔진 테스트 패키지
 
@@ -20,6 +21,7 @@ import com.cowork.stt_ondevice.model.Runtime // 런타임 구분
 import com.cowork.stt_ondevice.model.SherpaConfig // change(add)-hyungchul-2026-10-10-20:57 sherpa 설정(불일치 시험용)
 import com.cowork.stt_ondevice.model.SherpaKind // change(add)-hyungchul-2026-10-10-20:57 sherpa 모델 종류
 import com.cowork.stt_ondevice.model.WhisperConfig // change(add)-hyungchul-2026-10-10-21:41 whisper 설정(불일치 시험용)
+import com.cowork.stt_ondevice.model.isSystem // change(add)-hyungchul-2026-10-11-18:35 시스템 엔진 여부
 import org.junit.Assert.assertEquals // 값 일치 검증
 import org.junit.Assert.assertSame // 같은 객체 검증
 import org.junit.Assert.assertThrows // 예외 검증
@@ -74,7 +76,7 @@ class EngineFactoryTest {
     @Test
     fun otherRuntimesThrowNotImplemented() {
         val dir = tmp.newFolder("m") // 모델 폴더
-        val asr = ModelCatalog.all.filter { it.kind == ModelKind.ASR } // change(add)-hyungchul-2026-10-10-21:41 카탈로그 ASR 스펙들
+        val asr = ModelCatalog.all.filter { it.kind == ModelKind.ASR && !it.isSystem } // change(add)-hyungchul-2026-10-10-21:41 카탈로그 ASR 스펙들 // change(add)-hyungchul-2026-10-11-18:35 시스템 엔진은 제외(생성기 연결은 작업 6)
         assertTrue("카탈로그에 ASR 스펙이 있어야 함", asr.isNotEmpty()) // 대상 존재
         for (spec in asr) { // 스펙마다
             EngineFactory.create(spec, dir).close() // 생성만(prepare 안 함) — NOT_IMPLEMENTED 등 어떤 EngineException 도 나오면 실패
