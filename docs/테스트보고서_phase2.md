@@ -2,6 +2,7 @@
 
 <!-- change(add)-hyungchul-2026-10-11-19:18 (2차 작업 6) 신규 — 머리말과 "작업 6" 절만 작성, 이후 작업이 절을 덧붙인다 -->
 <!-- change(add)-hyungchul-2026-10-11-20:32 (2차 작업 10) 맨 앞에 요약, 맨 뒤에 "작업 10 — 실기기 검증" 절 추가 -->
+<!-- change(add)-hyungchul-2026-10-12-01:00 (2차 9단계) 요약 아래 9단계 안내 한 줄, 맨 뒤에 "9단계(2026-10-12)" 절 추가 -->
 
 - 작성: 2026-10-11 (Asia/Seoul), 브랜치 `phase2`
 - 사용한 기기: **Galaxy S22 Ultra (SM-S908N, Android 16)**, 시리얼 R5CT43TFS9A.
@@ -24,6 +25,9 @@
 | 일시정지 화면 테스트(10-6) | `PausedUiDeviceTest` **OK (3 tests)** + 실제 일시정지 화면도 확인 |
 | PC 채점(10-7) | kr 3개 run 채점(rc 0) — **간이(smoke)**: ML Kit 1× SILERO_DEFAULT·플랫폼 1× SILERO_DEFAULT 모두 WER 5.00 % / CER 2.58 %(2 발화) |
 | S25 Ultra | 미수행(모든 기기 수치는 S22 Ultra) |
+
+<!-- change(add)-hyungchul-2026-10-12-01:00 -->
+> **9단계(2026-10-12)에서 위 표의 미수행 항목을 다시 확인했습니다**: 영어·x1/x4 일치·화면 끔·USER 프리셋 × 시스템 엔진 취소/이어하기 모두 수행·통과, 멈춤 원인 실험은 맨 뒤 "9단계" 절 참조.
 
 ## 작업 6 — 시스템 엔진 Android 연결부(ML Kit Basic·플랫폼 온디바이스)와 실기기 계측
 
@@ -291,3 +295,129 @@ KR 05 × `mlkit-basic-x1` × `SILERO_DEFAULT` 를 화면을 끈 채 실행할 �
 | 한글 이름 `조용한방` 입력 | `adb shell input text` 가 한글 미지원 → `quiet-room` 사용 |
 | 다운로드 동의 흐름의 기기 확인 | 사용자가 직접 하는 단계(앱이 대신 누르지 않음) |
 | S25 Ultra | 기기 없음 |
+
+## 9단계(2026-10-12) — 남은 실기기 검증과 멈춤 원인 실험
+
+<!-- change(add)-hyungchul-2026-10-12-01:00 (2차 9단계) 신규 절 -->
+- 기기: Galaxy S22 Ultra(SM-S908N, Android 16). 사용자가 00:56 에 폰을 재시작해 두 서비스가 새로 뜬 상태에서 시작(재시작 뒤 인식 세션 0).
+  Speech Services `googletts.google-speech-apk_20260914.02_p2.986315744`, Android System Intelligence `B.29.playstore.oemfull.988117775`.
+- 앱: HEAD `4ad92b7`(최종 리뷰 수정 포함) debug APK + androidTest APK 를 01:05 에 `adb install -r`. 앱 삭제·`connected*`·설정 변경·다른 앱 버튼 누르기·`am force-stop` 없음.
+- 순서: 멈출 위험이 낮은 검증(A) 먼저, 멈출 수 있는 실험(B) 맨 뒤. 원본 결과·logcat 은 PC 임시 폴더(커밋 안 함). 전사문 원문은 적지 않습니다(글자 수·SHA-1 앞 12자리만).
+- 세션 수: 앱 detail JSON `chunks[].session` + 계측 테스트 기록, 그리고 서비스 프로세스가 세션마다 남기는 `Initialize Soda [locale: …]` 줄을 PID 별로 세어 맞춰 봤습니다(A 단계에서 정확히 일치).
+  언어 상태 조회는 이 줄을 남기지 않아 세션으로 세지 않았습니다.
+- 관찰: 쓰지 않는 동안 Speech Services 프로세스가 시스템에 의해 정리될 수 있습니다(01:02:01 `Killing 14060:com.google.android.tts … empty`, 다음 사용 때 PID 18071 로 새로 뜸).
+
+### 9.1 수행·미수행 요약
+
+| 항목 | 결과 |
+|---|---|
+| A0 영어(en-US) | **수행** — 사용자가 받은 en-US 언어 팩(01:00) 확인, 모델 화면 두 엔진 모두 "영어: 사용 가능" → A1 에 영어 포함 |
+| A1 배속 매트릭스(KR01·05, EN01 × 4 모델 × SILERO_DEFAULT) | **수행, 12/12 OK** — x1·x4 전사문 모두 일치(글자 수·SHA-1), ML Kit·플랫폼 끼리도 일치 |
+| A2 화면 끔(KR05 × mlkit-basic-x1) | **수행, 정상** — 실행 내내 `mWakefulness=Dozing`, 화면 켠 결과와 같은 전사문 |
+| A3 USER 프리셋 + 취소/이어하기(KR01·05 × asi-x4 × USER_quiet-room) | **수행, 통과** — 결과 2·CSV 2행·중복 없음 |
+| B1 ML Kit (b) 60.0~82.6 초 | **수행 — 멈춤**(누적 22번째 세션) |
+| B1 ML Kit (a) 60.0~84.1 초, 40 세션 반복 | **미수행** — (b) 에서 이미 멈춤 |
+| B2 최종 수정 실기기 확인 | **수행** — 일시정지·`finishedAt` null·`unsupported` 없음·결과 탭 사유 표시는 확인. 단 "상태 확인 시간 초과로 건너뜀" 경로는 일어나지 않음(멈춘 서비스가 상태 조회에 정상 응답) |
+| B3 ASI (b) 60.0~82.6 초 | **수행 — 같은 내부 오류로 끝 신호 없음**(누적 26번째 세션), 재시도는 `onError=11` |
+| B3 ASI (a)·40 세션 반복 | **미수행** — (b) 통과 못 함, 멈춘 것으로 간주 |
+| PC 채점 | **수행**(A1·A2·A3, smoke) |
+| S25 Ultra | 미수행(기기 없음) |
+
+### 9.2 A 단계 결과
+
+**A1** run `20261012_010933`(01:09:33~01:18:37, `RUN_END ok=12 error=0`). 모델 실행 순서 mlkit-x1 → mlkit-x4 → asi-x1 → asi-x4, 각 모델 안에서 en/01 → kr/01 → kr/05.
+
+| 파일 | 조합 | 상태 | transcribe_sec | attempts | 세션 | 글자 수 | text_sha1 | device | note 끝 |
+|---|---|---|---|---|---|---|---|---|---|
+| en/01 (75.863 s) | mlkit_basic-x1_SILERO_DEFAULT | OK | 63.359 | 3 | 1·2·3 | 1087 | 3bb5de610a81 | system(soda) | `feed=x1` |
+| en/01 | mlkit_basic-x4_SILERO_DEFAULT | OK | 16.228 | 3 | 1·2·3 | 1087 | 3bb5de610a81 | system(soda) | `feed=x4` |
+| en/01 | android-ondevice_asi-x1_SILERO_DEFAULT | OK | 63.198 | 3 | 1·2·3 | 1087 | 3bb5de610a81 | system(asi) | `feed=x1` |
+| en/01 | android-ondevice_asi-x4_SILERO_DEFAULT | OK | 16.140 | 3 | 1·2·3 | 1087 | 3bb5de610a81 | system(asi) | `feed=x4` |
+| kr/01 (84.135 s) | mlkit_basic-x1_SILERO_DEFAULT | OK | 75.646 | 3 | 4·5·6 | 592 | 0df299a38bcc | system(soda) | `feed=x1` |
+| kr/01 | mlkit_basic-x4_SILERO_DEFAULT | OK | 19.144 | 3 | 4·5·6 | 592 | 0df299a38bcc | system(soda) | `feed=x4` |
+| kr/01 | android-ondevice_asi-x1_SILERO_DEFAULT | OK | 75.589 | 3 | 4·5·6 | 592 | 0df299a38bcc | system(asi) | `feed=x1` |
+| kr/01 | android-ondevice_asi-x4_SILERO_DEFAULT | OK | 19.153 | 3 | 4·5·6 | 592 | 0df299a38bcc | system(asi) | `feed=x4` |
+| kr/05 (84.323 s) | mlkit_basic-x1_SILERO_DEFAULT | OK | 75.980 | 3 | 7·8·9 | 589 | 0ab1586e51a6 | system(soda) | `feed=x1` |
+| kr/05 | mlkit_basic-x4_SILERO_DEFAULT | OK | 19.239 | 3 | 7·8·9 | 589 | 0ab1586e51a6 | system(soda) | `feed=x4` |
+| kr/05 | android-ondevice_asi-x1_SILERO_DEFAULT | OK | 75.887 | 3 | 7·8·9 | 589 | 0ab1586e51a6 | system(asi) | `feed=x1` |
+| kr/05 | android-ondevice_asi-x4_SILERO_DEFAULT | OK | 19.225 | 3 | 7·8·9 | 589 | 0ab1586e51a6 | system(asi) | `feed=x4` |
+
+- **x1 · x4 전사문 일치: 세 파일 × 두 엔진 모두 같음.** x4 transcribe_sec ≈ x1 의 1/4. 재시도 0(attempts = 조각 수). 서비스 내부 오류 0건.
+- 작업 10 에서 미확인이던 "x1·x4 일치"와 "영어 시스템 엔진 전사"를 이번에 확인했습니다.
+
+**A2 화면 끔** run `20261012_012131`: [실행] 01:21:31.0 → 01:21:32.2 `input keyevent 26` → 끝날 때까지 `Dozing` → OK, transcribe_sec 75.874, attempts 3, 589자·SHA-1 0ab1586e51a6(화면 켠 A1 과 같음).
+화면을 켠 뒤에는 보안 잠금 화면이라 사용자가 풀 때까지(01:23~01:29) 기다렸습니다(잠금 해제는 하지 않음).
+
+**A3 USER 프리셋 + 취소/이어하기** run `20261012_013101`: kr/01·05 × asi-x4 × `USER_quiet-room`(threshold 0.35) → [취소] 01:31:23(01 완료 직후, 05 시작 직후 — 05 는 서비스 세션을 열기 전) →
+결과 탭 "미완료 · OK 1" → [이어하기] 01:31:48(`resume=true`, 05 만 처리) → "완료 · OK 2".
+kr/01 OK 20.338 s·attempts 3·586자 / kr/05 OK 20.341 s·attempts 4(조각 4)·591자. txt 2, `result.csv` 2행, 요약 CSV 2행(`vad=USER_quiet-room`), 중복 행 없음, manifest `finishedAt` 기록·`unsupported` 없음.
+(작업 10 에서 whisper tiny 로 대신 했던 흐름을 시스템 엔진으로 확인 — 플랫폼 x4 사용, ML Kit 4× 로는 하지 않음.)
+
+**PC 채점(간이 smoke)** `run_eval.py`(venv_eval, 수정 없음), 모두 rc 0:
+
+| run | 언어 | model | n_utt | WER(%) | CER(%) |
+|---|---|---|---|---|---|
+| 20261012_010933 | kr | 네 조합(mlkit x1·x4, asi x1·x4 _SILERO_DEFAULT) 모두 | 2 | 5.00 | 2.58 |
+| 20261012_010933 | en | 네 조합 모두 | 1 | 2.01 | 2.09 |
+| 20261012_012131 | kr | mlkit_basic-x1_SILERO_DEFAULT(화면 끔) | 1 | 6.67 | 2.81 |
+| 20261012_013101 | kr | android-ondevice_asi-x4_USER_quiet-room | 2 | 5.00 | 2.93 |
+
+### 9.3 B 단계 — 멈춤 원인 실험
+
+계측 테스트 `SodaHangProbeTest`(androidTest, 9단계 진단 전용 — `engine` 인자 없이는 건너뜀)로 KR01 에서 메모리로 잘라 낸 조각을 세션 하나씩 넣었습니다(`SystemEngines.create` + `transcribe`, x4, 감시 시간 규칙 그대로).
+
+KR01 끝부분 실측(입력 파일 그대로, 100 ms 창): 82.6~84.135 초는 |x| ≤ 1 LSB 인 **거의 디지털 무음**(정확히 0 은 마지막 0.092 초뿐). 81.2~81.7 초에도 같은 거의-무음 0.5 초가 있음.
+
+| 시각 | 서비스(PID) | 조각 | 그 서비스 누적 세션 | 결과 |
+|---|---|---|---|---|
+| 01:33:15~01:33:57 | Speech Services(18071) | **60.0~82.6 초**(무음 꼬리 제거, 22.6 초) | 22번째(재시도 23) | **멈춤** — 오디오 끝 직후 `No final state active` / `Result lattice is not set`, 끝 신호 없음 → 감시 초과 → 재시도는 `Initialize Soda with language pack directory` 에서 멈춤 → `EngineStalledException`(41.4 초) |
+| 01:39:09~01:39:30 | Android System Intelligence(5838) | **60.0~82.6 초** | 26번째 | 같은 내부 오류, 끝 신호 없음 → 감시 초과 → 재시도 새 인식기는 서비스에 닿기 전 `onError=11`(서버 연결 끊김) → ENGINE_ERROR(20.7 초) |
+
+- 원본 그대로인 (a) 60.0~84.1 초와 누적 40 세션 반복(H2 확인)은 두 서비스 모두 **미수행**입니다((b) 에서 이미 멈춰, 멈춘 서비스로 더 시도하지 않음).
+- 같은 서비스 프로세스에서 앞선 정상 세션: Speech Services 21개, ASI 25개(SILERO_DEFAULT·USER_quiet-room 조각, x1·x4, ko·en) — 모두 오류 없이 끝남.
+
+**가설 판정(이번 증거 범위 안)**
+
+| 가설 | 판정 | 근거 |
+|---|---|---|
+| H1 발화 뒤 긴 디지털 무음 꼬리 | **이번 결과와 맞지 않음** | 꼬리를 잘라 낸 (b) 에서도 두 서비스 모두 같은 오류·같은 멈춤. 단 (a) 를 돌리지 않아 꼬리가 "추가로" 영향을 주는지는 모름 |
+| H2 서비스 프로세스 누적 세션 수(35 성공 → 36번째 먹통) | **이번 멈춤은 H2 로 설명되지 않음** | 멈춘 세션이 누적 22번째(ML Kit)·26번째(ASI), 작업 10 에서는 run 의 9번째. 36 세션 한도 자체가 이 기기·판에 있는지는 40 세션 반복을 하지 못해 **확인하지 못함** |
+| (관찰) 이 음성 구간 자체 | **유력하지만 미확정** | 두 서비스·두 날짜(작업 10, 9단계)·서로 다른 누적 세션 수에서 KR01 60 초부터 시작하는 조각만 같은 오류. 같은 파일의 SILERO_DEFAULT 세 번째 조각(66.21~82.72 초, 발화 7개를 이어 붙이고 사이를 0.2 초 디지털 0 으로 채운 15.6 초)은 끝이 거의 같은데도 x1·x4 모두 정상. 차이는 60.0~66.2 초 부분(60.0 초 지점은 소리가 거의 없음, |x| ≤ 9 — 발화 중간을 자른 것은 아님)과 발화 사이 원래 배경음, 조각 길이(22.6 vs 15.6 초)인데 어느 것이 원인인지는 가르지 못함 |
+
+### 9.4 B2 — 최종 리뷰 수정의 실기기 확인(Speech Services 멈춘 상태)
+
+run `20261012_013639`(01:36:39~01:37:32): kr/05 × {whispercpp-tiny, mlkit-basic-x4} × SILERO_DEFAULT.
+
+| 기대 | 실제 | 판정 |
+|---|---|---|
+| whisper 정상 완료 | OK(9.95 초) | 같음 |
+| ML Kit 은 상태 확인 시간 초과로 건너뜀 | 멈춘 서비스가 `#checkModelAvailability` 에 **바로 답함**(설치됨 ko-KR·en-US) → 사용 가능 → 실제 시도 → 두 세션 모두 `Initialize Soda with language pack directory` 에서 멈춤 → `RUN_PAUSED "Speech Services by Google 가 응답하지 않습니다(세션 2)"` | **다름**(멈춤 경로로 일시정지) |
+| 일시정지, `finishedAt == null` | 그대로, `inFlight` null, `inFlightAttempts` {} | 같음 |
+| `unsupported` 에 ML Kit 없음 | `unsupported` [], `unavailableReasons` {} | 같음 |
+| 결과 탭 "일시정지: …" | "일시정지: Speech Services by Google 가 응답하지 않습니다(세션 2)" + "해당 서비스 앱을 강제 중지한 뒤 카드를 펼쳐 [이어하기]를 누르세요"(uiautomator dump) | 같음 |
+
+- "상태 확인 실패(Transient) → 미지원으로 닫지 않고 일시정지" 경로는 이번에 그 상황(상태 조회 시간 초과)이 생기지 않아 **실기기 미확인**(PC 단위 테스트로만 확인)입니다.
+  작업 10 에서는 멈춘 뒤 수십 분 지나 상태 조회가 시간 초과됐지만, 이번에는 멈춘 뒤 약 3 분 시점에 상태 조회가 정상이었습니다.
+
+### 9.5 서비스별 누적 세션(재시작 뒤)
+
+| 서비스 | PID | A1 | A2 | A3 | B1 | B2 | B3 | 합계 | 끝 상태 |
+|---|---|---|---|---|---|---|---|---|---|
+| Speech Services by Google(ML Kit) | 18071(01:05 부터, 끝까지 같음) | 18 | 3 | — | 2(멈춤) | 2(멈춤) | — | **25** | **멈춤** |
+| Android System Intelligence(플랫폼) | 5838(끝까지 같음) | 18 | — | 7 | — | — | 1(끝 신호 없음) + 재시도 0(서비스 도달 전 오류) | **26** | **멈춘 것으로 간주**(새 세션 시험 안 함) |
+
+(Speech Services 는 00:56 재시작 뒤 PID 14060 이었으나 세션 0 인 채 01:02 에 시스템이 정리했고, 01:05 상태 조회 때 18071 로 새로 떴습니다.)
+
+### 9.6 운영 코드 관찰(고치지 않음)
+
+- 플랫폼 백엔드는 재시도 세션의 `onError=11`(ERROR_SERVER_DISCONNECTED)을 일반 `ENGINE_ERROR` 로 돌려줍니다. 그래서 "첫 세션 감시 초과 → 재시도가 연결 끊김으로 즉시 실패" 이면 배치가 **일시정지되지 않고 그 항목만 ERROR** 가 됩니다.
+  B3 계측에서 이 순서를 실제로 봤고, 앱 배치에서 재현하지는 않았습니다(미확인). 재시도 쪽 11 을 "응답 없음"으로 볼지는 설계 판단이 필요합니다.
+
+### 9.7 기기에 남긴 상태
+
+| 항목 | 상태 |
+|---|---|
+| 앱 | HEAD `4ad92b7` debug APK(DEBUGGABLE) + androidTest APK(`SodaHangProbeTest` 포함), 01:05 설치 |
+| 사용자 음원 / 모델 | `input_sound` wav **54개**, `models/` **8개** 그대로(01:41 확인) |
+| 새 run | `20261012_010933`·`20261012_012131`·`20261012_013101`(완료), `20261012_013639`(일시정지, OK 1) — 지우지 않음 |
+| 서비스 | **Speech Services by Google 멈춤, Android System Intelligence 도 멈춘 것으로 간주 → 사용자 재시작(또는 두 서비스 강제 중지) 필요** |
