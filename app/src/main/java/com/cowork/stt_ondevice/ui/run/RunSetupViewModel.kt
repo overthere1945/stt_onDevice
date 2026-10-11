@@ -13,6 +13,8 @@
 //       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) USER VAD 프리셋: 프리셋 목록은 공급 함수로 받아 refresh() 마다 다시 읽는다(기본+USER 합본). 기본 프리셋 복사 → 값 편집(필드별 검증 오류) → 이름 → 저장 흐름
 //       (startUserPreset/setUserField/setUserName/saveUserPreset)과, 지울 때 그 프리셋을 쓰는 미완료 실행이 있으면 경고하는 삭제 흐름(requestDeleteUserPreset/confirmDeleteUserPreset)을 제공한다.
 //       저장소 읽기 오류(손상 파일 등)는 state.userPresetError 로 숨기지 않고 보인다.
+//       change(add)-hyungchul-2026-10-11-20:26 (작업 9 리뷰 라운드 1) 삭제는 항상 확인 대화상자를 거친다. refresh() 는 세대 번호로 가장 최근에 시작한 것의 결과만 반영한다(오래된 결과가 삭제·저장 직후 상태를 덮지 않음).
+//       선택한 프리셋이 최신 합본에 없으면 실행 설정을 만들지 않는다.
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
 
@@ -53,6 +55,7 @@ import kotlinx.coroutines.flow.update // 원자적 갱신
 import kotlinx.coroutines.launch // 코루틴 시작
 import kotlinx.coroutines.withContext // change(add)-hyungchul-2026-10-11-03:59 컨텍스트 전환
 import java.io.File // change(add)-hyungchul-2026-10-11-03:59 파일
+import java.util.concurrent.atomic.AtomicLong // change(add)-hyungchul-2026-10-11-20:26 refresh 세대 번호
 import java.util.concurrent.atomic.AtomicReference // change(add)-hyungchul-2026-10-11-03:59 미리 선택할 경로(스레드 안전)
 import java.time.LocalDateTime // 현재 시각
 import java.time.format.DateTimeFormatter // 시각 서식
@@ -190,6 +193,8 @@ class RunSetupViewModel(
     @Volatile private var currentPresets: List<VadPreset> = emptyList() // 마지막 refresh 에서 읽은 프리셋 목록(buildConfig·폼이 씀) // change(add)-hyungchul-2026-10-11-20:15
     private val _state = MutableStateFlow(RunSetupState()) // 내부 상태
     private val pendingSelect = AtomicReference<String?>(null) // change(add)-hyungchul-2026-10-11-03:59 다음 스캔에서 선택할 파일 절대 경로
+    private val refreshSeq = AtomicLong(0) // refresh 세대 번호 발급기(시작마다 증가) // change(add)-hyungchul-2026-10-11-20:26
+    private val applyLock = Any() // 결과 반영(세대 확인 + 상태 갱신)을 한 번에 하나만 하게 하는 잠금 // change(add)-hyungchul-2026-10-11-20:26
     private val pendingPresetSelect = AtomicReference<String?>(null) // 저장 직후 자동 선택할 USER 프리셋 id // change(add)-hyungchul-2026-10-11-20:15
     private var importJob: Job? = null // change(add)-hyungchul-2026-10-11-03:59 진행 중인 가져오기(메인 스레드에서만 읽고 씀)
 
@@ -209,39 +214,45 @@ class RunSetupViewModel(
      * 리턴: 없음
      */
     fun refresh() {
+        val seq = refreshSeq.incrementAndGet() // 이 refresh 의 세대 번호(시작 시점에 받음) // change(add)-hyungchul-2026-10-11-20:26
         viewModelScope.launch(io) { // 파일 확인은 백그라운드에서
             val scan = scanner() // 입력 스캔 // change(add)-hyungchul-2026-10-11-12:51 항목 + 오류
             val items = scan.items // 실행 대상 항목 // change(add)-hyungchul-2026-10-11-12:51
             val folders = items.groupBy { it.lang to it.relDir }.map { (k, v) -> InputFolder(k.first, k.second, v) } // 언어·폴더별 묶기(스캔 정렬 유지)
             val modelRows = catalog.map { buildModelOption(it) } // 모델 행
-            val presetList = presets() // 프리셋 목록(기본 + USER, 이번 refresh 시점) // change(add)-hyungchul-2026-10-11-20:15
-            currentPresets = presetList // buildConfig 가 쓸 목록 보관 // change(add)-hyungchul-2026-10-11-20:15
+            var presetList: List<VadPreset> = emptyList() // 프리셋 목록(기본 + USER, 이번 refresh 시점)
+            var userErr: String? = null // USER 프리셋 저장소 읽기 오류(같은 읽기에서 얻은 값)
+            val readPresets = { presetList = presets(); userErr = userPresets?.lastError } // 목록과 오류를 함께 읽기 // change(add)-hyungchul-2026-10-11-20:26
+            if (userPresets != null) synchronized(userPresets) { readPresets() } else readPresets() // 저장소 락 안에서 읽어 동시 저장·삭제가 오류 값을 바꾸지 못하게 함(저장소 메서드가 같은 락)
             val presetRows = presetList.map { buildPresetOption(it) } // 프리셋 행
-            val userErr = userPresets?.lastError // USER 프리셋 저장소 읽기 오류(presets() 가 읽은 직후 값) // change(add)-hyungchul-2026-10-11-20:15
-            val wantNew = pendingPresetSelect.get() // 저장 직후 자동 선택할 id // change(add)-hyungchul-2026-10-11-20:15
-            val newRow = wantNew?.let { id -> presetRows.firstOrNull { it.id == id } } // 그 행(아직 목록에 없으면 null)
-            if (newRow != null) pendingPresetSelect.compareAndSet(wantNew, null) // 행을 찾았으면 소비(선택 가능 여부와 무관) // change(add)-hyungchul-2026-10-11-20:15
             val selectableModels = modelRows.filter { it.selectable }.map { it.id }.toSet() // 선택 가능 모델
             val selectablePresets = presetRows.filter { it.selectable }.map { it.id }.toSet() // 선택 가능 프리셋
             val itemSet = items.toSet() // 존재 항목
-            val wanted = pendingSelect.get() // change(add)-hyungchul-2026-10-11-03:59 미리 선택할 경로
-            val pick = wanted?.let { w -> items.firstOrNull { it.file.absolutePath == w } } // change(add)-hyungchul-2026-10-11-03:59 그 항목(아직 없으면 null)
-            if (pick != null) pendingSelect.compareAndSet(wanted, null) // change(add)-hyungchul-2026-10-11-03:59 찾았으면 소비
-            _state.update { s ->
-                recount(
-                    s.copy(
-                        loaded = true, // 읽기 완료
-                        folders = folders, // 트리
-                        langs = if (pick != null) s.langs + pick.lang else s.langs, // change(add)-hyungchul-2026-10-11-03:59 미리 선택 항목의 언어 켜기
-                        selectedItems = s.selectedItems.filter { it in itemSet }.toSet() + listOfNotNull(pick), // 사라진 항목 제외(change(add)-hyungchul-2026-10-11-03:59 미리 선택 항목 추가)
-                        models = modelRows, // 모델 행
-                        selectedModels = s.selectedModels.filter { it in selectableModels }, // 선택 불가가 된 모델 제외(순서 유지)
-                        presets = presetRows, // 프리셋 행
-                        selectedPresets = s.selectedPresets.filter { it in selectablePresets }.toSet() + listOfNotNull(wantNew.takeIf { newRow?.selectable == true }), // 선택 불가가 된 프리셋 제외(저장 직후 새 프리셋은 선택 가능하면 자동 선택) // change(add)-hyungchul-2026-10-11-20:15
-                        inputErrors = scan.errors, // 입력 오류 // change(add)-hyungchul-2026-10-11-12:51
-                        userPresetError = userErr, // USER 프리셋 저장소 오류(숨기지 않고 화면에 보임) // change(add)-hyungchul-2026-10-11-20:15
-                    ),
-                )
+            synchronized(applyLock) { // 반영: 세대 확인과 갱신을 한 번에 // change(add)-hyungchul-2026-10-11-20:26
+                if (seq != refreshSeq.get()) return@launch // 더 최근 refresh 가 시작됐으면 이 오래된 결과는 버림(그쪽이 반영함)
+                currentPresets = presetList // buildConfig 가 쓸 목록 보관(최신 세대만)
+                val wantNew = pendingPresetSelect.get() // 저장 직후 자동 선택할 id
+                val newRow = wantNew?.let { id -> presetRows.firstOrNull { it.id == id } } // 그 행(아직 목록에 없으면 null)
+                if (newRow != null) pendingPresetSelect.compareAndSet(wantNew, null) // 행을 찾았으면 소비(선택 가능 여부와 무관)
+                val wanted = pendingSelect.get() // change(add)-hyungchul-2026-10-11-03:59 미리 선택할 경로
+                val pick = wanted?.let { w -> items.firstOrNull { it.file.absolutePath == w } } // change(add)-hyungchul-2026-10-11-03:59 그 항목(아직 없으면 null)
+                if (pick != null) pendingSelect.compareAndSet(wanted, null) // change(add)-hyungchul-2026-10-11-03:59 찾았으면 소비(반영하는 refresh 에서만 소비)
+                _state.update { s ->
+                    recount(
+                        s.copy(
+                            loaded = true, // 읽기 완료
+                            folders = folders, // 트리
+                            langs = if (pick != null) s.langs + pick.lang else s.langs, // change(add)-hyungchul-2026-10-11-03:59 미리 선택 항목의 언어 켜기
+                            selectedItems = s.selectedItems.filter { it in itemSet }.toSet() + listOfNotNull(pick), // 사라진 항목 제외(change(add)-hyungchul-2026-10-11-03:59 미리 선택 항목 추가)
+                            models = modelRows, // 모델 행
+                            selectedModels = s.selectedModels.filter { it in selectableModels }, // 선택 불가가 된 모델 제외(순서 유지)
+                            presets = presetRows, // 프리셋 행
+                            selectedPresets = s.selectedPresets.filter { it in selectablePresets }.toSet() + listOfNotNull(wantNew.takeIf { newRow?.selectable == true }), // 선택 불가가 된 프리셋 제외(저장 직후 새 프리셋은 선택 가능하면 자동 선택) // change(add)-hyungchul-2026-10-11-20:15
+                            inputErrors = scan.errors, // 입력 오류 // change(add)-hyungchul-2026-10-11-12:51
+                            userPresetError = userErr, // USER 프리셋 저장소 오류(숨기지 않고 화면에 보임) // change(add)-hyungchul-2026-10-11-20:15
+                        ),
+                    )
+                }
             }
         }
     }
@@ -597,7 +608,8 @@ class RunSetupViewModel(
     /**
      * 목적: USER 프리셋 삭제 요청
      * 기능: io 에서 그 프리셋을 쓰는 미완료 실행을 찾는다. 있으면 삭제하지 않고 경고(runId 포함)와 대상 id 를 상태에 둔다(확인 대기).
-     *       없으면 바로 지운다. 기본 프리셋(USER_ 아님)은 무시한다. 미완료 실행을 확인하지 못하면 지우지 않고 사유를 보인다.
+     *       change(add)-hyungchul-2026-10-11-20:26 없어도 바로 지우지 않고 "USER 프리셋 <id> 를 지울까요? 지우면 되돌릴 수 없습니다." 확인 상태를 둔다(항상 확인 후 삭제).
+     *       기본 프리셋(USER_ 아님)은 무시한다. 미완료 실행을 확인하지 못하면 지우지 않고 사유를 보인다.
      * 입력: id(USER 프리셋 id)
      * 출력: state 갱신, 필요하면 user_presets.json 갱신
      * 리턴: 없음
@@ -609,8 +621,9 @@ class RunSetupViewModel(
                 _state.update { it.copy(message = "미완료 실행을 확인하지 못해 삭제하지 않았습니다: ${e.message ?: e::class.java.simpleName}") } // 사유
                 return@launch // 중단
             }
-            if (runs.isEmpty()) deleteNow(id) // 쓰는 실행 없음 → 바로 삭제
-            else _state.update { it.copy(deleteTarget = id, deleteWarning = "미완료 실행(${runs.joinToString(", ")})이 이 프리셋을 씁니다. 지우면 그 실행은 이어할 수 없습니다. 지울까요?") } // 경고
+            val warning = if (runs.isEmpty()) "USER 프리셋 $id 를 지울까요? 지우면 되돌릴 수 없습니다." // 쓰는 실행 없음 → 일반 확인 // change(add)-hyungchul-2026-10-11-20:26
+                else "미완료 실행(${runs.joinToString(", ")})이 이 프리셋을 씁니다. 지우면 그 실행은 이어할 수 없습니다. 지울까요?" // 미완료 실행 경고
+            _state.update { it.copy(deleteTarget = id, deleteWarning = warning) } // 확인 대기
         }
     }
 
@@ -752,6 +765,7 @@ class RunSetupViewModel(
     private fun validationErrorOf(s: RunSetupState): String? = when {
         s.selectedModels.isEmpty() -> "모델을 1개 이상 선택하세요" // 모델 없음
         s.selectedPresets.isEmpty() -> "VAD 프리셋을 1개 이상 선택하세요" // 프리셋 없음
+        s.selectedPresets.any { id -> currentPresets.none { it.id == id } } -> "선택한 VAD 프리셋이 목록에 없습니다(삭제됨): ${s.selectedPresets.filter { id -> currentPresets.none { it.id == id } }.sorted().joinToString(", ")} — 새로고침 후 다시 선택하세요" // 최신 합본에 없는 id // change(add)-hyungchul-2026-10-11-20:26
         effectiveItems(s).isEmpty() -> "입력 파일을 1개 이상 선택하세요" // 파일 없음
         s.selectedModels.any { s.maxChunk[it]?.error != null } -> "최대 chunk 길이 입력에 오류가 있습니다" // 입력 오류
         countCombos(s) == 0 -> "선택한 모델이 지원하는 언어의 파일이 없습니다(예상 조합 0건)" // 조합 없음

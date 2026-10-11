@@ -3,6 +3,7 @@
 // 기능: 임시 폴더의 user_presets.json 저장소와 합본 레지스트리(PresetRegistry)를 ViewModel 에 공급 함수로 연결하고,
 //       복사해서 만들기(기본 값 채움·저장·자동 선택·조합 수 갱신), 필드 오류로 저장 차단, 이름 오류, 삭제 경고(미완료 실행 포함)·확인·취소,
 //       손상 파일 오류 표시, 미완료 실행 조회(unfinishedRunsUsing)를 확인한다. 작업 디스패처는 즉시 실행 테스트 디스패처로 바꾼다.
+//       change(add)-hyungchul-2026-10-11-20:26 (작업 9 리뷰 라운드 1) 삭제는 항상 확인을 거치고, 겹치는 refresh 의 오래된 결과가 삭제 직후 상태를 덮지 않음을 확인한다.
 // change(add)-hyungchul-2026-10-11-20:15
 package com.cowork.stt_ondevice.ui.run // 실행 화면 테스트 패키지
 
@@ -38,6 +39,8 @@ import org.junit.Assert.assertEquals // 값 일치
 import org.junit.Assert.assertFalse // 거짓
 import org.junit.Assert.assertNotNull // null 아님
 import org.junit.Assert.assertNull // null
+import org.junit.Assert.assertThrows // 예외 확인 // change(add)-hyungchul-2026-10-11-20:26
+import kotlinx.coroutines.asCoroutineDispatcher // change(add)-hyungchul-2026-10-11-20:26 스레드 풀 디스패처
 import org.junit.Assert.assertTrue // 참
 import org.junit.Before // 각 테스트 전
 import org.junit.Rule // 규칙
@@ -223,19 +226,71 @@ class RunSetupUserPresetTest {
     }
 
     /**
-     * 목적: 쓰는 실행이 없으면 바로 삭제, 기본 프리셋은 지울 수 없음
-     * 기능: 미완료 실행이 없으면 경고 없이 지운다. USER_ 가 아닌 id 는 요청해도 아무 일도 없다.
+     * 목적: 미완료 실행이 없어도 삭제는 항상 확인을 거친다 (리뷰 라운드 1 결정)
+     * 기능: requestDelete 는 지우지 않고 일반 확인 문구를 둔다. cancel 하면 그대로 남고, confirm 뒤에야 지워진다. 기본 프리셋(USER_ 아님)은 요청해도 아무 일 없다.
      * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
      */
     @Test
-    fun deleteImmediatelyWhenNoUnfinishedRun() {
+    fun deleteAlwaysAsksConfirmation() {
         userStore.create("SILERO", "방", sileroValues()) // 하나 저장
-        val vm = newVm() // 미완료 없음
+        val vm = newVm() // 미완료 실행 없음
         vm.requestDeleteUserPreset("USER_방") // 요청
-        assertNull(vm.state.value.deleteWarning) // 경고 없음
-        assertTrue(vm.state.value.presets.none { it.user }) // 바로 삭제
+        assertEquals("USER 프리셋 USER_방 를 지울까요? 지우면 되돌릴 수 없습니다.", vm.state.value.deleteWarning) // 일반 확인 문구
+        assertEquals("USER_방", vm.state.value.deleteTarget) // 대상
+        assertTrue(vm.state.value.presets.any { it.id == "USER_방" }) // 아직 있음
+        assertEquals(1, userStore.list().size) // 파일에도 있음
+        vm.cancelDeleteUserPreset() // 취소
+        assertEquals(1, userStore.list().size) // 그대로
+        vm.requestDeleteUserPreset("USER_방") // 다시 요청
+        vm.confirmDeleteUserPreset("USER_방") // 확인
+        assertTrue(vm.state.value.presets.none { it.user }) // 이제 삭제
+        assertTrue(userStore.list().isEmpty()) // 파일에서도 삭제
         vm.requestDeleteUserPreset("SILERO") // 기본 프리셋
+        assertNull(vm.state.value.deleteWarning) // 확인 상태도 없음
         assertTrue(vm.state.value.presets.any { it.id == "SILERO" }) // 그대로
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:26
+    /**
+     * 목적: 겹치는 refresh 와 삭제의 경합 (리뷰 라운드 1 I1)
+     * 기능: 오래된 refresh A 가 삭제 전 목록을 읽은 채(행 만드는 중) 멈춰 있는 동안 삭제와 새 refresh B 가 끝난다. A 를 풀어 줘도 A 의 오래된 결과는 버려져
+     *       최종 목록·선택에 삭제된 프리셋이 없고, buildConfig 는 그 id 로 실행을 만들지 않는다(선택이 없다는 사유로 거부).
+     *       또한 선택에 삭제된 id 가 남아 있는 상태를 흉내 내면 buildConfig 가 "삭제됨" 사유로 거부한다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun staleRefreshDoesNotResurrectDeletedPreset() {
+        userStore.create("SILERO", "방", sileroValues()) // 미리 저장
+        val pool = java.util.concurrent.Executors.newCachedThreadPool() // 진짜 스레드(겹침 재현)
+        val blockNext = java.util.concurrent.atomic.AtomicBoolean(false) // 다음 목록 읽기를 멈출지
+        val readDone = java.util.concurrent.CountDownLatch(1) // A 가 목록을 읽었음
+        val release = java.util.concurrent.CountDownLatch(1) // A 를 풀어 줌
+        val vm = RunSetupViewModel(
+            scanner = { InputScanResult(kr + en, emptyList()) }, catalog = listOf(both), store = modelStore,
+            presets = registry::all, // 합본(목록 읽기 자체는 저장소 락 안에서 직렬화됨)
+            vadModelOf = { family -> if (family == VadFamily.SILERO) { if (blockNext.getAndSet(false)) { readDone.countDown(); release.await(5, java.util.concurrent.TimeUnit.SECONDS) }; sileroModel } else null }, // 목록을 읽은 뒤 행 만드는 중에 멈춤(삭제 전 목록을 쥔 채 지연)
+            io = pool.asCoroutineDispatcher(), userPresets = userStore, unfinishedRunsUsing = { emptyList() },
+        )
+        fun waitFor(cond: () -> Boolean) { val end = System.currentTimeMillis() + 5000; while (!cond() && System.currentTimeMillis() < end) Thread.sleep(5) } // 조건 대기
+        waitFor { vm.state.value.presets.any { it.id == "USER_방" } } // 첫 refresh 완료
+        (kr + en).forEach { vm.toggleItem(it) } // 입력 선택
+        vm.toggleModel("both") // 모델
+        vm.togglePreset("USER_방") // 프리셋 선택
+        blockNext.set(true) // 다음 읽기에서 멈춤
+        vm.refresh() // A: 삭제 전 목록을 읽고 멈춤
+        assertTrue(readDone.await(5, java.util.concurrent.TimeUnit.SECONDS)) // A 가 읽음
+        vm.requestDeleteUserPreset("USER_방") // 삭제 요청
+        waitFor { vm.state.value.deleteWarning != null } // 확인 대기
+        vm.confirmDeleteUserPreset("USER_방") // 확인 → 삭제 + B refresh
+        waitFor { vm.state.value.presets.none { it.user } } // B 반영
+        release.countDown() // A 풀어 줌(오래된 결과로 덮으려 함)
+        pool.shutdown() // 더 받지 않음
+        assertTrue(pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) // A 끝까지 대기
+        assertTrue(vm.state.value.presets.none { it.id == "USER_방" }) // 부활하지 않음
+        assertTrue("USER_방" !in vm.state.value.selectedPresets) // 선택에도 없음
+        assertTrue(userStore.list().isEmpty()) // 저장소에도 없음
+        assertEquals("VAD 프리셋을 1개 이상 선택하세요", vm.validationError()) // 실행 설정을 만들 수 없음
+        assertThrows(IllegalStateException::class.java) { vm.buildConfig(java.time.LocalDateTime.of(2026, 10, 11, 20, 26, 0)) } // 그 id 로 실행 안 만듦
     }
 
     /**
