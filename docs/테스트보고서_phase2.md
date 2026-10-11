@@ -93,7 +93,7 @@
 <!-- change(add)-hyungchul-2026-10-11-20:05 -->
 ### 7.1 PC 단위 테스트
 
-- 새 테스트 `SystemEnginesSectionTest`(6개)·`SystemEnginesReasonTest`(5개) 통과. 전체 `./gradlew :app:testDebugUnitTest` 382개 중 실패 0, `:app:assembleDebug` 성공.
+- 새 테스트 `SystemEnginesSectionTest`(9개)·`SystemEnginesReasonTest`(6개) 통과(수정 라운드 1 후). 전체 `./gradlew :app:testDebugUnitTest` 386개 중 실패 0, `:app:assembleDebug` 성공.
 - 검증 내용: 엔진 2개 × 언어 ko·en 상태 행, 다운로드 중 `busyLang`, 완료·실패 뒤 상태 재조회, 안내 메시지 1회, 15 초 제한 시간(가상 시간),
   실행 전 확인(`unavailableReason`)이 작업 6 의 사유 문구·예외 처리 규칙을 그대로 유지.
 

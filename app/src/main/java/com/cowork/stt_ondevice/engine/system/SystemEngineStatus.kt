@@ -5,6 +5,7 @@
 //       safeStatus — 조회 중 예외(취소·VirtualMachineError 제외)를 Unavailable("상태 확인 실패(<클래스>: <메시지>)") 로 바꾼다.
 //       AndroidSystemEngineStatus — ML Kit checkStatus()/download(), 플랫폼 checkRecognitionSupport(API 33)/triggerModelDownload(API 34) 를 호출만 한다.
 //                                   동의 창은 Google 서비스가 띄우며 앱이 대신 누르지 않는다.
+//       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) installedLanguages — 플랫폼 기기에 설치된 언어 목록 보조 조회(실행 전 확인의 "언어 미설치(…)(설치됨: …)" 사유용).
 // change(add)-hyungchul-2026-10-11-19:52
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -68,6 +69,16 @@ interface SystemEngineStatus {
      * 리턴: DownloadEvent 흐름
      */
     fun download(kind: SystemEngineKind, engineLang: String): Flow<DownloadEvent>
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 기기에 설치된 언어 목록(보조 조회)
+     * 기능: 플랫폼 인식기의 installedOnDeviceLanguages 를 돌려준다(실행 전 확인이 "설치됨: …" 를 사유에 붙이는 데 씀). 기본 구현은 알 수 없음(null) — ML Kit 은 목록이 없다.
+     * 입력: kind(엔진 종류), engineLang(앱 엔진 언어)
+     * 출력: 오류는 null 로(상태 조회가 아니라 보조 정보라 사유를 덮지 않음), 취소 시 CancellationException
+     * 리턴: 설치된 언어 태그 목록 또는 null(알 수 없음)
+     */
+    suspend fun installedLanguages(kind: SystemEngineKind, engineLang: String): List<String>? = null
 }
 
 // change(add)-hyungchul-2026-10-11-19:52
@@ -151,6 +162,42 @@ class AndroidSystemEngineStatus(context: Context) : SystemEngineStatus {
         return when (kind) {
             SystemEngineKind.MLKIT_BASIC -> mlkitDownload(tag) // ML Kit
             SystemEngineKind.PLATFORM_ONDEVICE -> platformDownload(tag) // 플랫폼
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 플랫폼 설치된 언어 목록
+     * 기능: 플랫폼만 지원한다. 상태 조회와 같은 선행 조건(API 33·마이크 권한·온디바이스 인식기)을 확인하고 메인 스레드 임시 인식기로 지원 확인을 불러 installed 목록을 돌려준다(15 초 제한).
+     *       조건 미충족·시간 초과·onError·예외는 null(보조 정보라 상태 판정을 덮지 않음). 취소는 전파.
+     * 입력: kind(엔진 종류), engineLang(앱 엔진 언어)
+     * 출력: 취소 시 CancellationException
+     * 리턴: 설치된 언어 태그 목록 또는 null
+     */
+    override suspend fun installedLanguages(kind: SystemEngineKind, engineLang: String): List<String>? {
+        if (kind != SystemEngineKind.PLATFORM_ONDEVICE) return null // 플랫폼만
+        val tag = SystemAsrEngine.LANG_TAGS[engineLang] ?: return null // 모르는 언어
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null // API 부족
+        if (app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return null // 권한 없음
+        return try {
+            withTimeoutOrNull(DEFAULT_STATUS_TIMEOUT_MS) {
+                withContext(Dispatchers.Main) { // 인식기 호출은 메인 스레드
+                    if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(app)) return@withContext null // 인식기 없음
+                    val rec = SpeechRecognizer.createOnDeviceSpeechRecognizer(app) // 임시 인식기
+                    try {
+                        val support = checkSupport(rec, tag) // 지원 확인
+                        if (support.error != null) null else support.installed // 오류면 알 수 없음
+                    } finally {
+                        runCatching { rec.destroy() } // 임시 인식기 해제
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e // 취소는 그대로
+        } catch (e: VirtualMachineError) {
+            throw e // OOM 등은 그대로
+        } catch (e: Throwable) {
+            null // 보조 정보 실패는 알 수 없음으로
         }
     }
 

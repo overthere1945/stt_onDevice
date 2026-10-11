@@ -111,6 +111,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel(factory = ModelsViewMode
                         row = row,
                         canDownload = viewModel.canDownloadSystem(row.kind), // 앱에서 다운로드 요청 가능 여부
                         onDownload = { lang -> viewModel.downloadSystem(row.kind, lang) }, // 다운로드 요청
+                        onCancel = { viewModel.cancelSystemDownload(row.kind) }, // change(add)-hyungchul-2026-10-11-20:05 다운로드 취소(동의 창을 닫아 멈춘 경우의 탈출구)
                         onRefresh = viewModel::refreshSystem, // 새로고침
                     )
                 }
@@ -247,7 +248,8 @@ private fun ModelCard(
  * 기능: 제목·라이선스 문구·언어 줄(언어 이름 + 상태)을 그린다. 상태가 "다운로드 필요" 이고 앱에서 요청할 수 있고 다른 다운로드가 진행 중이 아니면 [다운로드],
  *       다운로드 중인 언어는 진행 바를 보인다. 카드 아래에 [새로고침]. 조회 전(언어 줄이 없음)에는 "상태 확인 중…". 삭제·가져오기·검증 버튼은 없다.
  *       [다운로드] 는 Google 공식 다운로드 요청만 하며 동의 창은 사용자가 직접 확인을 누른다.
- * 입력: row(카드 값), canDownload(앱에서 다운로드 요청 가능 여부), onDownload(언어 코드로 다운로드 요청), onRefresh(상태 다시 확인)
+ *       change(add)-hyungchul-2026-10-11-20:05 다운로드 중인 언어 줄에는 [취소] 가 보인다(동의 창을 닫아도 끝나지 않을 수 있어 사용자가 추적을 끝내는 수단).
+ * 입력: row(카드 값), canDownload(앱에서 다운로드 요청 가능 여부), onDownload(언어 코드로 다운로드 요청), onCancel(change(add)-hyungchul-2026-10-11-20:05 다운로드 취소), onRefresh(상태 다시 확인)
  * 출력: 화면 표시
  * 리턴: Unit
  */
@@ -257,6 +259,7 @@ private fun SystemEngineCard(
     row: SystemEngineRow,
     canDownload: Boolean,
     onDownload: (String) -> Unit,
+    onCancel: () -> Unit, // change(add)-hyungchul-2026-10-11-20:05
     onRefresh: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) { // 카드
@@ -273,7 +276,8 @@ private fun SystemEngineCard(
                         color = systemStatusColor(if (downloading) LanguageStatus.Downloading else status), // 상태 색
                         modifier = Modifier.weight(1f),
                     )
-                    if (status == LanguageStatus.Downloadable && canDownload && row.busyLang == null) { // 받을 수 있을 때만
+                    if (downloading) TextButton(onClick = onCancel) { Text("취소") } // change(add)-hyungchul-2026-10-11-20:05 다운로드 중: 취소
+                    else if (status == LanguageStatus.Downloadable && canDownload && row.busyLang == null) { // 받을 수 있을 때만
                         TextButton(onClick = { onDownload(lang) }) { Text("다운로드") } // 다운로드
                     }
                 }

@@ -8,6 +8,8 @@
 //       change(add)-hyungchul-2026-10-11-18:21 catalogForScreen(list): 시스템 엔진 항목을 뺀 목록 — 팩토리가 모델 화면 목록에 쓴다(2차 작업 2).
 //       change(add)-hyungchul-2026-10-11-19:52 (2차 작업 7) 시스템 엔진 영역: systemRows(엔진 2개 × 언어 ko·en 상태, busyLang), refreshSystem()(상태 다시 조회), downloadSystem(kind, lang)(Google 공식 다운로드 요청 —
 //       동의 창은 사용자가 직접 누름, 끝나면 그 언어 상태 재조회), canDownloadSystem(kind). 생성자 끝의 systemStatus 가 null 이면 영역이 숨겨진다(systemRows 가 빈 목록).
+//       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) cancelSystemDownload(kind): 동의 창을 닫아 끝나지 않는 다운로드를 취소하고 busyLang 을 풀며 상태를 다시 조회한다. 새로고침 결과가 그 사이 끝난 다운로드의 갱신을 덮지 않게
+//       세대 번호(systemClock·downloadStamp)로 오래된 조회 결과를 버린다.
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
 import androidx.lifecycle.ViewModel // 뷰모델 기본 클래스
@@ -52,6 +54,7 @@ import java.io.FileNotFoundException // 파일 없음
 import java.time.LocalDateTime // change(add)-hyungchul-2026-10-11-03:59 임시 폴더 이름 시각
 import java.time.format.DateTimeFormatter // change(add)-hyungchul-2026-10-11-03:59 시각 서식
 import java.util.concurrent.ConcurrentHashMap // 스레드 안전 맵
+import java.util.concurrent.atomic.AtomicLong // change(add)-hyungchul-2026-10-11-20:05 조회 세대 번호
 
 // change(add)-hyungchul-2026-10-11-03:09
 /**
@@ -177,6 +180,8 @@ class ModelsViewModel(
     private val _systemRows = MutableStateFlow(initialSystemRows(systemStatus)) // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 카드(내부)
     private val systemJobs = ConcurrentHashMap<SystemEngineKind, Job>() // change(add)-hyungchul-2026-10-11-19:52 엔진별 진행 중인 다운로드(엔진당 1개)
     @Volatile private var systemRefreshJob: Job? = null // change(add)-hyungchul-2026-10-11-19:52 진행 중인 전체 상태 조회
+    private val systemClock = AtomicLong(0) // change(add)-hyungchul-2026-10-11-20:05 세대 번호 발급기(새로고침 시작·다운로드 상태 갱신마다 증가)
+    private val downloadStamp = ConcurrentHashMap<Pair<SystemEngineKind, String>, Long>() // change(add)-hyungchul-2026-10-11-20:05 (엔진, 언어) → 다운로드 쪽이 마지막으로 상태를 갱신한 세대
 
     /** 목적: 화면에 그릴 행 목록 / 기능: 카탈로그 순서(ASR → VAD), 상태가 바뀔 때마다 갱신 */
     val rows: StateFlow<List<ModelRow>> = _rows.asStateFlow() // 읽기 전용 노출
@@ -210,11 +215,16 @@ class ModelsViewModel(
     fun refreshSystem() {
         val status = systemStatus ?: return // 조회기 없음 → 영역 숨김
         systemRefreshJob?.cancel() // 이전 조회 취소
+        val started = systemClock.incrementAndGet() // change(add)-hyungchul-2026-10-11-20:05 이 조회의 세대(이보다 늦게 갱신된 언어는 이 결과로 덮지 않음)
         systemRefreshJob = viewModelScope.launch(io) { // 백그라운드에서
             val results = coroutineScope { // 병렬 조회
                 SYSTEM_KINDS.flatMap { kind -> SYSTEM_LANGS.map { lang -> async { Triple(kind, lang, status.safeStatus(kind, lang)) } } }.awaitAll() // 4개 동시
             }
-            _systemRows.update { rows -> rows.map { row -> row.copy(langs = SYSTEM_LANGS.map { lang -> lang to results.first { it.first == row.kind && it.second == lang }.third }) } } // 상태 반영(busyLang 유지)
+            _systemRows.update { rows -> rows.map { row -> row.copy(langs = SYSTEM_LANGS.map { lang -> // 상태 반영(busyLang 유지)
+                val newer = (downloadStamp[row.kind to lang] ?: 0L) > started // change(add)-hyungchul-2026-10-11-20:05 조회 시작 뒤에 다운로드가 갱신한 언어인가
+                val old = row.langs.firstOrNull { it.first == lang }?.second // 현재 값
+                lang to if (newer && old != null) old else results.first { it.first == row.kind && it.second == lang }.third // 더 새로운 값이 있으면 오래된 조회 결과를 버림
+            }) } }
         }
     }
 
@@ -251,14 +261,52 @@ class ModelsViewModel(
                 }
                 if (failure != null) post("$title ${languageLabel(setOf(engineLang))} 다운로드 실패 — $failure") // 한국어 실패 메시지
                 val fresh = withContext(io) { status.safeStatus(kind, engineLang) } // 그 언어 상태 재조회
+                downloadStamp[kind to engineLang] = systemClock.incrementAndGet() // change(add)-hyungchul-2026-10-11-20:05 이 언어의 갱신 세대 기록(늦은 새로고침 결과 차단)
                 _systemRows.update { rows -> rows.map { row -> if (row.kind == kind) row.copy(langs = row.langs.map { (l, st) -> if (l == engineLang) l to fresh else l to st }, busyLang = null) else row } } // 상태 반영 + 진행 표시 해제
             } finally {
                 setSystemBusy(kind, null) // 취소돼도 진행 표시 해제
             }
         }
+        // change(add)-hyungchul-2026-10-11-20:05 취소 시(사용자 [취소]·동의 창을 닫아 멈춘 경우) 안내 + 상태 재조회는 아래 invokeOnCompletion 에서 처리
         systemJobs[kind] = job // 등록
-        job.invokeOnCompletion { systemJobs.remove(kind, job) } // 끝나면 제거
+        job.invokeOnCompletion { cause -> // 끝나면
+            systemJobs.remove(kind, job) // 제거
+            if (cause is CancellationException) { // change(add)-hyungchul-2026-10-11-20:05 취소로 끝남
+                post("$title: 다운로드 요청을 취소했습니다") // 취소 안내
+                recheckSystem(kind, engineLang, status) // 그 언어 상태 재조회
+            }
+        }
         job.start() // 시작
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 진행 중인 시스템 엔진 다운로드 취소
+     * 기능: 그 엔진의 다운로드 작업을 취소한다. 동의 창을 닫아 터미널 이벤트가 없어 "다운로드 중"에 멈춘 경우의 탈출구이다.
+     *       취소되면 busyLang 이 풀리고 "다운로드 요청을 취소했습니다" 안내가 나오며 그 언어 상태를 다시 조회한다. 진행 중이 아니면 아무 일도 없다.
+     *       (이미 Google 서비스가 시작한 실제 다운로드를 멈추는 것은 아니다 — 앱의 추적만 끝낸다. 상태는 [새로고침]으로 다시 확인.)
+     * 입력: kind(엔진 종류)
+     * 출력: 메시지 발행, systemRows 갱신
+     * 리턴: 없음
+     */
+    fun cancelSystemDownload(kind: SystemEngineKind) {
+        systemJobs[kind]?.cancel() // 작업 취소(완료 처리에서 안내·재조회)
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 한 언어 상태만 다시 조회해 반영
+     * 기능: 백그라운드에서 safeStatus 로 조회해 그 언어 상태를 갱신한다(다운로드 취소 뒤 사용). 갱신 세대를 기록해 늦은 새로고침이 덮지 않게 한다. busyLang 은 건드리지 않는다.
+     * 입력: kind(엔진 종류), lang(앱 언어), status(조회기)
+     * 출력: systemRows 갱신
+     * 리턴: 없음
+     */
+    private fun recheckSystem(kind: SystemEngineKind, lang: String, status: SystemEngineStatus) {
+        viewModelScope.launch(io) { // 백그라운드에서
+            val fresh = status.safeStatus(kind, lang) // 재조회
+            downloadStamp[kind to lang] = systemClock.incrementAndGet() // 갱신 세대 기록
+            _systemRows.update { rows -> rows.map { row -> if (row.kind == kind) row.copy(langs = row.langs.map { (l, st) -> if (l == lang) l to fresh else l to st }) else row } } // 그 언어만 반영
+        }
     }
 
     // change(add)-hyungchul-2026-10-11-19:52

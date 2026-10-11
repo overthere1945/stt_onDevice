@@ -1,6 +1,7 @@
 // 파일명: SystemEnginesSectionTest.kt
 // 목적: 모델 화면의 "시스템 엔진" 영역(ModelsViewModel.systemRows·downloadSystem)과 상태 확인 제한 시간 래퍼(withStatusTimeout)를 검증 (2차 작업 7)
 // 기능: 가짜 SystemEngineStatus 로 엔진별·언어별 상태 행 구성, 다운로드 진행 중 busyLang·완료/실패 뒤 상태 재조회·안내 메시지 1회, 15 초 제한 시간 처리를 확인한다.
+//       change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) 취소 버튼 동작(끝나지 않는 다운로드 취소 → busyLang 해제·재조회·취소 안내)과 느린 새로고침 + 빠른 다운로드 완료 경합(최종 Available)을 더했다.
 // change(add)-hyungchul-2026-10-11-19:52
 package com.cowork.stt_ondevice.ui.models // 모델 화면 테스트 패키지
 
@@ -16,7 +17,9 @@ import com.cowork.stt_ondevice.model.ModelStore // 저장소
 import com.cowork.stt_ondevice.model.SystemEngineKind // 시스템 엔진 종류
 import kotlinx.coroutines.Dispatchers // 디스패처
 import kotlinx.coroutines.ExperimentalCoroutinesApi // 테스트 API 표시
+import kotlinx.coroutines.CompletableDeferred // change(add)-hyungchul-2026-10-11-20:05 수동 해제 게이트
 import kotlinx.coroutines.awaitCancellation // 끝나지 않는 대기
+import kotlinx.coroutines.delay // change(add)-hyungchul-2026-10-11-20:05 실제 시간 대기
 import kotlinx.coroutines.flow.Flow // 흐름
 import kotlinx.coroutines.flow.MutableSharedFlow // 수동 방출 흐름
 import kotlinx.coroutines.flow.first // 첫 값
@@ -50,12 +53,17 @@ class FakeSystemEngineStatus(
     val statuses: MutableMap<Pair<SystemEngineKind, String>, LanguageStatus>, // (종류, 언어) → 상태
     var downloadFlow: Flow<DownloadEvent> = flowOf(DownloadEvent.Done), // 다운로드 흐름
     private val canDl: Boolean = true, // 다운로드 가능 여부
+    var blockKey: Pair<SystemEngineKind, String>? = null, // change(add)-hyungchul-2026-10-11-20:05 이 조합의 첫 조회만 게이트에서 대기(값은 대기 전에 읽음 → 늦게 도착하는 오래된 결과 흉내)
+    var gate: CompletableDeferred<Unit>? = null, // change(add)-hyungchul-2026-10-11-20:05 blockKey 조회가 기다릴 게이트
 ) : SystemEngineStatus {
     val calls = mutableListOf<Pair<SystemEngineKind, String>>() // 조회 기록
 
     override suspend fun status(kind: SystemEngineKind, engineLang: String): LanguageStatus {
         synchronized(calls) { calls.add(kind to engineLang) } // 조회 기록
-        return statuses.getValue(kind to engineLang) // 현재 상태
+        val value = statuses.getValue(kind to engineLang) // 현재 상태(대기 전에 읽음)
+        val g = gate // change(add)-hyungchul-2026-10-11-20:05
+        if (g != null && blockKey == kind to engineLang) { blockKey = null; g.await() } // change(add)-hyungchul-2026-10-11-20:05 첫 1회만 대기
+        return value // 결과
     }
 
     override fun canDownload(kind: SystemEngineKind): Boolean = canDl // 다운로드 가능 여부
@@ -187,6 +195,62 @@ class SystemEnginesSectionTest {
         val m = withTimeout(2_000) { vm.messages.first() } // 안내
         assertTrue(m, m.contains("Android 14")) // 사유(API 34)
         assertNull(vm.systemRows.value.first { it.kind == SystemEngineKind.PLATFORM_ONDEVICE }.busyLang) // 진행 표시 없음
+    }
+
+    /**
+     * 목적: 끝나지 않는 다운로드 취소(change(add)-hyungchul-2026-10-11-20:05)
+     * 기능: 동의 창을 닫아 터미널 이벤트가 없는 다운로드도 cancelSystemDownload 로 끝낼 수 있다 — busyLang 이 풀리고, 취소 안내가 나오고, 상태를 다시 조회하며, 다시 다운로드할 수 있다.
+     * 입력: 없음 / 출력: 없음 / 리턴: 없음
+     */
+    @Test
+    fun cancelEndsNeverFinishingDownload() = runBlocking {
+        val flow = MutableSharedFlow<DownloadEvent>(extraBufferCapacity = 8) // 끝나지 않는 흐름
+        val fake = FakeSystemEngineStatus(defaultStatuses(), downloadFlow = flow) // 가짜 조회기
+        val vm = newVm(fake) // ViewModel
+        val before = fake.callCount(SystemEngineKind.MLKIT_BASIC, "en") // 시작 전 조회 횟수
+        vm.downloadSystem(SystemEngineKind.MLKIT_BASIC, "en") // 다운로드 시작(동의 창에서 멈춤)
+        assertEquals("en", vm.systemRows.value.first { it.kind == SystemEngineKind.MLKIT_BASIC }.busyLang) // 진행 중
+        assertEquals(guide, withTimeout(2_000) { vm.messages.first() }) // 안내
+        vm.cancelSystemDownload(SystemEngineKind.MLKIT_BASIC) // 취소
+        withTimeout(2_000) { vm.systemRows.first { rs -> rs.first { it.kind == SystemEngineKind.MLKIT_BASIC }.busyLang == null } } // 진행 표시 해제 대기
+        assertEquals("다운로드 요청을 취소했습니다", withTimeout(2_000) { vm.messages.first() }.substringAfter(": ")) // 취소 안내
+        var waited = 0 // 대기 횟수
+        while (fake.callCount(SystemEngineKind.MLKIT_BASIC, "en") <= before && waited++ < 40) delay(50) // 재조회 대기(최대 2 초)
+        assertTrue(fake.callCount(SystemEngineKind.MLKIT_BASIC, "en") > before) // 상태 재조회
+        fake.downloadFlow = flowOf(DownloadEvent.Done) // 이제 정상 흐름
+        vm.downloadSystem(SystemEngineKind.MLKIT_BASIC, "en") // 다시 다운로드 가능
+        withTimeout(2_000) { vm.systemRows.first { rs -> rs.first { it.kind == SystemEngineKind.MLKIT_BASIC }.busyLang == null } } // 끝남
+        assertEquals(guide, withTimeout(2_000) { vm.messages.first() }) // 다시 안내(거부 메시지가 아님)
+    }
+
+    /** 목적: 진행 중이 아닐 때 취소(change(add)-hyungchul-2026-10-11-20:05) / 기능: 다운로드 중이 아니면 아무 일도 없다(메시지 없음) / 리턴: 없음 */
+    @Test
+    fun cancelWithoutDownloadDoesNothing() = runBlocking {
+        val vm = newVm(FakeSystemEngineStatus(defaultStatuses())) // ViewModel
+        vm.cancelSystemDownload(SystemEngineKind.MLKIT_BASIC) // 진행 중 아님
+        assertNull(withTimeoutOrNull(300) { vm.messages.first() }) // 메시지 없음
+    }
+
+    /**
+     * 목적: 느린 새로고침이 다운로드 직후 갱신을 덮지 않음(change(add)-hyungchul-2026-10-11-20:05)
+     * 기능: 새로고침이 en 조회 결과(Downloadable)를 읽은 채 지연되는 동안 다운로드가 끝나 Available 로 갱신되면, 늦게 도착한 오래된 Downloadable 은 버려져 최종 상태가 Available 이다.
+     * 입력: 없음 / 출력: 없음 / 리턴: 없음
+     */
+    @Test
+    fun staleRefreshDoesNotOverwriteDownloadResult() = runBlocking {
+        val fake = FakeSystemEngineStatus(defaultStatuses(), downloadFlow = flowOf(DownloadEvent.Done)) // 다운로드는 즉시 끝남
+        val vm = newVm(fake) // ViewModel(첫 조회 끝남: en=Downloadable)
+        val gate = CompletableDeferred<Unit>() // 새로고침 지연 게이트
+        fake.gate = gate // 게이트 설치
+        fake.blockKey = SystemEngineKind.MLKIT_BASIC to "en" // ML Kit en 의 첫 조회만 대기
+        vm.refreshSystem() // 느린 새로고침 시작(오래된 Downloadable 을 읽고 대기)
+        fake.statuses[SystemEngineKind.MLKIT_BASIC to "en"] = LanguageStatus.Available // 기기 쪽 상태가 바뀜
+        vm.downloadSystem(SystemEngineKind.MLKIT_BASIC, "en") // 다운로드가 끝나며 Available 로 갱신
+        withTimeout(2_000) { vm.systemRows.first { rs -> rs.first { it.kind == SystemEngineKind.MLKIT_BASIC }.langs.firstOrNull { it.first == "en" }?.second == LanguageStatus.Available } } // 갱신 확인
+        gate.complete(Unit) // 늦은 새로고침 결과 도착
+        delay(300) // 늦은 결과가 반영될 시간
+        val en = vm.systemRows.value.first { it.kind == SystemEngineKind.MLKIT_BASIC }.langs.first { it.first == "en" }.second // 최종 상태
+        assertEquals(LanguageStatus.Available, en) // 오래된 결과가 덮지 않음
     }
 
     /**

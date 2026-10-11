@@ -6,6 +6,7 @@
 //                           change(add)-hyungchul-2026-10-11-19:47 (리뷰 라운드 1) 취소·VirtualMachineError(OOM 등)를 뺀 모든 Throwable(NoClassDefFoundError 같은 LinkageError 포함)을 사유로 바꾼다.
 //                           change(add)-hyungchul-2026-10-11-19:52 (작업 7) 상태 조회(ML Kit checkStatus / 플랫폼 checkRecognitionSupport)를 SystemEngineStatus.kt 로 옮겼다 —
 //                           모델 화면과 같은 조회를 쓰며, 사유 문구는 reasonOf 가 작업 6 의 문구로 바꾼다.
+//                           change(add)-hyungchul-2026-10-11-20:05 (수정 라운드 1) 플랫폼 "언어 미설치" 사유는 작업 6 문구 그대로 "(설치됨: <기기에 설치된 언어 목록>)" 를 붙인다(SystemEngineStatus.installedLanguages 보조 조회).
 //       versionInfo — 결과 기록용 engine_version 문자열(ML Kit: "mlkit-genai-sr 1.0.0-alpha1 / com.google.android.tts <versionName>",
 //                     플랫폼: "com.google.android.as <versionName>", 패키지 없음 → "<패키지> 없음").
 // change(add)-hyungchul-2026-10-11-19:18
@@ -19,6 +20,7 @@ import com.cowork.stt_ondevice.engine.EngineException // 엔진 오류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.SystemEngineConfig // 시스템 엔진 설정
 import com.cowork.stt_ondevice.model.SystemEngineKind // 시스템 엔진 종류
+import kotlinx.coroutines.CancellationException // change(add)-hyungchul-2026-10-11-20:05 코루틴 취소
 
 // change(add)-hyungchul-2026-10-11-19:18
 /**
@@ -79,22 +81,44 @@ object SystemEngines {
     internal suspend fun unavailableReason(status: SystemEngineStatus, spec: ModelSpec, engineLang: String): String? {
         val kind = kindOf(spec) // 엔진 종류
         val tag = SystemAsrEngine.LANG_TAGS[engineLang] ?: return "지원하지 않는 언어: '$engineLang'" // ko → ko-KR, en → en-US
-        return reasonOf(kind, tag, status.safeStatus(kind, engineLang)) // 조회 → 사유
+        val st = status.safeStatus(kind, engineLang) // 상태 조회
+        val missing = kind == SystemEngineKind.PLATFORM_ONDEVICE && (st == LanguageStatus.Downloadable || st == LanguageStatus.Unavailable(StatusReasons.PLATFORM_UNSUPPORTED)) // 플랫폼 "언어 미설치" 분기 // change(add)-hyungchul-2026-10-11-20:05
+        val installed = if (missing) safeInstalled(status, kind, engineLang) else null // change(add)-hyungchul-2026-10-11-20:05 미설치 사유에 붙일 설치 목록
+        return reasonOf(kind, tag, st, installed) // 사유로 변환
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 설치된 언어 보조 조회(예외 무시)
+     * 기능: status.installedLanguages 를 부르되 예외(취소·VirtualMachineError 제외)는 null(알 수 없음)로 바꾼다 — 보조 정보라 실행 전 확인을 실패시키지 않는다.
+     * 입력: status(조회기), kind(엔진 종류), engineLang(앱 언어)
+     * 출력: 취소 시 CancellationException, VirtualMachineError 는 그대로
+     * 리턴: 설치된 언어 목록 또는 null
+     */
+    private suspend fun safeInstalled(status: SystemEngineStatus, kind: SystemEngineKind, engineLang: String): List<String>? = try {
+        status.installedLanguages(kind, engineLang) // 보조 조회
+    } catch (e: CancellationException) {
+        throw e // 취소는 그대로
+    } catch (e: VirtualMachineError) {
+        throw e // OOM 등은 그대로
+    } catch (e: Throwable) {
+        null // 알 수 없음
     }
 
     // change(add)-hyungchul-2026-10-11-19:52
     /**
      * 목적: 언어 상태 → 실행 전 확인 사유
      * 기능: Available → null. 그 밖은 작업 6 의 사유 문구(상태 이름·서비스 이름·태그 포함)로 바꾼다. 상수가 아닌 Unavailable 사유(권한 없음·확인 실패 등)는 그대로 돌려준다.
-     * 입력: kind(엔진 종류), tag(BCP-47 태그), status(조회 결과)
+     *       change(add)-hyungchul-2026-10-11-20:05 플랫폼 Downloadable·PLATFORM_UNSUPPORTED 는 작업 6 문구 "언어 미설치(<태그>) — <서비스> 언어 팩 필요(설치됨: <목록>)" (목록 비면 "없음", 모르면 "확인 불가").
+     * 입력: kind(엔진 종류), tag(BCP-47 태그), status(조회 결과), installed(플랫폼 설치된 언어 또는 null — change(add)-hyungchul-2026-10-11-20:05)
      * 출력: 없음
      * 리턴: null 또는 사유
      */
-    internal fun reasonOf(kind: SystemEngineKind, tag: String, status: LanguageStatus): String? = when (status) {
+    internal fun reasonOf(kind: SystemEngineKind, tag: String, status: LanguageStatus, installed: List<String>? = null): String? = when (status) {
         LanguageStatus.Available -> null // 사용 가능
         LanguageStatus.Downloadable -> when (kind) {
             SystemEngineKind.MLKIT_BASIC -> "언어 미설치($tag) — ${kind.serviceLabel} 언어 팩 다운로드 필요(상태 DOWNLOADABLE)" // ML Kit 미설치
-            SystemEngineKind.PLATFORM_ONDEVICE -> "언어 미설치($tag) — ${kind.serviceLabel} 언어 팩 필요" // 플랫폼 미설치
+            SystemEngineKind.PLATFORM_ONDEVICE -> platformMissing(kind, tag, installed) // 플랫폼 미설치(설치된 언어 포함)
         }
         LanguageStatus.Downloading -> when (kind) {
             SystemEngineKind.MLKIT_BASIC -> "언어 팩 다운로드 중($tag, 상태 DOWNLOADING)" // ML Kit 받는 중
@@ -104,10 +128,21 @@ object SystemEngines {
             StatusReasons.TIMEOUT -> "상태 확인 시간 초과($tag, ${DEFAULT_STATUS_TIMEOUT_MS / 1000} 초) — ${kind.serviceLabel} 응답 없음" // 응답 없음
             StatusReasons.MLKIT_UNSUPPORTED -> "이 기기에서 사용할 수 없음($tag, 상태 UNAVAILABLE)" // ML Kit 미지원
             StatusReasons.API_TOO_OLD -> "Android 13 이상 필요(현재 API ${Build.VERSION.SDK_INT})" // 플랫폼 API 부족
-            StatusReasons.PLATFORM_UNSUPPORTED -> "언어 미설치($tag) — ${kind.serviceLabel} 언어 팩 필요(${StatusReasons.PLATFORM_UNSUPPORTED})" // 플랫폼 미지원 언어
+            StatusReasons.PLATFORM_UNSUPPORTED -> platformMissing(kind, tag, installed) // 플랫폼 미지원 언어(작업 6 과 같은 문구)
             else -> status.reason // 그 밖 사유는 그대로
         }
     }
+
+    // change(add)-hyungchul-2026-10-11-20:05
+    /**
+     * 목적: 플랫폼 "언어 미설치" 사유 문구
+     * 기능: 작업 6 문구 그대로 "언어 미설치(<태그>) — <서비스> 언어 팩 필요(설치됨: <목록>)". 목록이 비면 "없음", 조회 실패(null)면 "확인 불가".
+     * 입력: kind(엔진 종류), tag(BCP-47 태그), installed(설치된 언어 또는 null)
+     * 출력: 없음
+     * 리턴: 사유 문자열
+     */
+    private fun platformMissing(kind: SystemEngineKind, tag: String, installed: List<String>?): String =
+        "언어 미설치($tag) — ${kind.serviceLabel} 언어 팩 필요(설치됨: ${installed?.joinToString(",")?.ifEmpty { "없음" } ?: "확인 불가"})" // 설치 목록 포함
 
     /**
      * 목적: 결과 기록용 엔진 버전 문자열
