@@ -3,6 +3,7 @@
 // 기능: create — 시스템 spec 으로 SystemAsrEngine(백엔드 생성: MlKitBackend/PlatformBackend, 버전 문자열: versionInfo)을 만든다.
 //       unavailableReason — 실행 전 언어 사용 가능 확인(ML Kit checkStatus / 플랫폼 checkRecognitionSupport 직접 호출). 사용 가능하면 null,
 //                           아니면 한국어 사유. 확인 중 예외는 "상태 확인 실패(<예외 클래스>: <메시지>)" 사유로 돌려준다(실행 실패로 번지지 않게).
+//                           change(add)-hyungchul-2026-10-11-19:47 (리뷰 라운드 1) 취소·VirtualMachineError(OOM 등)를 뺀 모든 Throwable(NoClassDefFoundError 같은 LinkageError 포함)을 사유로 바꾼다.
 //                           (작업 7 에서 SystemEngineStatus 로 옮길 예정)
 //       versionInfo — 결과 기록용 engine_version 문자열(ML Kit: "mlkit-genai-sr 1.0.0-alpha1 / com.google.android.tts <versionName>",
 //                     플랫폼: "com.google.android.as <versionName>", 패키지 없음 → "<패키지> 없음").
@@ -72,8 +73,10 @@ object SystemEngines {
      * 목적: 실행 전 언어 사용 가능 확인
      * 기능: 앱 언어(ko/en)를 태그로 바꿔 종류별로 확인한다. 사용 가능하면 null, 아니면 한국어 사유.
      *       확인 중 예외(취소 제외)는 "상태 확인 실패(<예외 클래스>: <메시지>)" 사유로 돌려준다 — 그 조합만 건너뛰고 기록되게(실행 실패로 번지지 않음).
+     *       change(add)-hyungchul-2026-10-11-19:47 Exception 뿐 아니라 Error(예: 라이브러리·서비스 버전 차이로 나는 NoClassDefFoundError·NoSuchMethodError 같은 LinkageError)도 사유로 바꾼다.
+     *       단 VirtualMachineError(OutOfMemoryError·StackOverflowError 등)는 프로세스 상태 자체가 위험하므로 다시 던진다.
      * 입력: context(컨텍스트), spec(시스템 spec), engineLang(앱 엔진 언어 "ko"/"en")
-     * 출력: 시스템 spec 이 아니면 EngineException(MODEL_LOAD, CONFIG_MISMATCH), 취소 시 CancellationException
+     * 출력: 시스템 spec 이 아니면 EngineException(MODEL_LOAD, CONFIG_MISMATCH), 취소 시 CancellationException, VirtualMachineError 는 그대로
      * 리턴: null(사용 가능) 또는 사유 문자열
      */
     suspend fun unavailableReason(context: Context, spec: ModelSpec, engineLang: String): String? {
@@ -87,7 +90,9 @@ object SystemEngines {
             }
         } catch (e: CancellationException) {
             throw e // 취소는 그대로
-        } catch (e: Exception) {
+        } catch (e: VirtualMachineError) {
+            throw e // OOM 등 VM 오류는 그대로(사유로 덮지 않음) // change(add)-hyungchul-2026-10-11-19:47
+        } catch (e: Throwable) { // change(add)-hyungchul-2026-10-11-19:47 Exception → Throwable(LinkageError 등도 사유로)
             "상태 확인 실패(${e.javaClass.simpleName}: ${e.message})" // 예외를 사유로(전파하지 않음)
         }
     }

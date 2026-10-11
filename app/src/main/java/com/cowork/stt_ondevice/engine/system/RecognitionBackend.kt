@@ -40,6 +40,8 @@ sealed interface SessionOutcome {
  * 1. 스레드 안전: finishInput / abort / audio.close() 는 어느 스레드에서, 여러 번, 어떤 순서로(awaitOutcome 이 끝난 뒤 포함) 불러도 무해해야 한다.
  * 2. 막히지 않음: finishInput / abort / audio.close() 는 오래 막히지 않고 곧 돌아와야 한다(세션 핵심이 결과 수신·감시 초과·취소 경로에서 직접 부른다).
  * 3. audio.close() 는 다른 스레드에서 audio.write 에 막혀 있는 공급기를 IOException 으로 풀어야 한다(파이프 쓰기 쪽 닫기).
+ *    change(add)-hyungchul-2026-10-11-19:47 실제 구현(AudioPipe)의 근거: 쓰기 쪽 ParcelFileDescriptor.close() 가 막힌 write 를 InterruptedIOException 으로 깨움
+ *    (S22 Ultra 계측 AudioPipeDeviceTest). 읽기 쪽 닫기는 엔진 프로세스 사본이 열려 있으면 EPIPE 를 만들지 않으므로 근거가 아니다.
  * 4. abort() 뒤 진행 중이거나 새로 부른 awaitOutcome() 은 곧 돌아와야 한다(결과는 Failed 등 무엇이든 됨).
  * 5. awaitOutcome() 은 코루틴 취소에 즉시 반응해야 한다(감시 시간 withTimeoutOrNull 과 사용자 취소가 이것으로 동작).
  * (세션 핵심은 3 이 지켜지지 않아도 공급 코루틴을 기다리지 않으므로 멈추지 않지만, 그 경우 막힌 공급 스레드 1개가 남는다.)

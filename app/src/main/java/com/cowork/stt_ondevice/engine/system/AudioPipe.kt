@@ -1,9 +1,12 @@
 // 파일명: AudioPipe.kt
 // 목적: 시스템 엔진 백엔드(ML Kit·플랫폼)가 함께 쓰는 오디오 공급 파이프 (2차 작업 6)
 // 기능: ParcelFileDescriptor.createPipe() 로 읽기 쪽(엔진에 넘김)·쓰기 쪽(공급기가 씀)을 만들고,
-//       쓰기 쪽을 RecognitionSession.audio 로 쓸 OutputStream 으로 감싼다. 닫기는 스레드 안전·반복 안전·즉시 반환이며,
-//       쓰기 쪽 닫기는 다른 스레드에서 write 에 막힌 공급기를 IOException 으로 풀어 준다(ParcelFileDescriptor.close 가 막힌 스레드에 신호를 보냄).
-//       읽기 쪽까지 닫으면 상대(엔진)가 더 읽지 않을 때도 쓰기가 EPIPE 로 끝난다(실측: 엔진이 먼저 끝나면 64 KB 에서 공급기가 막힘).
+//       쓰기 쪽을 RecognitionSession.audio 로 쓸 OutputStream 으로 감싼다. 닫기는 스레드 안전·반복 안전·즉시 반환이다.
+//       change(add)-hyungchul-2026-10-11-19:47 (리뷰 라운드 1 정정) 막힌 공급기를 푸는 근거는 **쓰기 쪽 ParcelFileDescriptor.close() 하나뿐**이다:
+//       S22 Ultra(Android 16) 계측 AudioPipeDeviceTest 에서 읽기 쪽 사본(dup, 엔진 프로세스 사본 흉내)을 읽지 않고 쥔 채
+//       51,200 B 에서 막힌 write 가 다른 스레드의 closeWrite·closeAll 직후(0~3 ms) InterruptedIOException("write interrupted by close() on another thread",
+//       IOException 의 하위 형)으로 끝났다. 읽기 쪽을 닫아도 엔진 프로세스의 사본이 열려 있으면 EPIPE 는 나지 않는다(실험 보고서: 엔진 오류 뒤 64 KB 에서 막힘)
+//       — closeAll 의 읽기 쪽 닫기는 우리 프로세스의 디스크립터 정리일 뿐 해제 근거가 아니다.
 // change(add)-hyungchul-2026-10-11-19:18
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -34,7 +37,7 @@ internal class AudioPipe private constructor(
 
     /**
      * 목적: 쓰기 쪽 닫기
-     * 기능: 처음 한 번만 쓰기 쪽 디스크립터를 닫는다(EOF 신호, 막힌 write 해제). 실패는 무시한다.
+     * 기능: 처음 한 번만 쓰기 쪽 디스크립터를 닫는다(EOF 신호, 다른 스레드의 막힌 write 를 InterruptedIOException 으로 해제 — 기기 실측). 실패는 무시한다. // change(add)-hyungchul-2026-10-11-19:47
      * 입력: 없음
      * 출력: 없음
      * 리턴: 없음
@@ -46,6 +49,7 @@ internal class AudioPipe private constructor(
     /**
      * 목적: 양쪽 닫기
      * 기능: 쓰기 쪽과 읽기 쪽을 모두 닫는다(각각 1회, 실패 무시). 세션이 어떤 이유로든 끝나면 부른다.
+     *       막힌 write 해제는 쓰기 쪽 닫기 덕분이다(읽기 쪽 닫기는 엔진 사본이 열려 있으면 EPIPE 를 만들지 않음). // change(add)-hyungchul-2026-10-11-19:47
      * 입력: 없음
      * 출력: 없음
      * 리턴: 없음
@@ -73,7 +77,7 @@ internal class AudioPipe private constructor(
 
         /**
          * 목적: 블록 쓰기
-         * 기능: 디스크립터에 len 바이트를 쓴다(파이프가 차면 막힘 — closeWrite 가 풀어 줌).
+         * 기능: 디스크립터에 len 바이트를 쓴다(파이프가 차면 막힘 — 다른 스레드의 closeWrite 가 InterruptedIOException 으로 풀어 줌). // change(add)-hyungchul-2026-10-11-19:47
          * 입력: b(버퍼), off(시작), len(길이)
          * 출력: 닫힘·EPIPE → IOException
          * 리턴: 없음

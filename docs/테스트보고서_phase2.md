@@ -65,6 +65,16 @@
 
 - 엔진이 먼저 오류로 끝나도 공급기가 막히지 않고 즉시 끝남(감시 시간 15 초 이상을 기다리지 않음).
 
+### 6.3a 파이프 막힘 해제 — `AudioPipeDeviceTest` (2026-10-11 19:49, 리뷰 라운드 1)
+
+<!-- change(add)-hyungchul-2026-10-11-19:47 -->
+- 엔진 프로세스가 읽기 쪽 사본을 쥐고 읽지 않는 상황을 `readSide.dup()` 으로 흉내 내고, 작업 스레드가 3,200 B 블록을 계속 쓰게 했다.
+- 결과: **`OK (2 tests)`**. 두 경우 모두 51,200 B 에서 막힘(300 ms 진행 없음) 확인 →
+  다른 스레드에서 쓰기 쪽 닫기(`closeWrite`)는 0 ms, `closeAll` 은 2~3 ms 뒤 작업 스레드가
+  `java.io.InterruptedIOException: write interrupted by close() on another thread` 로 끝남(1 초 안 단언 통과).
+- 해석: 막힌 공급기를 푸는 근거는 쓰기 쪽 `ParcelFileDescriptor.close()` 이다. 읽기 쪽을 닫아도 엔진 쪽 사본이 열려 있으면 EPIPE 는 나지 않는다.
+- 수정 후 `SystemEngineDeviceTest` 재실행도 `OK (3 tests)`(ML Kit x1 25,032 ms·x4 6,337 ms, 플랫폼 x4 6,346 ms, 전사문 동일).
+
 ### 6.4 release APK 시작 확인 (2026-10-11 19:39)
 
 - `app-release-unsigned.apk` 를 로컬 debug 키로 서명 → `adb install -r` → `adb shell am start -W -n com.cowork.stt_ondevice/.MainActivity`
