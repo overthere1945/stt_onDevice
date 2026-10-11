@@ -5,6 +5,8 @@
 //       검증은 결과 대화상자를 거치며 오류·완료 메시지는 스낵바(한국어)로 보인다.
 //       change(add)-hyungchul-2026-10-11-03:59 가져오기 대화상자에 "폴더 선택(SAF)"(OpenDocumentTree)·"파일 선택(SAF)"(OpenDocument, 압축 1개)을 더했다. 고르면 import/<id>/saf_… 로 복사한 뒤
 //       기존 가져오기(installer.importFrom)를 그대로 쓴다(ModelsViewModel.importFromSaf). adb 안내는 tools/adb/push_models.sh 사용을 권장한다(R41 — push 후 권한 정리).
+//       change(add)-hyungchul-2026-10-11-19:52 (2차 작업 7) 목록 맨 위에 "시스템 엔진" 카드 2개(ML Kit Basic·플랫폼 온디바이스)를 더했다. 카드에는 제목·"Google 서비스 약관 적용"·언어 줄(상태: 사용 가능/다운로드 필요/
+//       다운로드 중/사용 불가(사유))·[다운로드](다운로드 필요이고 앱에서 요청 가능할 때)·[새로고침]이 있다. 삭제·가져오기·검증 버튼은 없고, 동의 창은 사용자가 직접 누른다.
 package com.cowork.stt_ondevice.ui.models // 모델 화면 패키지
 
 import android.net.Uri // change(add)-hyungchul-2026-10-11-03:59 고른 문서 Uri
@@ -42,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf // 상태 생성
 import androidx.compose.runtime.remember // 기억
 import androidx.compose.runtime.saveable.rememberSaveable // change(add)-hyungchul-2026-10-11-03:59 선택기 왕복·회전에도 유지
 import androidx.compose.runtime.setValue // 위임 쓰기
+import androidx.compose.ui.Alignment // change(add)-hyungchul-2026-10-11-19:52 세로 정렬
 import androidx.compose.ui.Modifier // 수정자
 import androidx.compose.ui.graphics.Color // 색
 import androidx.compose.ui.platform.LocalContext // 컨텍스트
@@ -50,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle // change(add)-hyu
 import androidx.lifecycle.viewmodel.compose.viewModel // 화면용 ViewModel 얻기
 import com.cowork.stt_ondevice.App // 앱 전역 객체
 import com.cowork.stt_ondevice.core.storage.SafBridge // change(add)-hyungchul-2026-10-11-03:59 SAF 입출력
+import com.cowork.stt_ondevice.engine.system.LanguageStatus // change(add)-hyungchul-2026-10-11-19:52 언어 상태
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 상태
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
 
@@ -66,6 +70,7 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel(factory = ModelsViewMode
     val rows by viewModel.rows.collectAsStateWithLifecycle() // 행 목록
     val importPrompt by viewModel.importPrompt.collectAsStateWithLifecycle() // 가져오기 안내
     val verifyReport by viewModel.verifyReport.collectAsStateWithLifecycle() // 검증 결과
+    val systemRows by viewModel.systemRows.collectAsStateWithLifecycle() // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 카드
     val snackbar = remember { SnackbarHostState() } // 스낵바 상태
     var deleteTarget by remember { mutableStateOf<ModelRow?>(null) } // 삭제 확인 대상
     val context = LocalContext.current // change(add)-hyungchul-2026-10-11-03:59 컨텍스트(SAF)
@@ -96,6 +101,19 @@ fun ModelsScreen(viewModel: ModelsViewModel = viewModel(factory = ModelsViewMode
             item(key = "title") { Text("모델 관리", style = MaterialTheme.typography.headlineSmall) } // 화면 제목
             item(key = "notice") { // change(add)-hyungchul-2026-10-11-03:24 다운로드 수명 안내
                 Text("다운로드는 앱이 켜져 있는 동안 진행됩니다. 앱을 완전히 종료하면 취소되며, 받은 부분은 보관되어 다시 시작하면 이어받습니다(탭 이동은 괜찮습니다).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (systemRows.isNotEmpty()) { // change(add)-hyungchul-2026-10-11-19:52 시스템 엔진 영역(조회기가 없으면 숨김)
+                item(key = "group-system") { // 영역 머리글
+                    Text("시스템 엔진", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+                }
+                items(systemRows, key = { "system-${it.kind.name}" }) { row -> // 엔진 카드
+                    SystemEngineCard(
+                        row = row,
+                        canDownload = viewModel.canDownloadSystem(row.kind), // 앱에서 다운로드 요청 가능 여부
+                        onDownload = { lang -> viewModel.downloadSystem(row.kind, lang) }, // 다운로드 요청
+                        onRefresh = viewModel::refreshSystem, // 새로고침
+                    )
+                }
             }
             rows.groupBy { it.group }.forEach { (group, groupRows) -> // 그룹 순서는 카탈로그 순서
                 item(key = "group-$group") { // 그룹 머리글
@@ -221,6 +239,64 @@ private fun ModelCard(
             }
         }
     }
+}
+
+// change(add)-hyungchul-2026-10-11-19:52
+/**
+ * 목적: 시스템 엔진 카드 1개
+ * 기능: 제목·라이선스 문구·언어 줄(언어 이름 + 상태)을 그린다. 상태가 "다운로드 필요" 이고 앱에서 요청할 수 있고 다른 다운로드가 진행 중이 아니면 [다운로드],
+ *       다운로드 중인 언어는 진행 바를 보인다. 카드 아래에 [새로고침]. 조회 전(언어 줄이 없음)에는 "상태 확인 중…". 삭제·가져오기·검증 버튼은 없다.
+ *       [다운로드] 는 Google 공식 다운로드 요청만 하며 동의 창은 사용자가 직접 확인을 누른다.
+ * 입력: row(카드 값), canDownload(앱에서 다운로드 요청 가능 여부), onDownload(언어 코드로 다운로드 요청), onRefresh(상태 다시 확인)
+ * 출력: 화면 표시
+ * 리턴: Unit
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SystemEngineCard(
+    row: SystemEngineRow,
+    canDownload: Boolean,
+    onDownload: (String) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) { // 카드
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(row.title, style = MaterialTheme.typography.titleSmall) // 제목
+            Text(ModelsViewModel.SYSTEM_LICENSE, style = MaterialTheme.typography.bodySmall) // 라이선스 문구
+            if (row.langs.isEmpty()) Text("상태 확인 중…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) // 조회 전
+            row.langs.forEach { (lang, status) -> // 언어 줄
+                val downloading = row.busyLang == lang // 이 언어 다운로드 중 여부
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { // 언어 + 상태 + 버튼
+                    Text(
+                        "${ModelsViewModel.languageLabel(setOf(lang))}: ${if (downloading) LanguageStatus.Downloading.koreanLabel() else status.koreanLabel()}", // 언어: 상태
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = systemStatusColor(if (downloading) LanguageStatus.Downloading else status), // 상태 색
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (status == LanguageStatus.Downloadable && canDownload && row.busyLang == null) { // 받을 수 있을 때만
+                        TextButton(onClick = { onDownload(lang) }) { Text("다운로드") } // 다운로드
+                    }
+                }
+                if (downloading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) // 다운로드 중 진행 바(진행률 미정)
+            }
+            TextButton(onClick = onRefresh) { Text("새로고침") } // 상태 다시 확인
+        }
+    }
+}
+
+// change(add)-hyungchul-2026-10-11-19:52
+/**
+ * 목적: 언어 상태 글자색
+ * 기능: 사용 가능=초록(라이트 진한 / 다크 밝은), 다운로드 필요·중=주색, 사용 불가=보조색.
+ * 입력: status(언어 상태)
+ * 출력: 없음
+ * 리턴: 색
+ */
+@Composable
+private fun systemStatusColor(status: LanguageStatus): Color = when (status) {
+    LanguageStatus.Available -> if (isSystemInDarkTheme()) Color(0xFF81C784) else Color(0xFF2E7D32) // 사용 가능
+    LanguageStatus.Downloadable, LanguageStatus.Downloading -> MaterialTheme.colorScheme.primary // 진행 필요·중
+    is LanguageStatus.Unavailable -> MaterialTheme.colorScheme.onSurfaceVariant // 사용 불가
 }
 
 // change(add)-hyungchul-2026-10-11-03:09

@@ -87,3 +87,27 @@
 - en-US 전사(두 엔진): 언어 팩 미설치라 미수행(설치는 사용자 승인 사항).
 - 배치 실행기(RunService)로 시스템 엔진 조합 전체를 돌리는 종단 실행: 이 작업 범위 밖(미수행).
 - 멈춤(hang) 상태에서의 복구: 이번 실행에서 멈춤이 나지 않아 미확인.
+
+## 작업 7 — 모델 화면 시스템 엔진 언어별 상태와 다운로드
+
+<!-- change(add)-hyungchul-2026-10-11-20:05 -->
+### 7.1 PC 단위 테스트
+
+- 새 테스트 `SystemEnginesSectionTest`(6개)·`SystemEnginesReasonTest`(5개) 통과. 전체 `./gradlew :app:testDebugUnitTest` 382개 중 실패 0, `:app:assembleDebug` 성공.
+- 검증 내용: 엔진 2개 × 언어 ko·en 상태 행, 다운로드 중 `busyLang`, 완료·실패 뒤 상태 재조회, 안내 메시지 1회, 15 초 제한 시간(가상 시간),
+  실행 전 확인(`unavailableReason`)이 작업 6 의 사유 문구·예외 처리 규칙을 그대로 유지.
+
+### 7.2 실기기 확인 (Galaxy S22 Ultra, Android 16 / API 36) — 2026-10-11 19:59
+
+- debug APK `adb install -r` → `adb shell am start` → 앱 첫 화면이 모델 탭. `uiautomator dump` 와 `screencap` 으로 확인(스크린샷은 scratchpad 에만 저장, 커밋하지 않음).
+- 표시된 상태(앱이 `checkStatus`/`checkRecognitionSupport` 로 조회한 값):
+
+| 엔진 | 한국어 | 영어 |
+|---|---|---|
+| ML Kit GenAI Basic (Speech Services by Google) | 사용 가능 | 다운로드 필요 (+[다운로드] 버튼) |
+| Android 온디바이스 인식기 (Android System Intelligence) | 사용 가능 | 다운로드 필요 (+[다운로드] 버튼, API 36 ≥ 34) |
+
+- 두 카드 모두 "Google 서비스 약관 적용" 문구와 [새로고침] 이 있고 삭제·가져오기·검증 버튼은 없음. 크래시 로그 없음.
+- 플랫폼 영어는 `supportedOnDeviceLanguages` 에 있으나 `installedOnDeviceLanguages` 에 없어 "다운로드 필요"로 표시됨(작업 6 의 "언어 미설치" 와 일치).
+- **[다운로드]·[새로고침] 은 누르지 않음**(영어 모델 동의는 작업 10 에서 사용자가 직접). 다른 앱 창은 뜨지 않았고 앱 삭제·데이터 삭제 없음.
+- 미수행: 실제 다운로드 흐름(동의 창·진행·완료 후 재조회)의 기기 확인 — 사용자 승인이 필요해 작업 10 으로 남김. Android 13 이하 기기 경로, 상태 확인 15 초 초과의 기기 재현은 미수행(PC 단위 테스트만).
