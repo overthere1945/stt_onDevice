@@ -5,6 +5,7 @@
 //       측정·확인하지 못한 값은 null (AppJson 의 explicitNulls 로 JSON 에 null 이 명시된다).
 //       change(add)-hyungchul-2026-10-11-03:31 입력 파일 목록(inputs, InputEntry)도 남겨 결과 화면의 이어하기가 같은 입력을 복원할 수 있게 한다.
 //       change(add)-hyungchul-2026-10-11-12:51 진행 단계 표시별 중단 발견 횟수(inFlightAttempts)를 남기고, 저장은 AtomicFile.write(fsync 포함)로 한다.
+//       change(add)-hyungchul-2026-10-11-18:14 다시 실행 정리 진행 중 표식(rerunCleanupPending)을 남긴다(2차 작업 1).
 package com.cowork.stt_ondevice.output // 출력 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -263,6 +264,10 @@ data class RunManifest(
     //   이미 1회 이상인 키를 또 만나면(= 다시 시도한 그 단계에서 또 죽음) 그때 CRASH_OR_KILLED 로 기록한다(R33 크래시 반복 방지 유지).
     //   그 단계가 프로세스가 죽지 않고 끝나면(성공 또는 처리된 오류) 키를 지운다. 이 필드가 없던 이전 파일은 빈 맵.
     val inFlightAttempts: Map<String, Int> = emptyMap(), // 키별 중단 발견 횟수
+    // change(add)-hyungchul-2026-10-11-18:14: "CRASH_OR_KILLED 항목 다시 실행" 정리(행 → 파일 순)가 진행 중이라는 표식(2차 작업 1).
+    //   정리 직전에 true 로 저장하고 정리가 끝나면 false 로 저장한다. 정리 도중 프로세스가 죽어 true 로 남은 run 은 일반 이어하기로 열어도 정리를 먼저 다시 수행한다(멱등).
+    //   이 필드가 없던 이전 파일은 false(기본값 — 기존 manifest 읽기 호환).
+    val rerunCleanupPending: Boolean = false, // 다시 실행 정리 진행 중 표식
 ) {
     /**
      * 목적: manifest 원자적 저장

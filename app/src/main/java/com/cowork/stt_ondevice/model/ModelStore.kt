@@ -3,6 +3,7 @@
 // 기능: state() 는 `.ready.json` 존재와 선언 파일들의 존재·크기만 보고 판정한다(해시는 계산하지 않음 — 해시 검증은 ModelInstaller.verify()).
 //       acquire/release 는 모델별 사용 횟수(스레드 안전)이고, 사용 중이면 delete 와 교체(commit)를 거부한다.
 //       change(add)-hyungchul-2026-10-11-12:51 acquireAll: 여러 모델을 한꺼번에 사용 중으로 표시하고 close 한 번으로 해제하는 핸들(배치 실행 전체 동안 선택 모델 보호, 최종 리뷰 I-4).
+//       change(add)-hyungchul-2026-10-11-18:14 delete 가 받다 만 파일 tmp/<id>.dl 도 함께 지운다(2차 작업 1).
 package com.cowork.stt_ondevice.model // 모델 패키지
 
 import com.cowork.stt_ondevice.core.json.AppJson // 공용 JSON
@@ -133,16 +134,19 @@ class ModelStore(private val dirs: AppDirs) {
 
     /**
      * 목적: 모델 삭제
-     * 기능: 사용 중(횟수 > 0)이면 아무것도 하지 않고 false. 아니면 models/<id> 를 통째로 지운다.
+     * 기능: 사용 중(횟수 > 0)이면 아무것도 하지 않고 false. 아니면 models/<id> 를 통째로 지우고, 받다 만 파일 tmp/<id>.dl 도 함께 지운다
+     *       (change(add)-hyungchul-2026-10-11-18:14 — 모델이 설치되지 않았어도 .dl 만 있으면 그것을 지운다).
      * 입력: spec
      * 출력: 없음
      * 리턴: 삭제 성공(폴더가 없어도 true) 여부, 사용 중이거나 지우지 못하면 false
      */
     fun delete(spec: ModelSpec): Boolean = synchronized(lock) {
-        if ((useCount[spec.id] ?: 0) > 0) return@synchronized false // 사용 중 → 거부
+        if ((useCount[spec.id] ?: 0) > 0) return@synchronized false // 사용 중 → 거부(받다 만 파일도 지우지 않음)
         val dir = modelDir(spec) // 모델 폴더
-        if (!dir.exists()) return@synchronized true // 이미 없음
-        dir.deleteRecursively() && !dir.exists() // 삭제 결과
+        val partial = File(dirs.tmp, "${spec.id}.dl") // 받다 만 다운로드 폴더(ModelInstaller 이어받기용) // change(add)-hyungchul-2026-10-11-18:14
+        val partialGone = !partial.exists() || (partial.deleteRecursively() && !partial.exists()) // 받다 만 파일 삭제 결과 // change(add)-hyungchul-2026-10-11-18:14
+        if (!dir.exists()) return@synchronized partialGone // 모델 폴더는 이미 없음 // change(add)-hyungchul-2026-10-11-18:14 받다 만 폴더 결과 반영
+        (dir.deleteRecursively() && !dir.exists()) && partialGone // 삭제 결과 // change(add)-hyungchul-2026-10-11-18:14
     }
 
     /**

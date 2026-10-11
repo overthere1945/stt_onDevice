@@ -3,6 +3,7 @@
 // 기능: 유니코드 공백(NBSP·U+3000) 정리와 텍스트 통계, LinkageError 격리 매핑, 결과 쓰기 재시도 시 찢긴 줄·기존 행 교체를 확인한다.
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰) device 열이 엔진 보고 backend 를 따르는지(I-6), 많은 항목을 크래시 ERROR 로 기록하는 정리가 빠르고 행 수가 맞는지(I-3),
 //       removeRowsWhere 가 여러 행을 한 번에 지우는지 확인한다.
+//       change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리 순서(행 먼저 → 파일, removeRows/removeResults 멱등)와 시간 단언 대신 요약 CSV 읽기 횟수 단언(CsvFiles.onFullRead)을 확인한다.
 // change(add)-hyungchul-2026-10-11-02:14
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -26,6 +27,7 @@ import com.cowork.stt_ondevice.output.SpanJson // 원본 구간
 import com.cowork.stt_ondevice.segment.ChunkMode // 묶기 방식
 import com.cowork.stt_ondevice.vad.VadPresets // 프리셋 목록
 import org.junit.Assert.assertEquals // 같음 검증
+import org.junit.Assert.assertFalse // 거짓 검증 // change(add)-hyungchul-2026-10-11-18:14
 import org.junit.Assert.assertNotNull // null 아님 검증
 import org.junit.Assert.assertNull // null 검증
 import org.junit.Assert.assertTrue // 참 검증 // change(add)-hyungchul-2026-10-11-12:51
@@ -133,7 +135,7 @@ class RunnerHelpersTest {
      * 목적: 많은 항목 크래시 정리 속도·행 수 확인(I-3)
      * 기능: 요약 CSV 에 다른 모델 행 1개 + 큰 run 을 흉내낸 다른 행 12000개 + 찢긴 꼬리가 있는 상태에서 모델 로드 크래시 표시를 두 번째로 만나
      *       N=400 항목을 ERROR(CRASH_OR_KILLED)로 기록하면 조합·요약 CSV 에 항목마다 정확히 1행씩 생기고(기존 행 유지, 찢긴 줄 제거)
-     *       8초 안에 끝난다(항목마다 요약 CSV 전체를 다시 읽던 이전 방식은 이 크기에서 그보다 훨씬 오래 걸림).
+     *       요약 CSV 전체 읽기가 2번 이하다(항목마다 읽던 이전 방식은 400번 이상). change(add)-hyungchul-2026-10-11-18:14 시간(8초) 단언을 읽기 횟수 단언으로 교체.
      * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
      */
     @Test
@@ -148,9 +150,13 @@ class RunnerHelpersTest {
         outputs.summaryFile().appendText("20261011_125100,찢긴", Charsets.UTF_8) // 요약 찢긴 꼬리
         val n = 400 // 항목 수
         val pairs = (1..n).map { combo to item("%04d".format(it)) } // 대상 항목
-        val start = System.nanoTime() // 시작 시각
-        val r = ResumeReconciler(runDir, outputs, processor).reconcile("m1|MODEL_LOAD", pairs, priorAttempts = 1) // 두 번째 만남 → ERROR 기록
-        val sec = (System.nanoTime() - start) / 1e9 // 걸린 시간(초)
+        var summaryReads = 0 // 요약 CSV 전체 읽기 횟수 // change(add)-hyungchul-2026-10-11-18:14
+        CsvFiles.onFullRead = { f -> if (f == outputs.summaryFile()) summaryReads++ } // 읽을 때마다 센다(테스트 전용 훅) // change(add)-hyungchul-2026-10-11-18:14
+        val r = try {
+            ResumeReconciler(runDir, outputs, processor).reconcile("m1|MODEL_LOAD", pairs, priorAttempts = 1) // 두 번째 만남 → ERROR 기록
+        } finally {
+            CsvFiles.onFullRead = null // 훅 해제(다른 테스트에 영향 없게) // change(add)-hyungchul-2026-10-11-18:14
+        }
         assertEquals(n, r.written.size) // 모두 기록
         assertEquals("m1", r.crashedModelId) // 크래시 모델
         val comboRows = CsvFiles.readRecords(OutputLayout.resultCsv(runDir, "kr", combo.name)) // 조합 CSV
@@ -160,7 +166,7 @@ class RunnerHelpersTest {
         assertEquals(n + 12001, summaryRows.size) // 기존 12001행 + 항목 n행(찢긴 줄 없음)
         assertEquals("NO_MATCH", summaryRows[0]["status"]) // 기존 행 유지
         assertEquals((1..n).map { "%04d.wav".format(it) }, summaryRows.drop(12001).map { it["file"] }) // 순서·중복 없음
-        assertTrue("정리에 ${sec}초 걸림", sec < 8.0) // 충분히 빠름
+        assertTrue("요약 CSV 를 $summaryReads 번 읽음(항목마다 읽으면 $n 이상)", summaryReads <= 2) // 항목 수와 상관없이 상수 번 읽음(시간 대신 구조로 검증) // change(add)-hyungchul-2026-10-11-18:14
     }
 
     // change(add)-hyungchul-2026-10-11-12:51
@@ -177,5 +183,40 @@ class RunnerHelpersTest {
         val before = csv.lastModified() // 수정 시각
         assertEquals(0, CsvFiles.removeRowsWhere(csv) { false }) // 지울 것 없음
         assertEquals(before, csv.lastModified()) // 파일 그대로
+    }
+
+    // change(add)-hyungchul-2026-10-11-18:14
+    /**
+     * 목적: 다시 실행 정리 순서(행 먼저 → 파일) 확인
+     * 기능: 크래시 항목 2개를 만든 뒤 removeRows 만 부르면(행 정리 직후 프로세스가 죽은 상태) 조합·요약 CSV 에 해당 행이 0개이고
+     *       ERROR.txt 는 남아 isCrashed 가 참이다. 이어서 removeResults 를 다시 부르면 예외 없이 파일까지 지워진다(멱등).
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun removeRowsLeavesFilesForRedo() {
+        val runDir = File(tmp.root, "run") // 실행 폴더
+        val outputs = ItemOutputs(runDir, "20261011_125100", device, 4) // 결과 쓰기
+        val items = listOf(item("01"), item("02")) // 크래시 항목 2개
+        val crash = ErrorJson("TRANSCRIBE", ItemOutputs.CRASH_CODE, "중단") // 크래시 오류
+        for (i in items) outputs.write(combo, i, processor.failed(combo, i, crash, null)) // ERROR.txt + detail + CSV 행
+        val targets = items.map { combo to it } // 정리 대상
+        assertTrue(targets.all { (c, it) -> outputs.isCrashed(c, it) }) // 처음엔 둘 다 크래시 기록
+        outputs.removeRows(targets) // 행만 지움(여기서 죽은 상태 흉내)
+        val comboCsv = OutputLayout.resultCsv(runDir, "kr", combo.name) // 조합 CSV
+        assertEquals(0, CsvFiles.readRecords(comboCsv).size) // 조합 CSV 행 0개
+        assertEquals(0, CsvFiles.readRecords(outputs.summaryFile()).size) // 요약 CSV 행 0개
+        for ((c, it) in targets) { // 항목마다
+            assertTrue(OutputLayout.errorFile(runDir, it, c.name).isFile) // ERROR.txt 는 남음
+            assertTrue(outputs.isCrashed(c, it)) // 아직 크래시 기록으로 보임(= 다시 정리 대상)
+            assertTrue(OutputLayout.detail(runDir, it, c.name).isFile) // detail 도 남음
+        }
+        outputs.removeResults(targets) // 다시 정리(행은 이미 없음) — 예외 없이 끝나야 함
+        for ((c, it) in targets) { // 항목마다
+            assertFalse(OutputLayout.errorFile(runDir, it, c.name).exists()) // ERROR.txt 지워짐
+            assertFalse(OutputLayout.detail(runDir, it, c.name).exists()) // detail 지워짐
+            assertFalse(outputs.isDone(c, it)) // 미완료
+        }
+        assertEquals(0, CsvFiles.readRecords(comboCsv).size) // 행은 여전히 0개
+        outputs.removeResults(targets) // 세 번째도 멱등
     }
 }

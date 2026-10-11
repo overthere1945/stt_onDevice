@@ -1,6 +1,7 @@
 // 파일명: ModelInstallerTest.kt
 // 목적: ModelInstaller / ModelStore 의 설치·검증·import·삭제 계약 검증
 // 기능: 로컬 HttpServer 의 tar.bz2 로 설치(READY), 해시 불일치 시 정리, 폴더·압축 import, import 전용 spec 거부, 저장공간 부족, 사용 중 삭제 거부, 상태(CORRUPT) 판정을 확인한다.
+//       change(add)-hyungchul-2026-10-11-18:14 모델 삭제가 tmp/<id>.dl(받다 만 파일)도 지우는지 확인한다(2차 작업 1).
 package com.cowork.stt_ondevice.model // 모델 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
@@ -312,6 +313,35 @@ class ModelInstallerTest {
         assertTrue(store.delete(spec)) // 삭제 성공
         assertFalse(store.modelDir(spec).exists()) // 폴더 없음
         assertEquals(InstallState.NOT_INSTALLED, store.state(spec)) // 미설치
+    }
+
+    // change(add)-hyungchul-2026-10-11-18:14
+    /**
+     * 목적: 모델 삭제 시 받다 만 파일도 지우기(2차 작업 1)
+     * 기능: 설치된 모델을 delete 하면 tmp/<id>.dl 의 .part 도 함께 없어지고, 사용 중이면 둘 다 그대로이며,
+     *       설치되지 않은 모델이라도 .dl 만 있으면 delete 가 그것을 지운다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: Unit
+     */
+    @Test
+    fun deleteAlsoRemovesPartialDownload() = runBlocking {
+        val spec = servedSpec() // spec
+        installer.install(spec) { _, _ -> } // 설치
+        val dl = File(dirs.tmp, "${spec.id}.dl") // 받다 만 폴더
+        File(dl, "x.bin.part").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(1, 2, 3)) } // 이어받기 조각 흉내
+        store.acquire(spec) // 사용 중 표시
+        assertFalse(store.delete(spec)) // 사용 중이라 거부
+        assertTrue(File(dl, "x.bin.part").isFile) // 거부 때는 받다 만 파일도 그대로
+        assertTrue(store.modelDir(spec).exists()) // 모델 폴더도 그대로
+        store.release(spec) // 사용 해제
+        assertTrue(store.delete(spec)) // 삭제 성공
+        assertFalse(dl.exists()) // 받다 만 폴더 없어짐
+        assertFalse(store.modelDir(spec).exists()) // 모델 폴더 없어짐
+        val other = servedSpec(id = "m2") // 설치된 적 없는 모델
+        val dl2 = File(dirs.tmp, "m2.dl") // 받다 만 폴더만 있음
+        File(dl2, "y.bin.part").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(9)) } // 조각
+        assertEquals(InstallState.NOT_INSTALLED, store.state(other)) // 미설치
+        assertTrue(store.delete(other)) // 삭제 성공
+        assertFalse(dl2.exists()) // .dl 만 있어도 지워짐
     }
 
     /**

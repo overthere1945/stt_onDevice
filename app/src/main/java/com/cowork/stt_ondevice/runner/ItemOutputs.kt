@@ -4,6 +4,7 @@
 //       txt 가 있으면 "완료"로 보므로 txt 는 항상 원자적으로 쓰고, CSV 행은 detail JSON 만으로 다시 만들 수 있게 한다(재개 복구).
 //       change(add)-hyungchul-2026-10-11-12:51 재개 정리용 도우미 추가: discard(항목 1건의 결과·행 지우기 — 처음 중단된 항목 다시 시도), isCrashed(CRASH_OR_KILLED 기록 여부),
 //       truncateTornTails(여러 항목이 쓰는 CSV 들의 찢긴 마지막 줄을 한 번씩만 정리), removeResults(여러 항목의 결과 파일·행을 CSV 마다 한 번에 지우기).
+//       change(add)-hyungchul-2026-10-11-18:14 removeResults 를 removeRows(행) → removeFiles(파일) 순서로 바꾸고 둘로 나눈다(정리 도중 죽어도 ERROR.txt 가 남아 다시 정리 가능, 2차 작업 1).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -141,19 +142,32 @@ internal class ItemOutputs(
 
     // change(add)-hyungchul-2026-10-11-12:51
     /**
-     * 목적: 여러 항목의 결과 파일·CSV 행 한꺼번에 지우기
-     * 기능: 항목마다 txt·ERROR.txt·detail 을 지우고, 찢긴 줄을 정리한 뒤 조합 CSV 는 파일마다, 요약 CSV 는 한 번만 읽고 써서 그 항목들의 행을 지운다.
+     * 목적: 여러 항목의 결과 행·파일 한꺼번에 지우기
+     * 기능: removeRows(CSV 행) → removeFiles(txt·ERROR.txt·detail) 순서로 지운다. 행을 먼저 지우므로 중간에 프로세스가 죽어도
+     *       ERROR.txt 가 남아 그 항목이 계속 "크래시 기록"으로 보이고, 다시 부르면 이어서 끝까지 지운다(멱등). 파일을 먼저 지우면 행만 남은 항목이
+     *       미완료가 되어 다시 실행될 때 중복 행이 생길 수 있다.
+     *       change(add)-hyungchul-2026-10-11-18:14 순서를 파일 → 행에서 행 → 파일로 바꾸고 두 단계를 removeRows/removeFiles 로 나눔(2차 작업 1).
      * 입력: targets(지울 (조합, 항목) 목록)
-     * 출력: 파일 삭제·CSV 재작성, 실패 시 IOException
+     * 출력: CSV 재작성·파일 삭제, 실패 시 IOException
      * 리턴: 없음
      */
     fun removeResults(targets: List<Pair<Combo, InputItem>>) {
         if (targets.isEmpty()) return // 지울 것 없음
-        for ((c, it) in targets) { // 항목마다
-            OutputLayout.transcript(runDir, it, c.name).delete() // txt 제거
-            OutputLayout.errorFile(runDir, it, c.name).delete() // ERROR.txt 제거
-            OutputLayout.detail(runDir, it, c.name).delete() // detail 제거
-        }
+        removeRows(targets) // 1단계: CSV 행 먼저 // change(add)-hyungchul-2026-10-11-18:14
+        removeFiles(targets) // 2단계: 결과 파일 // change(add)-hyungchul-2026-10-11-18:14
+    }
+
+    // change(add)-hyungchul-2026-10-11-18:14
+    /**
+     * 목적: 여러 항목의 CSV 행만 지우기(removeResults 1단계)
+     * 기능: 두 CSV 의 찢긴 마지막 줄을 정리한 뒤 조합 CSV 는 파일마다, 요약 CSV 는 한 번만 읽고 써서 그 항목들의 행을 지운다. 결과 파일(txt·ERROR.txt·detail)은 건드리지 않는다.
+     *       "행 정리 직후 프로세스가 죽은 상태"를 만들 수 있게 따로 두며(테스트), 행이 이미 없어도 안전하다.
+     * 입력: targets(행을 지울 (조합, 항목) 목록)
+     * 출력: CSV 재작성, 실패 시 IOException
+     * 리턴: 없음
+     */
+    internal fun removeRows(targets: List<Pair<Combo, InputItem>>) {
+        if (targets.isEmpty()) return // 지울 것 없음
         truncateTornTails(targets) // 찢긴 줄 정리
         targets.groupBy { (c, it) -> OutputLayout.resultCsv(runDir, it.lang, c.name) }.forEach { (file, group) -> // 조합 CSV 마다
             val keys = group.map { (_, it) -> comboMatch(it) }.toSet() // 지울 행의 열 값 묶음
@@ -161,6 +175,22 @@ internal class ItemOutputs(
         }
         val summaryKeys = targets.map { (c, it) -> summaryMatch(c, it) }.toSet() // 요약에서 지울 행의 열 값 묶음
         CsvFiles.removeRowsWhere(summary.file) { row -> summaryMatch(row) in summaryKeys } // 한 번에 제거
+    }
+
+    // change(add)-hyungchul-2026-10-11-18:14
+    /**
+     * 목적: 여러 항목의 결과 파일만 지우기(removeResults 2단계)
+     * 기능: 항목마다 txt·ERROR.txt·detail JSON 을 지운다(없으면 건너뜀). CSV 는 건드리지 않는다.
+     * 입력: targets(파일을 지울 (조합, 항목) 목록)
+     * 출력: 파일 삭제
+     * 리턴: 없음
+     */
+    internal fun removeFiles(targets: List<Pair<Combo, InputItem>>) {
+        for ((c, it) in targets) { // 항목마다
+            OutputLayout.detail(runDir, it, c.name).delete() // detail 제거
+            OutputLayout.transcript(runDir, it, c.name).delete() // txt 제거
+            OutputLayout.errorFile(runDir, it, c.name).delete() // ERROR.txt 는 항목의 마지막에 제거(완료 표시가 마지막까지 남음)
+        }
     }
 
     // change(add)-hyungchul-2026-10-11-12:51

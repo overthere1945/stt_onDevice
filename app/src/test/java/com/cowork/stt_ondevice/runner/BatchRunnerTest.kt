@@ -4,6 +4,7 @@
 //       결과 파일(txt/ERROR.txt/result.csv/요약 CSV/detail JSON/run_manifest.json/로그)과 엔진 호출 기록을 확인한다.
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1·I-4) 처음 중단된 단계는 다시 시도·두 번째는 CRASH_OR_KILLED, 완료 run 의 CRASH_OR_KILLED 항목 다시 실행(rerunCrashed),
 //       실행 동안 선택 모델 전부의 사용 표시(ModelStore 사용 횟수, 끝·실패·취소·거부 때 해제)를 확인한다.
+//       change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리 도중 죽은 run 을 일반 이어하기로 열면 정리가 먼저 다시 수행되는지(rerunCleanupPending) 확인한다.
 // change(add)-hyungchul-2026-10-11-01:47
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -880,6 +881,44 @@ class BatchRunnerTest {
         assertEquals(RunEvent.Finished(1, 0, 0, 0), events.last()) // 이번 실행 = 다시 실행한 1건
         assertNotNull(manifest().finishedAt) // 다시 완료
         assertTrue(OutputLayout.log(runDir, runId).readLines().any { it.contains("\tRERUN_CRASHED\t") && it.contains("1개") }) // 다시 실행 로그
+    }
+
+    // change(add)-hyungchul-2026-10-11-18:14
+    /**
+     * 목적: 다시 실행 정리 도중 죽은 run 의 일반 이어하기(2차 작업 1)
+     * 기능: 크래시 항목(m1/02)이 있는 run 을 "다시 실행 정리 중 죽은 상태"로 만든다 — manifest finishedAt=null, rerunCleanupPending=true,
+     *       그 항목의 CSV 행은 이미 없고 ERROR.txt 는 남음. 이 run 을 일반 이어하기(resume=true, rerunCrashed=false)로 시작하면
+     *       정리가 먼저 다시 수행되어 그 항목이 다시 실행되고, 두 CSV 에 그 항목이 정확히 1행이며 끝난 뒤 rerunCleanupPending 이 false 이다.
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun rerunCleanupInterruptedIsRedoneOnPlainResume() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/01 만 완료
+        val key = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]) // m1/02 키
+        manifest().copy(inFlight = key, inFlightAttempts = mapOf(key to 1)).write(OutputLayout.manifest(runDir)) // 두 번째 중단 흉내
+        runner().run(cfg.copy(resume = true)).toList() // 이어하기 → m1/02 CRASH_OR_KILLED
+        val dir = File(runDir, "kr/${combo("m1", "SILERO")}/customer") // m1 조합 폴더
+        assertTrue(File(dir, "02.ERROR.txt").readText().contains("code: CRASH_OR_KILLED")) // 크래시 기록
+        val comboCsv = OutputLayout.resultCsv(runDir, "kr", combo("m1", "SILERO")) // 조합 CSV
+        val summary = OutputLayout.summaryCsv(runDir, runId) // 요약 CSV
+        CsvFiles.removeRows(comboCsv, mapOf("file" to "02.wav")) // 행 정리까지만 끝난 상태: 조합 행 없음
+        CsvFiles.removeRows(summary, mapOf("file" to "02.wav")) // 요약 행 없음
+        manifest().copy(finishedAt = null, rerunCleanupPending = true).write(OutputLayout.manifest(runDir)) // 정리 도중 죽은 manifest
+        assertTrue(File(dir, "02.ERROR.txt").isFile) // ERROR.txt 는 남음
+        assertEquals(listOf("01.wav"), rows(comboCsv).map { it["file"] }) // 02 행 없음
+        calls.clear() // 기록 초기화
+        val events = runner().run(cfg.copy(resume = true, rerunCrashed = false)).toList() // 일반 이어하기
+        assertEquals(listOf("m1|0.10-2.90"), calls.toList()) // 정리가 다시 수행되어 그 항목이 다시 전사됨
+        assertFalse(File(dir, "02.ERROR.txt").exists()) // 크래시 기록 제거
+        assertTrue(File(dir, "02.txt").isFile) // 새 결과
+        assertEquals(listOf("01.wav" to "OK", "02.wav" to "OK"), rows(comboCsv).map { it["file"] to it["status"] }) // 조합 CSV 항목마다 정확히 1행
+        val sm = rows(summary) // 요약 행
+        assertEquals(listOf("01.wav", "02.wav"), sm.map { it["file"] }) // 요약도 정확히 1행씩
+        assertEquals(RunEvent.Finished(1, 0, 0, 0), events.last()) // 이번 실행 = 다시 실행한 1건
+        assertFalse(manifest().rerunCleanupPending) // 표식 해제
+        assertNotNull(manifest().finishedAt) // 다시 완료
     }
 
     // change(add)-hyungchul-2026-10-11-12:51

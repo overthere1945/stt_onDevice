@@ -18,6 +18,8 @@
 //         I-4 실행 시작 때 modelHold(config) 로 선택한 ASR 모델 전부와 필요한 VAD 계열 모델 전부를 사용 중으로 표시하고, 끝(정상·실패·취소)에 해제한다
 //             (엔진별 acquire/release 는 그대로 — 실행 중 어떤 선택 모델도 삭제·교체되지 않게).
 //         I-3 재개 정리 전에 진행 이벤트("이전 실행 중단 정리 중")를 한 번 내보낸다.
+//       - change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리는 manifest.rerunCleanupPending=true 저장 → clearCrashed(CSV 행 먼저, 파일 나중) → false 저장 순서다.
+//         정리 도중 죽은 run 은 일반 이어하기(rerunCrashed=false)로 열어도 이 표식이 true 이면 정리를 먼저 다시 수행한다(멱등).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -150,9 +152,13 @@ class BatchRunner(
                     emit(RunEvent.ItemDone(c.name, it, st)) // 완료 이벤트
                 }
             }
-            if (config.rerunCrashed) { // CRASH_OR_KILLED 항목 다시 실행 모드 // change(add)-hyungchul-2026-10-11-12:51
-                val cleared = ResumeReconciler(runDir, outputs, processor).clearCrashed(work.flatMap { it.second }) // 크래시 항목 결과·행 지우기
-                state.log("RERUN_CRASHED", "-", "-", "-", "CRASH_OR_KILLED 항목 ${cleared.size}개의 ERROR.txt·detail·CSV 행을 지우고 다시 실행") // 기록
+            val resumeCleanup = !config.rerunCrashed && state.manifest.rerunCleanupPending // 이전 "다시 실행 정리"가 도중에 죽었는지(일반 이어하기여도 정리를 먼저 끝냄) // change(add)-hyungchul-2026-10-11-18:14
+            if (config.rerunCrashed || resumeCleanup) { // CRASH_OR_KILLED 항목 다시 실행 모드 또는 중단된 정리 마무리 // change(add)-hyungchul-2026-10-11-12:51 // change(add)-hyungchul-2026-10-11-18:14 조건 확장
+                state.update { it.copy(rerunCleanupPending = true) } // 정리 시작 표식 저장(행 → 파일 순서 도중에 죽어도 다음 이어하기가 이어서 끝냄) // change(add)-hyungchul-2026-10-11-18:14
+                val cleared = ResumeReconciler(runDir, outputs, processor).clearCrashed(work.flatMap { it.second }) // 크래시 항목 행 → 결과 파일 지우기(멱등)
+                state.update { it.copy(rerunCleanupPending = false) } // 정리 끝 표식 해제 // change(add)-hyungchul-2026-10-11-18:14
+                if (resumeCleanup) state.log("RERUN_CLEANUP_RESUMED", "-", "-", "-", "이전 '다시 실행' 정리가 도중에 끝나 CRASH_OR_KILLED 항목 ${cleared.size}개의 남은 ERROR.txt·detail·CSV 행을 마저 지우고 다시 실행") // 이어서 정리 기록 // change(add)-hyungchul-2026-10-11-18:14
+                else state.log("RERUN_CRASHED", "-", "-", "-", "CRASH_OR_KILLED 항목 ${cleared.size}개의 ERROR.txt·detail·CSV 행을 지우고 다시 실행") // 기록
             }
             recordUnsupported(config, combosByModel, state) // 미지원 조합 기록
             var done = 0 // 끝난 항목 수(건너뛴 항목 포함)
