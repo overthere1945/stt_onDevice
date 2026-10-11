@@ -2,6 +2,7 @@
 // 목적: SystemAsrEngine 테스트용 가짜 인식 백엔드(ML Kit·플랫폼 인식기 대신) (2차 작업 3)
 // 기능: 세션마다 각본(SessionScript)대로 응답한다 — 지정 시점(세션 시작 기준 ms)에 결과, 공급 끝(finishInput) 직후 결과, 또는 응답 없음(abort 까지 대기).
 //       받은 바이트 수·audio 닫힘·finishInput/abort 호출 횟수와 첫 abort 시각, 백엔드 close 횟수·열린 언어 태그를 기록한다.
+//       change(add)-hyungchul-2026-10-11-18:51 실제 스레드 테스트용으로 audio 스트림을 바꿔 끼울 수 있게 하고(audioFactory), 세션·백엔드 메서드를 스레드 안전(@Synchronized)하게 함.
 // change(add)-hyungchul-2026-10-11-18:37
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 테스트 패키지
 
@@ -76,11 +77,15 @@ class RecordingOutputStream : OutputStream() {
 /**
  * 목적: 각본대로 응답하는 가짜 세션
  * 기능: awaitOutcome 은 각본대로 결과를 내고, 응답 없음 각본은 abort 되면 ENGINE_ERROR 로 끝난다.
- * 입력: script(응답 각본), now(가상 시계, ms)
+ * 입력: script(응답 각본), now(시계, ms), customAudio(공급 쪽을 바꿀 스트림, null 이면 RecordingOutputStream) // change(add)-hyungchul-2026-10-11-18:51
  */
-class FakeSession(private val script: SessionScript, private val now: () -> Long) : RecognitionSession {
+class FakeSession(
+    private val script: SessionScript, // 응답 각본
+    private val now: () -> Long, // 시계(ms)
+    private val customAudio: OutputStream? = null, // 바꿔 끼울 공급 스트림 // change(add)-hyungchul-2026-10-11-18:51
+) : RecognitionSession {
     val recorder = RecordingOutputStream() // 공급 바이트 기록
-    override val audio: OutputStream get() = recorder // 공급 쪽
+    override val audio: OutputStream get() = customAudio ?: recorder // 공급 쪽(지정 스트림 우선) // change(add)-hyungchul-2026-10-11-18:51
     private val inputDone = CompletableDeferred<Unit>() // 공급 끝 신호
     private val aborted = CompletableDeferred<Unit>() // 중단 신호
     var finishCount = 0 // finishInput 호출 수
@@ -112,6 +117,7 @@ class FakeSession(private val script: SessionScript, private val now: () -> Long
      * 출력: 없음
      * 리턴: 없음
      */
+    @Synchronized // 스레드 안전 // change(add)-hyungchul-2026-10-11-18:51
     override fun finishInput() {
         finishCount++ // 호출 수
         inputDone.complete(Unit) // 공급 끝 신호
@@ -124,6 +130,7 @@ class FakeSession(private val script: SessionScript, private val now: () -> Long
      * 출력: 없음
      * 리턴: 없음
      */
+    @Synchronized // 스레드 안전 // change(add)-hyungchul-2026-10-11-18:51
     override fun abort() {
         abortCount++ // 호출 수
         if (firstAbortAtMs == null) firstAbortAtMs = now() // 첫 시각
@@ -135,9 +142,14 @@ class FakeSession(private val script: SessionScript, private val now: () -> Long
 /**
  * 목적: 가짜 인식 백엔드
  * 기능: open 할 때마다 공유 각본 큐에서 하나를 꺼내 FakeSession 을 만든다(재생성된 백엔드도 같은 큐를 이어 씀).
- * 입력: scripts(세션 순서대로의 각본 큐, 여러 백엔드가 공유), now(가상 시계, ms)
+ * 입력: scripts(세션 순서대로의 각본 큐, 여러 백엔드가 공유), now(시계, ms),
+ *       audioFactory(세션마다 공급 스트림을 만드는 함수, null 이면 기록용 스트림) // change(add)-hyungchul-2026-10-11-18:51
  */
-class FakeBackend(private val scripts: ArrayDeque<SessionScript>, private val now: () -> Long) : RecognitionBackend {
+class FakeBackend(
+    private val scripts: ArrayDeque<SessionScript>, // 공유 각본 큐
+    private val now: () -> Long, // 시계(ms)
+    private val audioFactory: (() -> OutputStream)? = null, // 공급 스트림 생성 // change(add)-hyungchul-2026-10-11-18:51
+) : RecognitionBackend {
     val sessions = ArrayList<FakeSession>() // 이 백엔드가 연 세션
     val openedLangs = ArrayList<String>() // 열 때 받은 언어 태그
     var closeCount = 0 // close 호출 수
@@ -149,10 +161,10 @@ class FakeBackend(private val scripts: ArrayDeque<SessionScript>, private val no
      * 출력: 각본이 남지 않았으면 IllegalStateException
      * 리턴: FakeSession
      */
-    override suspend fun open(langTag: String): RecognitionSession {
+    override suspend fun open(langTag: String): RecognitionSession = synchronized(scripts) { // 공유 큐 보호 // change(add)-hyungchul-2026-10-11-18:51
         openedLangs += langTag // 언어 기록
         val script = scripts.removeFirstOrNull() ?: error("각본이 더 없음") // 다음 각본
-        return FakeSession(script, now).also { sessions += it } // 세션 기록
+        FakeSession(script, now, audioFactory?.invoke()).also { sessions += it } // 세션 기록(지정 스트림 전달)
     }
 
     /**
@@ -162,6 +174,7 @@ class FakeBackend(private val scripts: ArrayDeque<SessionScript>, private val no
      * 출력: 없음
      * 리턴: 없음
      */
+    @Synchronized // 스레드 안전 // change(add)-hyungchul-2026-10-11-18:51
     override fun close() {
         closeCount++ // 호출 수
     }

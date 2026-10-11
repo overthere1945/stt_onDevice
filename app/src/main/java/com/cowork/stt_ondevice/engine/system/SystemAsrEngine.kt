@@ -8,6 +8,8 @@
 //                    또 초과면 EngineStalledException. Failed(code) 는 EngineException(TRANSCRIBE, code), 공급 끝 전 Completed 는 PIPE_NOT_CONSUMED.
 //       cancel — 현재 세션 abort + 공급 코루틴 취소(진행 중 transcribe 는 ABORTED). close — 현재 세션 중단 후 백엔드 해제.
 //       Android 에 의존하지 않으며, 실제 ML Kit/플랫폼 백엔드는 작업 6 이 RecognitionBackend 로 구현해 붙인다.
+//       change(add)-hyungchul-2026-10-11-18:51 공급 코루틴을 attempt 의 자식이 아니라 엔진 소유 범위(workScope)에서 돌리고 결코 join 하지 않는다 —
+//       파이프 write 가 막혀 audio.close() 로도 풀리지 않는 최악의 경우에도 감시·재시도·취소가 정해진 시간 안에 돌아온다(리뷰 라운드 1).
 // change(add)-hyungchul-2026-10-11-18:37
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -25,12 +27,14 @@ import kotlinx.coroutines.CoroutineDispatcher // 디스패처 타입
 import kotlinx.coroutines.CoroutineScope // 분리된 코루틴 범위
 import kotlinx.coroutines.Dispatchers // 기본 디스패처
 import kotlinx.coroutines.Job // 공급 코루틴 핸들
-import kotlinx.coroutines.coroutineScope // 자식 범위
+import kotlinx.coroutines.SupervisorJob // 실패 격리 Job // change(add)-hyungchul-2026-10-11-18:51
+import kotlinx.coroutines.cancel // 범위 취소 // change(add)-hyungchul-2026-10-11-18:51
 import kotlinx.coroutines.launch // 코루틴 시작
 import kotlinx.coroutines.withTimeoutOrNull // 제한 시간 대기
 import java.util.concurrent.atomic.AtomicBoolean // 스레드 안전 플래그
 import java.util.concurrent.atomic.AtomicInteger // 스레드 안전 카운터
 import java.util.concurrent.atomic.AtomicReference // 스레드 안전 참조
+import kotlin.coroutines.cancellation.CancellationException // 코루틴 취소 // change(add)-hyungchul-2026-10-11-18:51
 import kotlin.math.ceil // 올림
 
 // change(add)-hyungchul-2026-10-11-18:37
@@ -61,6 +65,10 @@ class SystemAsrEngine(
     private val sessionSeq = AtomicInteger(0) // 누적 세션 순번
     private val active = AtomicReference<ActiveSession?>(null) // 진행 중 세션(cancel 대상)
     private val cancelRequested = AtomicBoolean(false) // 이번 transcribe 의 중단 요청
+    // change(add)-hyungchul-2026-10-11-18:51: 공급·백엔드 닫기를 돌리는 엔진 소유 범위(attempt 가 join 하지 않으므로 막힌 write 가 transcribe 를 붙잡지 못함)
+    private val workScope = CoroutineScope(SupervisorJob() + io) // 엔진 소유 작업 범위
+    /** 목적: 감시 여유 시간(ms) / 기능: 기본 15 초. 실제 스레드 테스트에서만 짧게 바꾼다 */
+    internal var watchdogMarginMs: Long = WATCHDOG_MARGIN_MS // 감시 여유(테스트용 조정 가능) // change(add)-hyungchul-2026-10-11-18:51
 
     /**
      * 목적: 진행 중 세션 묶음
@@ -113,7 +121,7 @@ class SystemAsrEngine(
         if (closed || first == null) throw EngineException("TRANSCRIBE", "NOT_PREPARED", "prepare 전이거나 닫힌 엔진: ${spec.id}") // 준비 확인
         cancelRequested.set(false) // 이번 전사의 중단 요청 초기화
         val pcm = PcmFrames.toPcm16Le(chunk.samples) // PCM16 LE 변환
-        val watchMs = watchdogMs(chunk.samples.size, speed) // 감시 시간
+        val watchMs = watchdogMs(chunk.samples.size, speed, watchdogMarginMs) // 감시 시간 // change(add)-hyungchul-2026-10-11-18:51 여유 인자
         attempt(first, pcm, tag, watchMs, sessionSeq.incrementAndGet())?.let { return toChunkText(it, retried = false) } // 첫 세션
         val renewed = renewBackend(first) // 멈춤 → 백엔드 재생성
         val n2 = sessionSeq.incrementAndGet() // 재시도 세션 번호
@@ -123,20 +131,32 @@ class SystemAsrEngine(
 
     /**
      * 목적: 세션 1회 시도
-     * 기능: 세션을 열고 io 에서 공급 코루틴을 시작한다(공급 완료 시 finishInput). 감시 시간 안에 결과를 기다리고,
-     *       결과가 오면 즉시 공급 코루틴 취소 + audio 닫기. 초과면 abort 후 null. 취소·예외로 빠져나가면 세션을 abort 한다.
+     * 기능: 세션을 열고 엔진 소유 범위(workScope, io)에서 공급 코루틴을 시작한다(공급 완료 시 finishInput). 감시 시간 안에 결과를 기다리고,
+     *       결과·초과·취소·예외 어느 경로든 즉시 공급 코루틴 취소 + audio 닫기 후 **공급 코루틴을 기다리지 않고** 돌아온다.
+     *       초과면 abort 후 null. 취소·예외로 빠져나가면 세션을 abort 한다.
+     *       반환 시간 보장: awaitOutcome 은 withTimeoutOrNull 로 감시 시간에 묶이고(계약상 취소에 반응), 그 뒤에는 막히지 않는
+     *       호출(Job.cancel, audio.close, abort — 계약상 즉시 반환)만 하므로 막힌 write 가 있어도 감시 시간·취소 직후 돌아온다.
+     *       change(add)-hyungchul-2026-10-11-18:51
      * 입력: b(백엔드), pcm(PCM16 LE), tag(언어 태그), watchMs(감시 시간 ms), number(세션 번호)
-     * 출력: EngineException(TRANSCRIBE, ABORTED/PIPE_NOT_CONSUMED/엔진 코드), 코루틴 취소 → CancellationException
+     * 출력: EngineException(TRANSCRIBE, ABORTED/PIPE_NOT_CONSUMED/ENGINE_ERROR(공급 중 예외)/엔진 코드), 코루틴 취소 → CancellationException
      * 리턴: Attempt, 감시 시간 초과면 null
      */
-    private suspend fun attempt(b: RecognitionBackend, pcm: ByteArray, tag: String, watchMs: Long, number: Int): Attempt? = coroutineScope {
+    private suspend fun attempt(b: RecognitionBackend, pcm: ByteArray, tag: String, watchMs: Long, number: Int): Attempt? {
         val t0 = clock() // 세션 시작 시각
         val session = b.open(tag) // 세션 열기
         val fed = AtomicReference<FeedStats?>(null) // 공급 결과(공급 코루틴이 채움)
-        val feedJob = launch(io) { // 공급 코루틴
-            val stats = feeder.feed(session.audio, pcm, speed) // 배속 공급
-            fed.set(stats) // 결과 공개(finishInput 보다 먼저)
-            if (stats.completed) session.finishInput() // 다 썼으면 공급 끝 알림
+        val feedError = AtomicReference<Exception?>(null) // 공급 코루틴의 예외(finishInput 실패 등) // change(add)-hyungchul-2026-10-11-18:51
+        val feedJob = workScope.launch { // 공급 코루틴(엔진 소유 범위, join 하지 않음) // change(add)-hyungchul-2026-10-11-18:51
+            try {
+                val stats = feeder.feed(session.audio, pcm, speed) // 배속 공급
+                fed.set(stats) // 결과 공개(finishInput 보다 먼저)
+                if (stats.completed) session.finishInput() // 다 썼으면 공급 끝 알림
+            } catch (e: CancellationException) {
+                throw e // 공급 중단은 정상 종료
+            } catch (e: Exception) { // 분리된 범위라 예외가 새지 않게 잡는다
+                feedError.set(e) // 기록(대기 쪽에서 오류로 보고)
+                session.abort() // 대기 중인 awaitOutcome 을 곧 끝나게 함(계약)
+            }
         }
         val mine = ActiveSession(session, feedJob) // 진행 중 세션
         active.set(mine) // cancel 대상으로 등록
@@ -145,11 +165,12 @@ class SystemAsrEngine(
         try {
             val outcome = withTimeoutOrNull(watchMs) { session.awaitOutcome() } // 감시 시간 안에 결과 대기
             val t1 = clock() // 결과 수신 시각
-            stopFeed(mine) // 엔진이 먼저 끝났어도 공급기가 막히지 않게 즉시 정리
+            stopFeed(mine) // 엔진이 먼저 끝났어도 공급기가 막히지 않게 즉시 정리(기다리지 않음)
             settled = true // 아래는 모두 결론
             if (outcome == null) session.abort() // 응답 없음 → 즉시 중단
             if (cancelRequested.get()) throw EngineException("TRANSCRIBE", "ABORTED", "전사 중단됨(세션 $number)") // 취소 요청
-            when (outcome) { // 결과별 처리
+            feedError.get()?.let { throw EngineException("TRANSCRIBE", "ENGINE_ERROR", "공급 중 오류(세션 $number): ${it.message}", it) } // 공급 쪽 예외 // change(add)-hyungchul-2026-10-11-18:51
+            return when (outcome) { // 결과별 처리
                 null -> null // 감시 시간 초과(호출자가 재시도/멈춤 처리)
                 is SessionOutcome.Failed -> throw EngineException("TRANSCRIBE", outcome.code, "${kind.serviceLabel}: ${outcome.message}") // 엔진 오류 코드 그대로
                 is SessionOutcome.Completed -> { // 정상 완료
@@ -161,7 +182,7 @@ class SystemAsrEngine(
                 }
             }
         } finally {
-            stopFeed(mine) // 어떤 경로든 공급 정리
+            stopFeed(mine) // 어떤 경로든 공급 정리(공급 코루틴 종료를 기다리지 않음)
             if (!settled) session.abort() // 취소·예외로 빠져나가면 세션 즉시 중단
             active.compareAndSet(mine, null) // 등록 해제
         }
@@ -170,6 +191,7 @@ class SystemAsrEngine(
     /**
      * 목적: 공급 정리
      * 기능: 공급 코루틴을 취소하고 audio(파이프 쓰기 쪽)를 닫아 막힌 쓰기를 풀어 준다(여러 번 불러도 안전).
+     *       공급 코루틴이 끝나기를 기다리지 않는다 — close 로도 풀리지 않는 write 는 그 스레드에 남겨 두고 진행한다. // change(add)-hyungchul-2026-10-11-18:51
      * 입력: s(진행 중 세션)
      * 출력: 없음
      * 리턴: 없음
@@ -210,7 +232,7 @@ class SystemAsrEngine(
      */
     private suspend fun closeBounded(b: RecognitionBackend) {
         val done = CompletableDeferred<Unit>() // 닫기 끝 신호
-        CoroutineScope(io).launch { // 호출자와 분리(멈춘 close 를 기다리지 않기 위해)
+        workScope.launch { // 호출자와 분리(멈춘 close 를 기다리지 않기 위해) // change(add)-hyungchul-2026-10-11-18:51 엔진 소유 범위 사용
             runCatching { b.close() } // 닫기(실패 무시)
             done.complete(Unit) // 끝 알림
         }
@@ -249,26 +271,27 @@ class SystemAsrEngine(
 
     /**
      * 목적: 진행 중 전사 중단
-     * 기능: 중단 요청을 표시하고 현재 세션을 원자적으로 잡아 abort + 공급 코루틴 취소. 다른 스레드에서 불러도 안전하다.
+     * 기능: 중단 요청을 표시하고 현재 세션을 원자적으로 잡아 abort + 공급 정리(코루틴 취소·audio 닫기). 다른 스레드에서 불러도 안전하다.
      * 입력: 없음
      * 출력: 없음
      * 리턴: 없음
      */
     override fun cancel() {
         cancelRequested.set(true) // 중단 요청 표시
-        active.get()?.let { it.session.abort(); it.feedJob.cancel() } // 세션 중단 + 공급 중단
+        active.get()?.let { it.session.abort(); stopFeed(it) } // 세션 중단 + 공급 정리 // change(add)-hyungchul-2026-10-11-18:51 audio 도 닫음
     }
 
     /**
      * 목적: 엔진 해제
-     * 기능: 진행 중 세션을 중단하고 백엔드를 닫는다(반복 호출 안전).
+     * 기능: 진행 중 세션을 중단·공급 정리하고 엔진 소유 범위를 취소한 뒤 백엔드를 닫는다(반복 호출 안전).
      * 입력: 없음
      * 출력: 백엔드 close 가 던진 예외
      * 리턴: 없음
      */
     override fun close() {
         closed = true // 닫힘 표시
-        active.get()?.let { it.session.abort(); it.feedJob.cancel() } // 진행 중 세션 중단
+        active.get()?.let { it.session.abort(); stopFeed(it) } // 진행 중 세션 중단 + 공급 정리 // change(add)-hyungchul-2026-10-11-18:51
+        workScope.cancel() // 엔진 소유 범위 취소(남은 공급 코루틴 정리) // change(add)-hyungchul-2026-10-11-18:51
         val b = backend // 현재 백엔드
         backend = null // 회수
         b?.close() // 해제
@@ -283,12 +306,12 @@ class SystemAsrEngine(
 
         /**
          * 목적: 감시 시간 계산
-         * 기능: ceil(조각 초 × 1000 ÷ 배속) + 15,000 ms.
-         * 입력: samples(16 kHz 샘플 수), speed(배속)
+         * 기능: ceil(조각 초 × 1000 ÷ 배속) + 여유(기본 15,000 ms).
+         * 입력: samples(16 kHz 샘플 수), speed(배속), marginMs(감시 여유 ms, 기본 15,000 — 실제 스레드 테스트만 짧게) // change(add)-hyungchul-2026-10-11-18:51
          * 출력: 없음
          * 리턴: 감시 시간(ms)
          */
-        internal fun watchdogMs(samples: Int, speed: Int): Long =
-            ceil(samples / 16_000.0 * 1000 / speed).toLong() + WATCHDOG_MARGIN_MS // 공급 시간 + 여유
+        internal fun watchdogMs(samples: Int, speed: Int, marginMs: Long = WATCHDOG_MARGIN_MS): Long =
+            ceil(samples / 16_000.0 * 1000 / speed).toLong() + marginMs // 공급 시간 + 여유
     }
 }
