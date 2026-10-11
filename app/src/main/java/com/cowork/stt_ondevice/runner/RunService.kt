@@ -19,6 +19,7 @@
 //       - (change(add)-hyungchul-2026-10-11-03:00 리뷰 수정 1) 상태기계(시작 수락/거부·대기 슬롯·실행 Job 수명·최종 상태)를 RunCoordinator 로 옮겨 JVM 에서 검증한다.
 //         실행 Job 은 CoroutineStart.ATOMIC 으로 시작해 본문 시작 전에 취소돼도(시작 직후 취소·onDestroy) 정리(잠금 해제·포그라운드 해제·stopSelf·최종 상태)가 반드시 실행된다.
 //         최종 상태 분류: 사용자 취소(cancelByUser)만 Cancelled, 그 밖의 취소(서비스 파괴)·예외는 Failed. 깨우기 잠금 획득도 실행 본문(try) 안에서 한다.
+//       - change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) 시스템 엔진 멈춤으로 일시정지(Paused)하면 결과 알림 "실행 일시정지" — "<서비스 이름> 가 응답하지 않습니다. 설정에서 강제 중지한 뒤 이어하기를 누르세요."
 // change(add)-hyungchul-2026-10-11-02:40
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
@@ -332,6 +333,7 @@ class RunService : Service() {
                 "OK ${result.counts.ok} · NO_MATCH ${result.counts.noMatch} · ERROR ${result.counts.error} · 미지원 ${result.counts.unsupported} (run ${result.runId})" // 집계
             is RunUiState.Failed -> "배치 실행 실패" to "${result.message} (run ${result.runId})" // 원인
             is RunUiState.Cancelled -> "배치 실행 취소됨" to "run ${result.runId} — 같은 runId 로 이어하기 가능" // 안내
+            is RunUiState.Paused -> "실행 일시정지" to "${result.serviceLabel} 가 응답하지 않습니다. 설정에서 강제 중지한 뒤 이어하기를 누르세요." // 엔진 멈춤 안내 // change(add)-hyungchul-2026-10-11-19:03
             else -> "배치 실행 종료" to result.toString() // 그 밖(발생하지 않음)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID) // 빌더

@@ -6,6 +6,7 @@
 //       change(add)-hyungchul-2026-10-11-03:31 입력 파일 목록(inputs, InputEntry)도 남겨 결과 화면의 이어하기가 같은 입력을 복원할 수 있게 한다.
 //       change(add)-hyungchul-2026-10-11-12:51 진행 단계 표시별 중단 발견 횟수(inFlightAttempts)를 남기고, 저장은 AtomicFile.write(fsync 포함)로 한다.
 //       change(add)-hyungchul-2026-10-11-18:14 다시 실행 정리 진행 중 표식(rerunCleanupPending)을 남긴다(2차 작업 1).
+//       change(add)-hyungchul-2026-10-11-19:03 시스템 엔진 멈춤으로 일시정지한 사유(pausedReason)를 남긴다(2차 작업 4).
 package com.cowork.stt_ondevice.output // 출력 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -268,6 +269,9 @@ data class RunManifest(
     //   정리 직전에 true 로 저장하고 정리가 끝나면 false 로 저장한다. 정리 도중 프로세스가 죽어 true 로 남은 run 은 일반 이어하기로 열어도 정리를 먼저 다시 수행한다(멱등).
     //   이 필드가 없던 이전 파일은 false(기본값 — 기존 manifest 읽기 호환).
     val rerunCleanupPending: Boolean = false, // 다시 실행 정리 진행 중 표식
+    // change(add)-hyungchul-2026-10-11-19:03: 시스템 엔진 멈춤으로 일시정지했을 때의 사유(2차 작업 4). finishedAt 은 null 로 두어 이어하기 대상이 된다.
+    //   이어하기로 다시 열면 null 로 지운다. 이 필드가 없던 이전 파일은 null(기본값 — 기존 manifest 읽기 호환).
+    val pausedReason: String? = null, // 일시정지 사유, 일시정지 상태가 아니면 null
 ) {
     /**
      * 목적: manifest 원자적 저장

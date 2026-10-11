@@ -5,6 +5,7 @@
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1·I-4) 처음 중단된 단계는 다시 시도·두 번째는 CRASH_OR_KILLED, 완료 run 의 CRASH_OR_KILLED 항목 다시 실행(rerunCrashed),
 //       실행 동안 선택 모델 전부의 사용 표시(ModelStore 사용 횟수, 끝·실패·취소·거부 때 해제)를 확인한다.
 //       change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리 도중 죽은 run 을 일반 이어하기로 열면 정리가 먼저 다시 수행되는지(rerunCleanupPending) 확인한다.
+//       change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) 엔진 멈춤(EngineStalledException) → 항목 미기록·일시정지 이벤트·크래시 미집계, 이어하기로 멈춘 항목부터 재개를 확인한다.
 // change(add)-hyungchul-2026-10-11-01:47
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -19,11 +20,13 @@ import com.cowork.stt_ondevice.engine.AsrEngine // 엔진 계약
 import com.cowork.stt_ondevice.engine.ChunkText // chunk 전사 결과
 import com.cowork.stt_ondevice.engine.EngineException // 엔진 오류
 import com.cowork.stt_ondevice.engine.PrepareInfo // 준비 결과
+import com.cowork.stt_ondevice.engine.system.EngineStalledException // 시스템 엔진 멈춤 예외 // change(add)-hyungchul-2026-10-11-19:03
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 판정
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 모델 저장소(사용 횟수) // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.model.Runtime // 런타임
+import com.cowork.stt_ondevice.model.SystemEngineKind // 시스템 엔진 종류 // change(add)-hyungchul-2026-10-11-19:03
 import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식
 import com.cowork.stt_ondevice.model.VoskConfig // 엔진 설정(가짜용)
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
@@ -975,5 +978,69 @@ class BatchRunnerTest {
         cancelDuringTranscribe { during = store.useCountOf(spec("m1")) } // 전사 중 취소
         assertEquals(1, during) // 실행 중에는 사용 중
         assertEquals(0, store.useCountOf(spec("m1"))) // 취소 후 해제
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:03
+    /**
+     * 목적: 엔진 멈춤 → 배치 일시정지 (2차 작업 4)
+     * 기능: 3 항목 중 2번째에서 EngineStalledException → 마지막 이벤트 Paused(Finished 없음), 1번째 항목만 결과가 있고 2번째는 txt·ERROR.txt·CSV 행이 없다.
+     *       manifest 는 inFlight=null, inFlightAttempts 비어 있음, finishedAt=null, pausedReason=예외 메시지. 엔진은 닫힘.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun stallPausesRunWithoutWritingItem() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("kr", "customer", "03", 4.0)) // 길이로 구분(끝 1.9/2.9/3.9)
+        val stall = EngineStalledException(SystemEngineKind.MLKIT_BASIC, "Speech Services by Google 가 응답하지 않습니다(세션 2)") // 멈춤 예외
+        engineOf = { FakeEngine(it, calls, failWhen = { c -> c.endSec in 2.85..2.95 }, failError = stall) } // 2번째 항목에서 멈춤
+        val events = runner().run(config(listOf(spec("m1")), listOf("SILERO"), files)).toList() // 실행(정상 반환해야 함)
+        val last = events.last() as RunEvent.Paused // 마지막은 일시정지
+        assertEquals(stall.message, last.reason) // 사유 = 예외 메시지
+        assertEquals(SystemEngineKind.MLKIT_BASIC.servicePackage, last.servicePackage) // 서비스 패키지
+        assertEquals(SystemEngineKind.MLKIT_BASIC.serviceLabel, last.serviceLabel) // 서비스 이름
+        assertTrue(events.none { it is RunEvent.Finished }) // 종료 이벤트 없음
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/01.txt").isFile) // 1번째 항목 결과 있음
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").exists()) // 2번째 txt 없음
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.ERROR.txt").exists()) // 2번째 ERROR.txt 없음
+        assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/03.txt").exists()) // 3번째 실행 안 함
+        assertEquals(listOf("01.wav"), rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")).map { it["file"] }) // CSV 에는 1번째만
+        val m = manifest() // manifest
+        assertNull(m.inFlight) // 진행 중 표시 해제
+        assertTrue(m.inFlightAttempts.isEmpty()) // 중단 횟수 비어 있음
+        assertNull(m.finishedAt) // 끝나지 않음(이어하기 대상)
+        assertEquals(stall.message, m.pausedReason) // 일시정지 사유 기록
+        assertTrue(created.all { it.closed }) // 엔진 닫힘
+        assertTrue(OutputLayout.log(runDir, runId).readLines().any { it.contains("\tRUN_PAUSED\t") }) // 로그
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:03
+    /**
+     * 목적: 일시정지 후 이어하기 (2차 작업 4)
+     * 기능: 멈춘 run 을 정상 엔진으로 resume=true 로 다시 실행하면 2·3번째 항목만 엔진을 부르고, 조합 CSV 는 3행(중복 없음),
+     *       pausedReason 은 지워지고, CRASH_OR_KILLED 는 어디에도 없다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun resumeAfterPauseContinuesFromStalledItem() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("kr", "customer", "03", 4.0)) // 파일 3개
+        val stall = EngineStalledException(SystemEngineKind.MLKIT_BASIC, "멈춤") // 멈춤 예외
+        engineOf = { FakeEngine(it, calls, failWhen = { c -> c.endSec in 2.85..2.95 }, failError = stall) } // 2번째에서 멈춤
+        val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).toList() // 일시정지까지
+        calls.clear() // 이어하기 호출만 보려고 비움
+        engineOf = { FakeEngine(it, calls) } // 정상 엔진
+        val events = runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertEquals(listOf("m1|0.10-2.90", "m1|0.10-3.90"), calls.toList()) // 2·3번째 항목만 실행
+        assertTrue(events.last() is RunEvent.Finished) // 정상 종료
+        assertEquals(listOf("01.wav", "02.wav", "03.wav"), rows(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO")).map { it["file"] }) // 3행, 중복 없음
+        val m = manifest() // manifest
+        assertNull(m.pausedReason) // 사유 지워짐
+        assertNotNull(m.finishedAt) // 종료 기록
+        assertNull(m.inFlight) // 진행 중 없음
+        assertFalse(OutputLayout.log(runDir, runId).readText().contains("CRASH_OR_KILLED")) // 크래시 기록 없음
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer").listFiles()!!.none { it.name.endsWith(".ERROR.txt") }) // ERROR.txt 없음
     }
 }

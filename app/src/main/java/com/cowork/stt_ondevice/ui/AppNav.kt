@@ -7,6 +7,7 @@
 //       실행 시작·이어하기 시작 시 진행 탭으로, 진행 화면의 "결과 보기" 는 그 run 의 결과 탭으로 이동한다.
 //       change(add)-hyungchul-2026-10-11-03:59 마이크 탭을 실제 화면(MicScreen)으로 교체. 실행 탭은 선택 인자 select(run?select=<wav 절대 경로>)로 마이크 녹음 파일을 미리 선택해 열 수 있다.
 //       결과 탭의 SAF 내보내기를 켠다(exportEnabled = true).
+//       change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) 진행 화면의 일시정지 상태 [이어하기] 도 같은 콜백(onOpenResults)으로 그 run 의 결과 탭을 열어 기존 이어하기 버튼을 쓴다.
 package com.cowork.stt_ondevice.ui // 화면 최상위 패키지
 
 import androidx.annotation.DrawableRes // 리소스 id 표시
@@ -102,7 +103,7 @@ fun AppNav() {
             ) { entry ->
                 RunSetupScreen(onStarted = { navigateTab(AppTab.PROGRESS.route, false) }, preselectPath = entry.arguments?.getString(SELECT_ARG)) // 실행 설정(미리 선택 경로)
             }
-            composable(AppTab.PROGRESS.route) { RunProgressScreen(onOpenResults = { runId -> navigateTab("${AppTab.RESULTS.route}?$RUN_ID_ARG=$runId", false) }) } // 진행 — change(add)-hyungchul-2026-10-11-03:31 결과 보기 → 그 run
+            composable(AppTab.PROGRESS.route) { RunProgressScreen(onOpenResults = { runId -> navigateTab("${AppTab.RESULTS.route}?$RUN_ID_ARG=$runId", false) }) } // 진행 — change(add)-hyungchul-2026-10-11-03:31 결과 보기·일시정지 이어하기 → 그 run
             composable( // 결과 — change(add)-hyungchul-2026-10-11-03:31 선택 인자 runId
                 route = "${AppTab.RESULTS.route}?$RUN_ID_ARG={$RUN_ID_ARG}", // results?runId={runId}
                 arguments = listOf(navArgument(RUN_ID_ARG) { type = NavType.StringType; nullable = true; defaultValue = null }), // 없으면 null

@@ -4,6 +4,7 @@
 //       - 실행 Job: 정상 종료 → Finished(진행 상태 반영), 본문 시작 전 사용자 취소 → Cancelled + 정리 콜백(onRunFinishing·onRunEnded) 보장,
 //         실행 중 사용자 취소 → Cancelled, 사용자 취소가 아닌 취소(범위 취소) → Failed, 흐름 예외·시작 준비(onRunStarting) 예외 → Failed + 정리 보장
 //       change(add)-hyungchul-2026-10-11-03:31 진행 화면용 Running.errorCount(ERROR 완료 수)·startedAtMs(시작 시각) 반영
+//       change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) Paused 이벤트 → 최종 상태 Paused 게시(Finished 로 덮지 않음) 확인
 //       Android 의존 없음(가짜 RunHost, 가상 시간 TestScope).
 // change(add)-hyungchul-2026-10-11-03:00
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
@@ -307,5 +308,32 @@ class RunCoordinatorTest {
         c.launch(scope, cfg, host, StandardTestDispatcher(scope.testScheduler)) // 실행
         scope.advanceUntilIdle() // 끝까지
         assertEquals(listOf(1, 1, 2), seen) // ERROR 만 셈
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:03
+    /**
+     * 목적: 일시정지 이벤트의 최종 상태 게시 (2차 작업 4)
+     * 기능: 흐름이 Progress, Paused 를 내고 끝나면(Finished 없음) 최종 상태는 Failed("종료 이벤트 없이…")가 아니라 RunUiState.Paused 이고,
+     *       host.onRunEnded 에도 같은 값이 전달된다. 일시정지 뒤에는 새 실행 시작이 허용된다.
+     * 입력: 없음
+     * 출력: 없음(실패 시 AssertionError)
+     * 리턴: 없음
+     */
+    @Test
+    fun pausedEventPublishesPausedState() {
+        val scope = TestScope() // 가상 시간 범위
+        val c = RunCoordinator() // 상태기계
+        val cfg = config("20261011_030000") // 설정
+        c.requestStart(cfg) // 수락
+        val host = FakeHost({ flow {
+            emit(RunEvent.Progress(1, 3, "m / p / f")) // 진행
+            emit(RunEvent.Paused("Speech Services by Google 가 응답하지 않습니다", "com.google.android.tts", "Speech Services by Google")) // 일시정지
+        } })
+        c.launch(scope, cfg, host, StandardTestDispatcher(scope.testScheduler)) // 실행
+        scope.advanceUntilIdle() // 끝까지
+        val expected = RunUiState.Paused("20261011_030000", "Speech Services by Google 가 응답하지 않습니다", "com.google.android.tts", "Speech Services by Google") // 기대 상태
+        assertEquals(expected, c.events.value) // Paused 게시
+        assertEquals(expected, host.ended) // 종료 콜백에도 같은 값
+        assertNotNull(c.requestStart(config("20261011_030001"))) // 일시정지는 실행 중이 아님 → 새 시작 허용
     }
 }

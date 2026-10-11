@@ -20,6 +20,8 @@
 //         I-3 재개 정리 전에 진행 이벤트("이전 실행 중단 정리 중")를 한 번 내보낸다.
 //       - change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리는 manifest.rerunCleanupPending=true 저장 → clearCrashed(CSV 행 먼저, 파일 나중) → false 저장 순서다.
 //         정리 도중 죽은 run 은 일반 이어하기(rerunCrashed=false)로 열어도 이 표식이 true 이면 정리를 먼저 다시 수행한다(멱등).
+//       - change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) 시스템 엔진 멈춤(EngineStalledException)이면 그 항목의 결과를 쓰지 않고 inFlight=null·그 키의 inFlightAttempts 제거·pausedReason 저장(finishedAt 은 null 유지),
+//         로그 RUN_PAUSED, Paused 이벤트를 내고 오류 없이 끝낸다(Finished 없음 — 엔진·VAD 는 기존 finally 로 닫힘). 이어하기로 다시 열면 pausedReason 을 지우고 그 항목부터 진행한다.
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -29,6 +31,7 @@ import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더 구조
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
 import com.cowork.stt_ondevice.core.storage.InputScanner // 언어 폴더 매핑
 import com.cowork.stt_ondevice.engine.AsrEngine // 엔진 계약
+import com.cowork.stt_ondevice.engine.system.EngineStalledException // 시스템 엔진 멈춤 예외 // change(add)-hyungchul-2026-10-11-19:03
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
 import com.cowork.stt_ondevice.output.DeviceInfoJson // 기기 JSON
@@ -96,8 +99,9 @@ class BatchRunner(
      * 입력: config(실행 설정)
      *       change(add)-hyungchul-2026-10-11-12:51 수집을 시작하면 먼저 modelHold(config) 로 선택 모델 전부를 사용 중으로 표시하고, 어떤 경로로 끝나든(정상·예외·취소) 해제한다.
      * 출력: 이어하기 manifest 를 읽을 수 없거나 설정이 다르면, 또는 새 실행인데 manifest 가 이미 있으면 IllegalStateException(결과를 건드리지 않음).
+     *       change(add)-hyungchul-2026-10-11-19:03 시스템 엔진 멈춤은 예외 없이 Paused 이벤트 후 정상 종료한다.
      *       결과 쓰기 실패가 이어지면 IOException. 수집 취소 시 CancellationException.
-     * 리턴: RunEvent 흐름(Progress/ItemDone/Finished)
+     * 리턴: RunEvent 흐름(Progress/ItemDone/Finished, 엔진 멈춤이면 Paused 로 끝남)
      */
     // change(add)-hyungchul-2026-10-11-02:14: 단계 표시(MODEL_LOAD/VAD_INIT) 정리·기록, 닫기·저장 실패 로그, RUN_FAILED 로그
     fun run(config: RunConfig): Flow<RunEvent> = flow {
@@ -173,9 +177,17 @@ class BatchRunner(
                         if (load.model != null) ensureVad(combo.preset.family, vadPool, state) // 계열 VAD 엔진 준비(VAD_INIT 표시)
                         state.update { it.copy(inFlight = RunManifest.inFlightKey(combo.name, item)) } // 진행 중 기록(크래시 판정용)
                         state.log("ITEM_START", combo.name, target(item), "-", "") // 시작 로그
-                        val detail = processItem(combo, item, load, vadPool, cache, processor) // 처리
+                        val key = RunManifest.inFlightKey(combo.name, item) // 이 항목 키 // change(add)-hyungchul-2026-10-11-12:51 // change(add)-hyungchul-2026-10-11-19:03 멈춤 처리에서도 쓰려고 위로 옮김
+                        val detail = try {
+                            processItem(combo, item, load, vadPool, cache, processor) // 처리
+                        } catch (stall: EngineStalledException) { // 시스템 엔진이 재시도 후에도 응답하지 않음 → 오류로 끝내지 않고 일시정지 // change(add)-hyungchul-2026-10-11-19:03
+                            val reason = stall.message ?: "${stall.kind.serviceLabel} 가 응답하지 않습니다" // 사유(메시지가 없으면 기본 문구)
+                            state.update { it.copy(inFlight = null, inFlightAttempts = it.inFlightAttempts - key, pausedReason = reason) } // 항목 결과는 쓰지 않고 표시 해제·사유 기록(finishedAt 은 null 유지)
+                            state.log("RUN_PAUSED", combo.name, target(item), "PAUSED", reason) // 일시정지 로그
+                            emit(RunEvent.Paused(reason, stall.kind.servicePackage, stall.kind.serviceLabel)) // 일시정지 이벤트(마지막, Finished 없음)
+                            return // 정상 반환 — 엔진·VAD 는 finally 로 닫힘
+                        }
                         val written = writeOutputs(outputs, processor, combo, item, detail, load) // txt → detail → CSV
-                        val key = RunManifest.inFlightKey(combo.name, item) // 이 항목 키 // change(add)-hyungchul-2026-10-11-12:51
                         state.update { it.copy(inFlight = null, inFlightAttempts = it.inFlightAttempts - key) } // 진행 중 해제(+중단 횟수 제거) // change(add)-hyungchul-2026-10-11-12:51 횟수 제거
                         state.count(written.status) // 집계
                         state.log("ITEM_END", combo.name, target(item), written.status, written.error?.let { "${it.stage}/${it.code}: ${it.message}" } ?: "elapsed_sec=${written.elapsedSec}") // 종료 로그
@@ -254,6 +266,7 @@ class BatchRunner(
      *       파일 hash)·프리셋(id, params)·chunk 모드·스레드가 같은지 확인하고 resume=true, finishedAt=null 로 다시 쓴다(inFlight 는 정리를 위해 유지).
      *       change(add)-hyungchul-2026-10-11-03:31 기존 manifest 에 입력 목록(inputs)이 있으면 그것도 같아야 한다(없던 이전 파일은 검사하지 않음).
      *       change(add)-hyungchul-2026-10-11-12:51 이미 완료된(finishedAt 있음) run 은 rerunCrashed 모드일 때만 다시 연다(설정 일치 검사는 같음).
+     *       change(add)-hyungchul-2026-10-11-19:03 이어하기로 열면 pausedReason 도 null 로 지운다(일시정지 해제).
      * 입력: config(실행 설정), runDir(실행 폴더)
      * 출력: 조건 위반 시 IllegalStateException(기존 파일은 건드리지 않음)
      * 리턴: 저장된 manifest
@@ -285,7 +298,7 @@ class BatchRunner(
         check(old.presets.map { it.id to it.params } == fresh.presets.map { it.id to it.params }) { "이어하기 실패: VAD 프리셋 구성이 이전 실행과 다릅니다" } // 프리셋
         check(old.chunkMode == fresh.chunkMode && old.threads == fresh.threads) { "이어하기 실패: chunk 모드·스레드 수가 이전 실행과 다릅니다" } // 실행 옵션
         if (old.inputs != null) check(old.inputs == fresh.inputs) { "이어하기 실패: 입력 파일 구성(목록·순서)이 이전 실행과 다릅니다" } // change(add)-hyungchul-2026-10-11-03:31 입력 구성(기록된 경우만 — 이전 파일은 null)
-        val resumed = old.copy(resume = true, finishedAt = null) // 이어하기 표시
+        val resumed = old.copy(resume = true, finishedAt = null, pausedReason = null) // 이어하기 표시 // change(add)-hyungchul-2026-10-11-19:03 일시정지 사유 지움
         resumed.write(file) // 저장
         return resumed // 이어하기 manifest
     }

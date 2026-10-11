@@ -7,6 +7,7 @@
 //         (기본 시작 모드면 본문 시작 전 취소 시 본문·finally 가 모두 건너뛰어져 상태가 Running 에 고착되고 서비스가 멈추지 않는다).
 //       - 최종 상태: 정상 종료 Finished, 사용자 취소(RunHandle.cancelByUser) Cancelled, 그 밖의 취소(서비스 범위 취소 등)와 예외는 Failed.
 //       - RunHost: 서비스가 구현하는 콜백(실행 흐름 생성·깨우기 잠금·알림·로그·메인 스레드 종료 처리).
+//       - change(add)-hyungchul-2026-10-11-19:03 Paused 이벤트(시스템 엔진 멈춤) → 최종 상태 RunUiState.Paused. BatchRunner 는 Paused 뒤 Finished 를 내지 않으므로 Finished/Failed 로 덮이지 않는다(2차 작업 4).
 //       - change(add)-hyungchul-2026-10-11-03:31 진행 화면용으로 Running.startedAtMs(시작 수락 시각)와 errorCount(ERROR 완료 항목 수)를 채운다.
 // change(add)-hyungchul-2026-10-11-03:00
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
@@ -171,7 +172,7 @@ internal class RunCoordinator(private val clock: () -> Long = System::currentTim
     /**
      * 목적: 실행 Job 시작
      * 기능: scope 에서 시작 모드 START_MODE 로 본문을 띄운다. 본문: 취소 확인 → host.onRunStarting → host.runFlow(config) 수집
-     *       (Progress: Running.progress 갱신 + host.onProgress, ItemDone: lastItem 갱신, Finished: 최종 상태 보관).
+     *       (Progress: Running.progress 갱신 + host.onProgress, ItemDone: lastItem 갱신, Finished: 최종 상태 보관, Paused: 일시정지 최종 상태 보관 — change(add)-hyungchul-2026-10-11-19:03).
      *       취소는 사용자 취소 표시가 있으면 Cancelled, 없으면 Failed. 그 밖의 예외는 host.onRunFailed 후 Failed. Finished 없이 끝나면 Failed.
      *       finally: host.onRunFinishing(예외는 무시) → withContext(NonCancellable + endContext) { host.onRunEnded(최종) 후 최종 상태 게시 }.
      * 입력: scope(실행 범위), config(실행 설정), host(콜백), endContext(종료 처리 문맥 — 서비스는 Dispatchers.Main)
@@ -194,6 +195,7 @@ internal class RunCoordinator(private val clock: () -> Long = System::currentTim
                         }
                         is RunEvent.ItemDone -> updateRunning(runId) { it.copy(lastItem = ev, errorCount = it.errorCount + if (ev.status == "ERROR") 1 else 0) } // 최근 완료 항목 // change(add)-hyungchul-2026-10-11-03:31 ERROR 수 누적
                         is RunEvent.Finished -> terminal = RunUiState.Finished(runId, ev) // 정상 종료 집계
+                        is RunEvent.Paused -> terminal = RunUiState.Paused(runId, ev.reason, ev.servicePackage, ev.serviceLabel) // 엔진 멈춤 → 일시정지(이어하기 대상) // change(add)-hyungchul-2026-10-11-19:03
                     }
                 }
             } catch (e: CancellationException) {
