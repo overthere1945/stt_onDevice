@@ -17,7 +17,7 @@
 | 3. PC `run_eval.py` 에서 모든 조합이 `<algo>_<model>_<VAD>` 로 페어링 | **통과** | T26(`tools/check_pairing.sh`), 3.6(42 조합)·3.7·3.8(kr 24·en 30 발화 전부) |
 | 4. VAD Kotlin 포팅이 Python 원본과 허용오차 내 일치 | **통과(9 계열)** | 5절 |
 | 5. 측정 불가 값은 빈 값 | **통과** | T23·T25(빈 값 규칙 테스트) |
-| (추가) release 빌드 실기기 | **통과** — 처음 시작 크래시(Room 생성자 제거)를 keep 규칙으로 수정(R45) | 3.3 |
+| (추가) release 빌드 실기기 | **부분 확인** — 확인한 것: 처음 시작 크래시(Room 생성자 제거)를 keep 규칙으로 수정(R45)한 뒤 S22 Ultra 에서 시작 정상, whisper tiny·vosk-ko × {NONE, SILERO} 4건 OK. 그 밖의 엔진(sherpa 계열 등)의 release 실행은 미확인 <!-- change(add)-hyungchul-2026-10-11-12:51 최종 리뷰 M-6: 확인 범위로 좁힘 --> | 3.3 |
 
 ## 2. 1차·2차 검증 (PC)
 
@@ -335,3 +335,33 @@ en (n_utt = 1)
 | `$A/output_stt/20261011_115617` | 54파일 × tiny × NONE(3.8 화면 끔 확인) |
 | `$A/output_stt/20261011_122655`, `20261011_122926` | release 확인 run(4건), debug Vosk 반복성 확인 run(1건) — 3.3 |
 | 앱의 SAF 접근 권한 | `Documents/input_sound` 폴더 읽기 허용(가져오기 때 "허용") |
+
+## 9. 최종 리뷰 수정 (2026-10-11, 결정 R46)
+
+<!-- change(add)-hyungchul-2026-10-11-12:51 -->
+Phase 1 브랜치 전체 최종 리뷰의 지적을 한 번에 고쳤습니다. 근거: `.superpowers/sdd/2026-10-09-stt-ondevice-phase1/final-fix-report.md`.
+
+| 지적 | 수정 내용 |
+|---|---|
+| I-1 한 번의 OS 종료가 영구 ERROR | 재개 때 남은 진행 표시(`inFlight`)를 **처음 만나면 다시 시도**(`run_manifest.json` 의 새 필드 `inFlightAttempts[키]=1`), **같은 키를 두 번째로 만나면** `CRASH_OR_KILLED`. 그 단계가 프로세스가 살아서 끝나면 키를 지움. 결과 탭에 완료 run 용 **CRASH_OR_KILLED 항목 다시 실행** 추가(`RunConfig.rerunCrashed` — 그 항목의 ERROR.txt·detail·두 CSV 행을 지우고 그 항목만 다시 실행, 설정이 다르면 거부). 완료된 run 은 이 모드로만 다시 열림 |
+| I-2 manifest fsync 없음 | `RunManifest.write` 가 `AtomicFile.write`(fsync → 원자적 교체) 사용 |
+| I-3 대량 크래시 정리가 O(n²) | 여러 항목을 ERROR 로 쓸 때 CSV 찢긴 줄 정리를 한 번만 하고 행은 추가만(기존 행 제거 없음). 다시 실행 때 행 삭제도 CSV 마다 한 번(`CsvFiles.removeRowsWhere`). 정리 전 진행 이벤트 표시 |
+| I-4 로드된 모델만 삭제 보호 | 실행 시작 때 선택한 ASR 모델 전부 + 필요한 VAD 계열 모델 전부를 `ModelStore.acquireAll` 로 잡고 끝(정상·실패·취소·거부)에 해제. 엔진별 acquire 는 유지 |
+| I-5 USER 프리셋 편집 미구현 | 구현하지 않고 설계서 §7.3·§12 에 Phase 2 로 미룸과 이유(편집 값 영구 저장 + 이어하기 동일성 검사 구조 필요)를 적음 |
+| I-6 CSV `device` 고정값 | 엔진이 보고한 backend 소문자(지금 엔진은 모두 `cpu` → 출력 동일), 로드 전 실패는 설정 장치 `cpu` |
+| T3 이월 입력 스캔 | `.` 으로 시작하는 파일 제외, 같은 폴더의 대소문자만 다른 같은 이름 wav 는 모두 빼고 실행 탭에 "입력 오류" 로 표시 |
+| M-4 | `AndroidManifest.xml` 에 `INTERNET` 명시(APK 권한 목록에서 확인) |
+| M-6 | 1절 요약의 release 항목을 확인한 범위로 좁힘 |
+| M-2 | 사용설명서 10절: 첫 계산 모델의 elapsed/cpu/rss 에 VAD 비용 포함(rtf 영향 없음), zipformer-ko 는 CER 로 비교 |
+
+검증(2026-10-11 실행):
+
+| 항목 | 결과 |
+|---|---|
+| `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease` | **BUILD SUCCESSFUL**, 단위 테스트 **51 클래스 336 테스트, 실패·오류·건너뜀 0** |
+| `tools/check_16kb.sh` debug / release | **11/11 · 11/11** 정렬 |
+| 대량 정리 속도 테스트(`RunnerHelpersTest.markManyCrashedItemsIsFastAndConsistent`, 요약 12,001행 + 400항목) | 수정 후 2.4 s 통과 / 이전 방식(항목마다 행 교체)으로 되돌려 실행하면 18.1 s 로 실패(8 s 제한) |
+| 기기(S22 Ultra) — debug `adb install -r`(데이터 유지) 후 kr/Customer_Service 01·02 × {whisper tiny, vosk-ko} × SILERO_DEFAULT | run `20261011_131459` **OK 4**, CSV `device=cpu` |
+| 기기 — I-4 | 위 실행에서 whisper tiny 처리 중(13:15:09, vosk 로드는 13:15:23)에 모델 탭에서 vosk-ko 삭제 → **"사용 중인 모델은 삭제할 수 없습니다" 로 거부**, 모델 그대로 |
+| 기기 — I-1 | run `20261011_131614`: tiny 01 처리 중 `am force-stop` → 이어하기 → 로그 `RECONCILE … RETRY`, manifest `inFlightAttempts={…01:1}` 로 01 다시 실행 → 그 중 다시 `force-stop` → 이어하기 → 01 만 `CRASH_OR_KILLED`(ERROR 1), 나머지 OK 3 → 결과 탭에 **CRASH_OR_KILLED 항목 다시 실행 (1개)** → 누르면 01 만 다시 실행(OK, vosk 는 다시 로드 안 함), 두 CSV 모두 항목마다 1행·크래시 행 0, `inFlightAttempts={}` |
+| 기기 산출물 | 위 두 run 폴더와 UI 덤프 임시 파일을 지움(8절 목록은 그대로). 기기의 debug 앱은 이번 수정 빌드로 바뀜 |
