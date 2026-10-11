@@ -6,6 +6,8 @@
 //       실행 동안 선택 모델 전부의 사용 표시(ModelStore 사용 횟수, 끝·실패·취소·거부 때 해제)를 확인한다.
 //       change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리 도중 죽은 run 을 일반 이어하기로 열면 정리가 먼저 다시 수행되는지(rerunCleanupPending) 확인한다.
 //       change(add)-hyungchul-2026-10-11-19:03 (2차 작업 4) 엔진 멈춤(EngineStalledException) → 항목 미기록·일시정지 이벤트·크래시 미집계, 이어하기로 멈춘 항목부터 재개를 확인한다.
+//       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 실행 전 언어 사용 가능 확인(availability) 결과가 unsupported·unavailableReasons 에 기록되는지, 이어하기에서 이제 사용 가능해진 조합만 빠지는지,
+//       실시간 배속 공급 엔진의 detail rtf 가 null 인지 확인한다.
 // change(add)-hyungchul-2026-10-11-01:47
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -190,6 +192,8 @@ class BatchRunnerTest {
     private var engineOf: (ModelSpec) -> FakeEngine = { FakeEngine(it, calls) } // 엔진 생성 규칙(테스트별 교체)
     private var vadOf: (VadFamily) -> VadEngine = { FakeVad(it, detects) } // VAD 생성 규칙(테스트별 교체)
     private var holdOf: (RunConfig) -> AutoCloseable = { AutoCloseable { } } // 모델 사용 표시 규칙(테스트별 교체) // change(add)-hyungchul-2026-10-11-12:51
+    private val availabilityCalls: MutableList<String> = Collections.synchronizedList(mutableListOf()) // 언어 확인 호출 기록("모델id|엔진언어") // change(add)-hyungchul-2026-10-11-19:10
+    private var availabilityOf: suspend (ModelSpec, String) -> String? = { _, _ -> null } // 언어 사용 가능 확인 규칙(테스트별 교체) // change(add)-hyungchul-2026-10-11-19:10
     private var device = DeviceInfo("samsung", "SM-S938N", "SM8750", "16", 36, "arm64-v8a", 11800L, "1.0 (1)") // 고정 기기
 
     /** 목적: 앱 폴더. 기능: 임시 폴더 루트의 AppDirs. 입력: 없음. 출력: 없음. 리턴: AppDirs */
@@ -207,6 +211,7 @@ class BatchRunnerTest {
         env = { EnvSnapshot(0, 0.5f, 80, true) }, // 고정 환경
         device = device, // 기기
         modelHold = { cfg -> holdOf(cfg) }, // 모델 사용 표시 // change(add)-hyungchul-2026-10-11-12:51
+        availability = { spec, lang -> availabilityCalls.add("${spec.id}|$lang"); availabilityOf(spec, lang) }, // 언어 사용 가능 확인(호출 기록) // change(add)-hyungchul-2026-10-11-19:10
     )
 
     /** 목적: 가짜 모델. 기능: algo "fake", model=id 인 ModelSpec. 입력: id, languages, maxChunkSec. 출력: 없음. 리턴: ModelSpec */
@@ -1042,5 +1047,81 @@ class BatchRunnerTest {
         assertNull(m.inFlight) // 진행 중 없음
         assertFalse(OutputLayout.log(runDir, runId).readText().contains("CRASH_OR_KILLED")) // 크래시 기록 없음
         assertTrue(File(runDir, "kr/fake_m1_SILERO/customer").listFiles()!!.none { it.name.endsWith(".ERROR.txt") }) // ERROR.txt 없음
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 사용할 수 없는 언어 건너뛰기 (2차 작업 5)
+     * 기능: availability 가 en 에만 "언어 미설치(en-US)" 를 돌려주면 en 항목은 실행되지 않고 en 결과·detail·VAD 폴더가 없으며,
+     *       manifest.unsupported 에 "<combo>|en", unavailableReasons 에 같은 키로 사유가 남는다. ko 항목은 정상 실행. 언어 확인은 모델 × 언어마다 1회.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun unavailableLanguageIsSkippedAndRecorded() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("en", "vLog", "01", 2.0)) // 한국어 2 + 영어 1
+        availabilityOf = { _, lang -> if (lang == "en") "언어 미설치(en-US)" else null } // 영어만 사용 불가
+        val events = runner().run(config(listOf(spec("m1")), listOf("SILERO", "SILERO_SAFE"), files)).toList() // 프리셋 2개로 실행(확인은 1회여야 함)
+        assertEquals(listOf("m1|ko", "m1|en"), availabilityCalls.toList()) // 모델 × 언어마다 1회(프리셋·파일 수와 무관)
+        assertFalse(File(runDir, "en").exists()) // en 결과 폴더 없음
+        assertFalse(File(runDir, "details/en").exists()) // en detail 없음
+        assertFalse(File(runDir, "vad_segments/SILERO/en").exists()) // en VAD 계산 없음
+        assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/01.txt").isFile) // ko 는 정상
+        assertEquals(4, calls.size) // ko 2파일 × 2프리셋만 전사
+        val m = manifest() // manifest
+        assertEquals(listOf("fake_m1_SILERO|en", "fake_m1_SILERO_SAFE|en"), m.unsupported) // 미지원 기록
+        assertEquals(mapOf("fake_m1_SILERO|en" to "언어 미설치(en-US)", "fake_m1_SILERO_SAFE|en" to "언어 미설치(en-US)"), m.unavailableReasons) // 사유 기록
+        assertEquals(RunEvent.Finished(4, 0, 0, 2), events.last()) // 집계(미지원 2조합)
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 이어하기에서 이제 사용 가능해진 언어 복구 (2차 작업 5)
+     * 기능: 영어 불가로 시작한 run 을 중간에 멈춘 뒤 availability 가 모두 null 로 이어하면 en 항목이 실행되고 unavailableReasons 가 비며,
+     *       카탈로그 언어 미지원(ko 전용 m2 × en) 기록은 unsupported 에 그대로 남는다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun resumeDropsNowAvailableLanguage() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0), item("en", "vLog", "01", 2.0)) // 파일 3개
+        val models = listOf(spec("m1"), spec("m2", languages = setOf("ko"))) // m2 는 카탈로그상 ko 전용
+        availabilityOf = { _, lang -> if (lang == "en") "언어 미설치(en-US)" else null } // 영어 사용 불가
+        runner().run(config(models, listOf("SILERO"), files)).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // 1개만 하고 중단
+        val before = manifest() // 중단 직후
+        assertNull(before.finishedAt) // 끝나지 않음
+        assertEquals(setOf("fake_m1_SILERO|en", "fake_m2_SILERO|en"), before.unsupported.toSet()) // m1 은 불가, m2 는 카탈로그 미지원(기록 순서는 검사하지 않음)
+        assertEquals(mapOf("fake_m1_SILERO|en" to "언어 미설치(en-US)"), before.unavailableReasons) // 사유는 m1 만(카탈로그 미지원은 사유 없음)
+        availabilityOf = { _, _ -> null } // 이제 모두 사용 가능
+        calls.clear() // 기록 초기화
+        val events = runner().run(config(models, listOf("SILERO"), files, resume = true)).toList() // 이어하기
+        assertTrue(File(runDir, "en/fake_m1_SILERO/vLog/01.txt").isFile) // en 항목 실행됨
+        assertTrue(calls.contains("m1|0.10-1.90")) // en 파일(2초) 전사 호출
+        val after = manifest() // 이어하기 후
+        assertTrue(after.unavailableReasons.isEmpty()) // 사유 비어 있음
+        assertEquals(listOf("fake_m2_SILERO|en"), after.unsupported) // 카탈로그 미지원은 유지
+        assertEquals(RunEvent.Finished(4, 0, 0, 1), events.last()) // 이번 실행 집계(m1 kr02·en01 + m2 kr01·kr02)
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 실시간 배속 공급 엔진의 rtf 비움 (2차 작업 5)
+     * 기능: streaming 이 PACED_REALTIME 인 모델의 detail.rtf 는 null, 일반 모델은 값이 있다(transcribeSec 는 둘 다 측정).
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun pacedRealtimeModelHasNoRtf() = runBlocking {
+        val it1 = item("kr", "customer", "01", 2.0) // 파일
+        val paced = spec("m1").copy(streaming = StreamingKind.PACED_REALTIME) // 실시간 배속 공급 모델
+        runner().run(config(listOf(paced, spec("m2")), listOf("SILERO"), listOf(it1))).toList() // 실행
+        val d1 = AppJson.decodeFromString(DetailJson.serializer(), OutputLayout.detail(runDir, it1, combo("m1", "SILERO")).readText()) // paced detail
+        val d2 = AppJson.decodeFromString(DetailJson.serializer(), OutputLayout.detail(runDir, it1, combo("m2", "SILERO")).readText()) // 일반 detail
+        assertNull(d1.rtf) // rtf 측정 안 함
+        assertNotNull(d1.transcribeSec) // 전사 시간은 측정
+        assertNotNull(d2.rtf) // 일반 모델은 rtf 있음
     }
 }

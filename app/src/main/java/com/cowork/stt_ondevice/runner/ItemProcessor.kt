@@ -6,6 +6,7 @@
 //       코루틴이 취소되면 감시 코루틴이 engine.cancel() 을 불러 네이티브 전사를 멈춘다(엔진은 Job 취소를 스스로 감지하지 않음).
 //       change(add)-hyungchul-2026-10-11-18:37 chunk 결과에 시스템 엔진 세션 기록(ChunkText.session → ChunkJson.session)을 함께 담는다(2차 작업 3).
 //       change(add)-hyungchul-2026-10-11-19:03 시스템 엔진 멈춤(EngineStalledException)은 항목 오류로 기록하지 않고 그대로 던진다(배치가 일시정지하도록, 2차 작업 4).
+//       change(add)-hyungchul-2026-10-11-19:10 실시간 배속 공급 엔진(streaming == PACED_REALTIME)은 rtf 를 측정하지 않고 null 로 둔다(2차 작업 5).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.audio.PcmConverter // 16k mono 변환
@@ -18,6 +19,7 @@ import com.cowork.stt_ondevice.engine.AsrEngine // 엔진 계약
 import com.cowork.stt_ondevice.engine.ChunkText // chunk 전사 결과
 import com.cowork.stt_ondevice.engine.PrepareInfo // 준비 결과
 import com.cowork.stt_ondevice.engine.system.EngineStalledException // 시스템 엔진 멈춤 예외 // change(add)-hyungchul-2026-10-11-19:03
+import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식(실시간 배속 공급 판정) // change(add)-hyungchul-2026-10-11-19:10
 import com.cowork.stt_ondevice.output.ChunkJson // chunk 결과 JSON
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
 import com.cowork.stt_ondevice.output.EngineMetaJson // 엔진 메타 JSON
@@ -165,7 +167,7 @@ internal class ItemProcessor(
             vadPresetId = combo.preset.id, vadReused = vadReused, vadFrameScoresAvailable = scoresAvailable, // VAD 정보
             startedAt = startedAt, audioSec = audioSec, preprocessSec = preprocessSec, vadSec = vadSec, loadSec = model.info.loadSec, // 시간
             transcribeSec = ts, elapsedSec = elapsed, // 전사·전체 시간
-            rtf = if (ts != null && au != null && au > 0.0) ts / au else null, // 실시간 배율
+            rtf = if (combo.spec.streaming != StreamingKind.PACED_REALTIME && ts != null && au != null && au > 0.0) ts / au else null, // 실시간 배율(실시간 배속 공급 엔진은 측정 안 함 → null) // change(add)-hyungchul-2026-10-11-19:10
             cpuTimeSec = stats?.cpuTimeSec, pssPeakMb = stats?.pssPeakMb, // 자원
             envStart = envStart, envEnd = envJson(), // 환경
             chunks = chunks, // chunk 결과

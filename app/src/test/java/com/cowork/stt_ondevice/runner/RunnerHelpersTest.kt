@@ -4,6 +4,8 @@
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰) device 열이 엔진 보고 backend 를 따르는지(I-6), 많은 항목을 크래시 ERROR 로 기록하는 정리가 빠르고 행 수가 맞는지(I-3),
 //       removeRowsWhere 가 여러 행을 한 번에 지우는지 확인한다.
 //       change(add)-hyungchul-2026-10-11-18:14 (2차 작업 1) 다시 실행 정리 순서(행 먼저 → 파일, removeRows/removeResults 멱등)와 시간 단언 대신 요약 CSV 읽기 횟수 단언(CsvFiles.onFullRead)을 확인한다.
+//       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 시스템 엔진 CSV 행(rtf·compute_type·workers 빈 값, device=backend, engine_version, note 끝 ";feed=x<배속>")과
+//       시스템 엔진 maxChunk 덮어쓰기 범위 (0, 60] 를 확인한다.
 // change(add)-hyungchul-2026-10-11-02:14
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -16,6 +18,7 @@ import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.Runtime // 런타임
 import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식
+import com.cowork.stt_ondevice.model.SystemCatalog // 시스템 엔진 카탈로그 // change(add)-hyungchul-2026-10-11-19:10
 import com.cowork.stt_ondevice.model.VoskConfig // 엔진 설정
 import com.cowork.stt_ondevice.output.ChunkJson // chunk 결과
 import com.cowork.stt_ondevice.output.EngineMetaJson // 엔진 메타 // change(add)-hyungchul-2026-10-11-12:51
@@ -31,6 +34,7 @@ import org.junit.Assert.assertFalse // 거짓 검증 // change(add)-hyungchul-20
 import org.junit.Assert.assertNotNull // null 아님 검증
 import org.junit.Assert.assertNull // null 검증
 import org.junit.Assert.assertTrue // 참 검증 // change(add)-hyungchul-2026-10-11-12:51
+import org.junit.Assert.fail // 실패 처리 // change(add)-hyungchul-2026-10-11-19:10
 import org.junit.Rule // 규칙
 import org.junit.Test // 테스트 표시
 import org.junit.rules.TemporaryFolder // 임시 폴더
@@ -218,5 +222,62 @@ class RunnerHelpersTest {
         }
         assertEquals(0, CsvFiles.readRecords(comboCsv).size) // 행은 여전히 0개
         outputs.removeResults(targets) // 세 번째도 멱등
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 시스템 엔진 CSV 행 매핑 확인 (2차 작업 5)
+     * 기능: 시스템 spec(공급 4배속) detail → rtf·compute_type·workers 빈 값, device = backend 그대로, engine_version = 엔진 보고 버전,
+     *       note 가 ";feed=x4" 로 끝나고, transcribe_sec 는 8.000. 일반 모델의 note 에는 feed 표기가 없다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun systemEngineCsvRow() {
+        val sys = SystemCatalog.all.first { it.id == "mlkit-basic-x4" } // 시스템 엔진 x4
+        val sysCombo = Combo(sys, VadPresets.byId("SILERO"), 30.0, ChunkMode.MERGE) // 시스템 조합
+        val it1 = item("01") // 항목
+        val version = "mlkit-genai-sr 1.0.0-alpha1 / com.google.android.tts 1.2.3" // 엔진 보고 버전
+        val detail = processor.failed(sysCombo, it1, ErrorJson("X", "Y", "z"), null).copy( // OK detail 구성
+            status = "OK", error = null, audioSec = 32.0, transcribeSec = 8.0, rtf = null,
+            chunks = listOf(ChunkJson(0, listOf(SpanJson(0.0, 1.0, 0.0)), "NONE", "안녕", "raw", 0.1)),
+            engine = EngineMetaJson(version, "system(soda)", "", 0),
+        )
+        val row = CsvRowBuilder.build("20261011_191000", sysCombo, it1, detail, device, 4) // 행
+        assertEquals("", row["rtf"].orEmpty()) // rtf 빈 값
+        assertEquals("system(soda)", row["device"]) // backend 그대로
+        assertEquals("", row["compute_type"].orEmpty()) // 정밀도 빈 값
+        assertEquals("", row["workers"].orEmpty()) // 스레드 빈 값(설정 스레드 4 로 채우지 않음)
+        assertEquals(version, row["engine_version"]) // 엔진 보고 버전
+        assertTrue(row.getValue("note")!!.endsWith(";feed=x4")) // feed 표기
+        assertEquals("8.000", row["transcribe_sec"]) // 전사 시간
+        val plain = CsvRowBuilder.build("20261011_191000", combo, it1, detail.copy(engine = null), device, 4) // 일반 모델 행
+        assertFalse(plain.getValue("note")!!.contains("feed=")) // 일반 모델은 feed 없음
+        assertEquals("4", plain["workers"]) // 일반 모델은 기존 규칙(설정 스레드 수)
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:10
+    /**
+     * 목적: 시스템 엔진 maxChunk 덮어쓰기 범위 확인 (2차 작업 5)
+     * 기능: 시스템 spec 의 덮어쓰기 0.0·61.0 은 IllegalArgumentException(문구 포함), 60.0 은 허용. 일반 spec 의 0.0 은 기존대로 허용.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test
+    fun systemOverrideRange() {
+        val sys = SystemCatalog.all.first { it.id == "mlkit-basic-x4" } // 시스템 엔진
+        fun cfg(spec: ModelSpec, v: Double) = RunConfig("20261011_191000", emptyList(), listOf(spec), emptyList(), ChunkMode.MERGE, mapOf(spec.id to v)) // 덮어쓰기 1개 설정
+        for (bad in listOf(0.0, 61.0)) { // 범위 밖 값
+            try {
+                cfg(sys, bad) // 생성 시 거부되어야 함
+                fail("$bad 는 거부되어야 합니다")
+            } catch (e: IllegalArgumentException) {
+                assertEquals("시스템 엔진 최대 조각 길이는 0 초 초과 60 초 이하여야 합니다: mlkit-basic-x4=$bad", e.message) // 문구 그대로
+            }
+        }
+        assertEquals(60.0, cfg(sys, 60.0).maxChunkFor(sys), 0.0) // 상한 60 허용
+        assertEquals(0.0, cfg(spec(), 0.0).maxChunkFor(spec()), 0.0) // 일반 모델 0(무제한)은 기존대로 허용
     }
 }

@@ -7,6 +7,7 @@
 //       change(add)-hyungchul-2026-10-11-12:51 진행 단계 표시별 중단 발견 횟수(inFlightAttempts)를 남기고, 저장은 AtomicFile.write(fsync 포함)로 한다.
 //       change(add)-hyungchul-2026-10-11-18:14 다시 실행 정리 진행 중 표식(rerunCleanupPending)을 남긴다(2차 작업 1).
 //       change(add)-hyungchul-2026-10-11-19:03 시스템 엔진 멈춤으로 일시정지한 사유(pausedReason)를 남긴다(2차 작업 4).
+//       change(add)-hyungchul-2026-10-11-19:10 실행 전 언어 사용 가능 확인에서 쓸 수 없던 조합의 사유(unavailableReasons)를 남긴다(2차 작업 5).
 package com.cowork.stt_ondevice.output // 출력 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -272,6 +273,10 @@ data class RunManifest(
     // change(add)-hyungchul-2026-10-11-19:03: 시스템 엔진 멈춤으로 일시정지했을 때의 사유(2차 작업 4). finishedAt 은 null 로 두어 이어하기 대상이 된다.
     //   이어하기로 다시 열면 null 로 지운다. 이 필드가 없던 이전 파일은 null(기본값 — 기존 manifest 읽기 호환).
     val pausedReason: String? = null, // 일시정지 사유, 일시정지 상태가 아니면 null
+    // change(add)-hyungchul-2026-10-11-19:10: 실행 전 언어 사용 가능 확인에서 쓸 수 없다고 나온 조합의 사유(2차 작업 5). 키는 unsupported 와 같은 "combo|lang"(lang = 입력 폴더명 kr/en), 값은 한국어 사유.
+    //   카탈로그 언어 미지원으로 unsupported 에 들어간 항목은 여기에 키가 없다(그것으로 구별). 이어하기에서 이제 사용 가능해진 조합은 unsupported 와 여기서 함께 빠진다.
+    //   이 필드가 없던 이전 파일은 빈 맵(기본값 — 기존 manifest 읽기 호환).
+    val unavailableReasons: Map<String, String> = emptyMap(), // 사용 불가 조합 → 사유
 ) {
     /**
      * 목적: manifest 원자적 저장

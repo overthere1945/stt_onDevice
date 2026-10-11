@@ -3,11 +3,15 @@
 // 기능: 행을 항상 DetailJson 에서만 만든다 — 정상 실행과 재개 시 행 복구가 같은 함수를 써서 같은 행이 나온다.
 //       텍스트 통계(chars/words/text_sha1)는 PC stt_common.text_stats 와 같다(공백류를 공백 1개로 정리·양끝 trim 후 길이(공백 포함)/공백 분할 수/SHA-1 앞 12자).
 //       숫자 서식은 PC build_row 와 같다(시간 3자리, rss 1자리, rtf 4자리, Locale.ROOT). 측정하지 못한 값은 빈 칸.
+//       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 시스템 엔진 행: rtf·compute_type·workers 는 빈 값, device 는 backend 그대로, engine_version 은 엔진 보고 버전, note 끝에 ";feed=x<배속>".
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
 import com.cowork.stt_ondevice.model.Runtime // 런타임 구분
+import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식(rtf 판정) // change(add)-hyungchul-2026-10-11-19:10
+import com.cowork.stt_ondevice.model.SystemEngineConfig // 시스템 엔진 설정(feed 배속) // change(add)-hyungchul-2026-10-11-19:10
+import com.cowork.stt_ondevice.model.isSystem // 시스템 엔진 여부 // change(add)-hyungchul-2026-10-11-19:10
 import com.cowork.stt_ondevice.output.ChunkJson // chunk 결과
 import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
 import com.cowork.stt_ondevice.output.ErrorJson // 오류 JSON
@@ -60,13 +64,16 @@ internal object CsvRowBuilder {
     /**
      * 목적: note 열 생성
      * 기능: "vad=<preset>;chunk_mode=<MERGE|INDIVIDUAL>;max_chunk=<sec>;alias=<별칭 또는 빈 값>", 오류면 ";stage=..;code=.." 를 덧붙인다.
+     *       change(add)-hyungchul-2026-10-11-19:10 시스템 엔진이면 그 뒤(기존 규칙 뒤)에 ";feed=x<배속>" 을 붙인다.
      * 입력: combo(조합), error(오류, 없으면 null)
      * 출력: 없음
      * 리턴: note 문자열
      */
     fun note(combo: Combo, error: ErrorJson?): String {
         val base = "vad=${combo.preset.id};chunk_mode=${combo.chunkMode.name};max_chunk=${combo.maxChunkSec};alias=${combo.spec.compatAlias.orEmpty()}" // 기본 설명
-        return if (error == null) base else "$base;stage=${error.stage};code=${error.code}" // 오류면 stage/code 추가
+        val withError = if (error == null) base else "$base;stage=${error.stage};code=${error.code}" // 오류면 stage/code 추가
+        val feed = (combo.spec.engineConfig as? SystemEngineConfig)?.feedSpeed // 시스템 엔진 공급 배속(아니면 null) // change(add)-hyungchul-2026-10-11-19:10
+        return if (feed == null) withError else "$withError;feed=x$feed" // 시스템 엔진만 feed 표기 // change(add)-hyungchul-2026-10-11-19:10
     }
 
     /**
@@ -95,6 +102,7 @@ internal object CsvRowBuilder {
      *       engine_version/compute_type/workers 는 prepare 가 보고한 값을 쓰고, 모델 로드 전 실패면 각각 카탈로그 버전/빈 칸/설정 스레드 수.
      *       change(add)-hyungchul-2026-10-11-12:51 device 는 prepare 가 보고한 backend 를 소문자로 쓴다(현재 엔진은 모두 "CPU" → "cpu" 로 이전 출력과 같음, 최종 리뷰 I-6).
      *       모델 로드 전 실패(엔진 메타 없음)면 Phase 1 의 유일한 실행 장치인 "cpu"(설정값 — workers 가 설정 스레드 수를 쓰는 것과 같은 규칙).
+     *       change(add)-hyungchul-2026-10-11-19:10 시스템 엔진: compute_type·workers 는 빈 값, rtf 는 빈 값(PACED_REALTIME), device 는 backend("system(soda)" 등) 그대로, engine_version 은 엔진 보고 버전.
      * 입력: runId(실행 ID), combo(조합), item(입력 항목), detail(상세 JSON), device(기기), threads(설정 스레드 수)
      * 출력: 없음
      * 리턴: 열 이름 → 값(null 은 빈 칸)
@@ -123,17 +131,17 @@ internal object CsvRowBuilder {
             "req_lang" to item.engineLang, // 요청 언어
             "detected_lang" to detail.detectedLang, // 엔진 감지 언어
             "task" to if (spec.runtime == Runtime.WHISPER_CPP) "transcribe" else null, // whisper 만
-            "device" to deviceOf(detail), // 실행 장치(엔진 보고 backend) // change(add)-hyungchul-2026-10-11-12:51
+            "device" to (if (spec.isSystem && detail.engine == null) "" else deviceOf(detail)), // 실행 장치(엔진 보고 backend, 시스템 엔진이 로드 전 실패면 빈 값 — "cpu" 로 채우지 않음) // change(add)-hyungchul-2026-10-11-12:51 // change(add)-hyungchul-2026-10-11-19:10
             "device_name" to deviceName(device), // 기기 이름
-            "compute_type" to detail.engine?.precision, // 실제 정밀도
-            "workers" to (detail.engine?.threads ?: threads).toString(), // 스레드 수
+            "compute_type" to if (spec.isSystem) "" else detail.engine?.precision, // 실제 정밀도(시스템 엔진은 빈 값) // change(add)-hyungchul-2026-10-11-19:10
+            "workers" to if (spec.isSystem) "" else (detail.engine?.threads ?: threads).toString(), // 스레드 수(시스템 엔진은 빈 값) // change(add)-hyungchul-2026-10-11-19:10
             "cpu_time_sec" to fmt(detail.cpuTimeSec, 3), // CPU 시간
             "rss_peak_mb" to fmt(detail.pssPeakMb, 1), // PSS 피크
             "preprocess_sec" to fmt(detail.preprocessSec, 3), // 전처리 시간
             "transcribe_sec" to fmt(detail.transcribeSec, 3), // 전사 시간
             "cloud_total_sec" to fmt(detail.transcribeSec, 3), // 로컬은 업로드 0 → transcribe 와 같음
             "elapsed_sec" to fmt(detail.elapsedSec, 3), // 파일 전체 시간
-            "rtf" to fmt(detail.rtf, 4), // 실시간 배율
+            "rtf" to if (spec.streaming == StreamingKind.PACED_REALTIME) "" else fmt(detail.rtf, 4), // 실시간 배율(실시간 배속 공급 엔진은 빈 값) // change(add)-hyungchul-2026-10-11-19:10
             "attempts" to "1", // 재시도 없음
             "status" to detail.status, // 상태
             "utterances" to (if (isError) 0 else detail.chunks.size).toString(), // chunk 수

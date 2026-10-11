@@ -8,6 +8,7 @@
 //       - 다른 모델·프리셋으로 자동 대체하지 않는다(조용한 fallback 금지).
 //       change(add)-hyungchul-2026-10-11-03:59 - preselect(path): 마이크 화면 "실행 설정으로" 에서 넘어온 녹음 파일을 다시 스캔한 뒤 선택하고 그 언어를 켠다.
 //       - runImport(block): SAF 음원 가져오기 작업(복사 함수는 화면이 SafBridge 로 만든다)을 1개만 돌리고(취소 가능), 결과를 한국어 메시지로 보인 뒤 목록을 다시 읽는다.
+//       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 시스템 엔진 모델의 maxChunk 덮어쓰기는 RunConfig 와 같은 범위(0 초 초과 60 초 이하)·같은 문구로 검증한다.
 //       change(add)-hyungchul-2026-10-11-12:51 (T3 이월) 스캐너는 InputScanResult(항목 + 입력 오류)를 돌려주고, 입력 오류(같은 폴더에 대소문자만 다른 같은 이름 wav 등)는 state.inputErrors 로 화면에 보인다.
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
@@ -336,7 +337,7 @@ class RunSetupViewModel(
      * 리턴: 반영했으면 true, 거부했으면 false
      */
     fun setMaxChunk(id: String, sec: Double?): Boolean {
-        if (sec != null && maxChunkError(sec) != null) return false // 잘못된 값은 거부(상태 그대로)
+        if (sec != null && maxChunkError(id, sec) != null) return false // 잘못된 값은 거부(상태 그대로) // change(add)-hyungchul-2026-10-11-19:10 모델 id 전달(시스템 엔진 범위)
         return applyMaxChunk(id, sec?.toString() ?: "", sec, null) // 반영
     }
 
@@ -351,18 +352,20 @@ class RunSetupViewModel(
         val trimmed = text.trim() // 앞뒤 공백 제거
         if (trimmed.isEmpty()) { applyMaxChunk(id, text, null, null); return } // 빈 칸 = 기본값
         val v = trimmed.toDoubleOrNull() // 숫자 해석
-        applyMaxChunk(id, text, v, if (v == null) "숫자를 입력하세요" else maxChunkError(v)) // 검증 후 반영
+        applyMaxChunk(id, text, v, if (v == null) "숫자를 입력하세요" else maxChunkError(id, v)) // 검증 후 반영 // change(add)-hyungchul-2026-10-11-19:10 모델 id 전달
     }
 
     /**
      * 목적: maxChunk 값 검증 문구
      * 기능: 유한하고 0 이상이면 null, 아니면 한국어 오류 문구.
-     * 입력: sec(초)
+     *       change(add)-hyungchul-2026-10-11-19:10 시스템 엔진 모델이면 RunConfig 와 같은 범위(0 초 초과 60 초 이하)·같은 문구를 먼저 적용한다(화면 검증과 RunConfig 생성 검증이 어긋나지 않게).
+     * 입력: id(모델 id), sec(초)
      * 출력: 없음
      * 리턴: 오류 문구 또는 null
      */
-    private fun maxChunkError(sec: Double): String? =
-        if (sec.isFinite() && sec >= 0.0) null else "0 이상의 유한한 값이어야 합니다" // 검증
+    private fun maxChunkError(id: String, sec: Double): String? =
+        specs[id]?.let { RunConfig.systemMaxChunkError(it, id, sec) } // 시스템 엔진 범위 문구(해당 없으면 null) // change(add)-hyungchul-2026-10-11-19:10
+            ?: if (sec.isFinite() && sec >= 0.0) null else "0 이상의 유한한 값이어야 합니다" // 검증
 
     /**
      * 목적: maxChunk 입력 상태·검증 값 함께 갱신
