@@ -1,0 +1,14 @@
+# 파일명: requirements-yamnet.lock.txt
+# 목적: tools/golden/.venv-yamnet 에 실제 설치된 정확한 버전(pip freeze 결과). change(add)-hyungchul-2026-10-10-15:43
+# 기능: pip install -r tools/golden/requirements-yamnet.lock.txt 로 같은 환경 재현
+ai-edge-litert==2.3.0
+backports.strenum==1.2.8
+cffi==2.1.1
+flatbuffers==25.12.19
+ml_dtypes==0.6.0
+numpy==2.5.3
+protobuf==7.36.2
+pycparser==3.11
+soundfile==0.14.0
+tqdm==4.70.1
+typing_extensions==4.16.0

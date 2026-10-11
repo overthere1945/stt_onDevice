@@ -1,0 +1,7 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. change(add)-hyungchul-2026-10-10-11:56: Material3 DayNight(appcompat/material 의존) 에서 플랫폼 NoActionBar 테마로 변경 (Compose 가 실제 테마 담당) -->
+    <style name="Base.Theme.STT_OnDevice" parent="android:Theme.Material.NoActionBar">
+        <!-- Customize your dark theme here. -->
+        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+    </style>
+</resources>

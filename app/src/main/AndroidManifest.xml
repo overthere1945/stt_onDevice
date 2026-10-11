@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- change(add)-hyungchul-2026-10-11-02:40: 배치 실행 포그라운드 서비스(RunService)용 권한
+         FOREGROUND_SERVICE: 포그라운드 서비스 실행 / FOREGROUND_SERVICE_SPECIAL_USE: Android 14+ specialUse 유형(dataSync 는 Android 15+ 에서 24시간당 6시간 제한)
+         POST_NOTIFICATIONS: Android 13+ 진행·결과 알림 표시(런타임 요청은 화면 담당, 거부돼도 실행은 계속)
+         WAKE_LOCK: 실행 중 화면 꺼짐 상태에서 CPU 유지(PARTIAL_WAKE_LOCK)
+         (FOREGROUND_SERVICE·WAKE_LOCK 은 LiteRT 가 병합해 오던 권한이지만 이제 앱이 직접 쓰므로 명시 — Ruling R21) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- change(add)-hyungchul-2026-10-11-03:59: 마이크 녹음(AudioRecord) — 런타임 권한, 마이크 화면에서 요청(거부되면 한국어 안내, 녹음만 불가) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- change(add)-hyungchul-2026-10-11-12:51: 모델 다운로드(Downloader, HTTPS) — 일반 권한(설치 시 자동 허용). 지금까지는 라이브러리 병합에 기대고 있어 앱이 직접 명시(최종 리뷰 M-4) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- change(add)-hyungchul-2026-10-10-11:56: android:name=".App" 로 커스텀 Application 등록 -->
+    <application
+        android:name=".App"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.STT_OnDevice">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- change(add)-hyungchul-2026-10-11-02:40: 배치 실행 포그라운드 서비스(외부 비공개).
+             foregroundServiceType="specialUse" + PROPERTY_SPECIAL_USE_FGS_SUBTYPE(용도 설명, Play 심사용 자유 문자열) -->
+        <service
+            android:name=".runner.RunService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="on-device STT benchmark batch" />
+        </service>
+    </application>
+
+</manifest>

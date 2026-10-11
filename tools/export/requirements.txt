@@ -1,0 +1,21 @@
+# 파일명: requirements.txt
+# 목적: FireRedVAD ONNX 변환·골든 도구(tools/export/.venv) Python 의존성
+# 기능: python3 -m venv tools/export/.venv && tools/export/.venv/bin/pip install -r tools/export/requirements.txt
+#       실제 설치된 정확한 버전은 requirements.lock.txt 에 고정한다.
+# change(add)-hyungchul-2026-10-10-14:25
+# torch 는 CPU 전용 휠을 쓴다(tools/golden 과 같은 2.8.0)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0
+# FireRedVAD 공식 패키지(공식 repo 고정 commit, README "from source" 설치와 같은 코드)
+fireredvad @ git+https://github.com/FireRedTeam/FireRedVAD@c30ec49e8cc69642b0ee65362eba11b9d11c6e54
+# fireredvad 의존성(pyproject.toml dependencies)
+numpy
+kaldiio
+kaldi-native-fbank
+soundfile
+textgrid
+# 공식 export_onnx.py 의 의존성(스크립트 머리 주석): onnx, onnxsim, onnxruntime, huggingface_hub
+onnx
+onnxsim
+onnxruntime
+huggingface_hub

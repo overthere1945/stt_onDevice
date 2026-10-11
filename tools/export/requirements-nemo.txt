@@ -1,0 +1,14 @@
+# 파일명: requirements-nemo.txt
+# 목적: MarbleNet ONNX 변환·골든 도구(tools/export/.venv-nemo) Python 의존성
+# 기능: python3 -m venv tools/export/.venv-nemo && tools/export/.venv-nemo/bin/pip install -r tools/export/requirements-nemo.txt
+#       실제 설치된 정확한 버전은 requirements-nemo.lock.txt 에 고정한다.
+# change(add)-hyungchul-2026-10-10-14:25
+# torch/torchaudio 는 CPU 전용 휠(2.8.0)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0
+torchaudio==2.8.0
+# NVIDIA NeMo toolkit ASR(모델 카드 설치 방법 pip install -U nemo_toolkit['asr']). 이번 생성은 3.0.0
+nemo_toolkit[asr]
+# ONNX 검사·추론
+onnx
+onnxruntime

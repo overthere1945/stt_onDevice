@@ -33,3 +33,42 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# --- STT_OnDevice 추가 (change(add)-hyungchul-2026-10-09-12:55) ---
+# 기존 템플릿 항목
+.DS_Store
+/captures
+# Python 변환/골든 도구 가상환경과 산출물
+.venv/
+tools/**/.venv*/
+tools/export/out/
+tools/golden/out/
+__pycache__/
+# 외부에서 받는 네이티브 의존성(tools/fetch_native_deps.sh 로 재생성)
+app/libs/*.aar
+app/src/main/jniLibs/
+app/src/main/cpp/third_party/ten-vad/
+# 모델 파일은 저장소에 넣지 않음
+# change(add)-hyungchul-2026-10-11-03:09: 'models/' 는 소스 패키지 ui/models/ 까지 무시해 저장소 루트 models/ 만 무시하도록 한정(Task 28)
+/models/
+*.onnx
+*.tflite
+*.bin
+# --- 골든 데이터 도구 (change(add)-hyungchul-2026-10-10-12:19) ---
+# 골든 도구 가상환경·다운로드 모델(위 .venv/, models/ 규칙과 중복이지만 명시)
+tools/golden/.venv/
+tools/golden/models/
+# 골든 테스트 음원 클립(사용자 음원 파생물, 공개 저장소에 넣지 않음)
+app/src/test/resources/golden/audio/
+# --- 모델 카탈로그 도구 (change(add)-hyungchul-2026-10-10-16:12) ---
+# tools/hash_models.py 가 내려받고 해제하는 모델 캐시(약 15 GB, 공개 저장소에 넣지 않음)
+tools/models_cache/
+# --- 사용자 음성 파생 특징 골든 로컬 전용 (change(add)-hyungchul-2026-10-11-13:57) ---
+# 사용자 본인 음성 녹음에서 뽑은 음향 특징(fbank·LFR+CMVN·FireRed fbank/CMVN 적용 결과·MarbleNet log-mel)이 담긴 골든 JSON 은
+# 원격 저장소가 공개(PUBLIC)이므로 올리지 않고 로컬에만 둔다. (kr/en 고객센터 클립 15개 파일. 합성 클립 synth_* 와 구간·점수 골든은 계속 커밋)
+# 다시 만들려면 tools/golden/gen_fbank.py, tools/export/gen_firered_golden.py, tools/export/gen_marblenet_golden.py 를 실행한다.
+app/src/test/resources/golden/fbank_*_customer_*.json
+app/src/test/resources/golden/firered_fbank_*_customer_*.json
+app/src/test/resources/golden/firered_fbank_cmvn_*_customer_*.json
+app/src/test/resources/golden/lfr_cmvn_*_customer_*.json
+app/src/test/resources/golden/marblenet_mel_*_customer_*.json
