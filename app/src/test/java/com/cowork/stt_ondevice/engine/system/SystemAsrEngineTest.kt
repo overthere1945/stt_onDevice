@@ -2,6 +2,7 @@
 // 목적: 시스템 엔진 세션 핵심(SystemAsrEngine)의 동작을 가짜 백엔드(FakeBackend)와 가상 시간으로 검증 (2차 작업 3)
 // 기능: 결과 이어 붙이기·음성 없음·엔진 오류 시 파이프 닫기와 코드 전달·공급 전 완료(PIPE_NOT_CONSUMED)·
 //       응답 없음 1회 재생성 재시도·두 번 응답 없음(EngineStalledException)·공급 중 취소·배속별 감시 시간을 확인한다.
+//       change(add)-hyungchul-2026-10-11-19:18 세션 열기(open)가 감시 시간 안에 돌아오지 않으면 응답 없음과 같게 처리되는지(재생성 1회 → 또 멈춤이면 EngineStalledException) 확인한다(2차 작업 6).
 // change(add)-hyungchul-2026-10-11-18:37
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 테스트 패키지
 
@@ -277,5 +278,35 @@ class SystemAsrEngineTest {
         val r = h.engine.transcribe(chunk(20.0), "ko") // 20 초 전사
         assertEquals("ok", r.text) // 재시도 결과
         assertEquals(20_000L, h.sessions[0].firstAbortAtMs!! - t0) // 감시 시간
+    }
+
+    // change(add)-hyungchul-2026-10-11-19:18
+    /**
+     * 목적: 세션 열기 멈춤 처리 검증
+     * 기능: 두 번 모두 open 이 돌아오지 않음(OPEN_HANG) → 각 open 이 감시 시간(2 초 1× = 2,000 + 15,000 ms)에 끊기고,
+     *       첫 백엔드를 닫고 새 백엔드로 1회 재시도한 뒤 EngineStalledException. 경과 = 2 × 17,000 ms ± 1 초, 백엔드 2개.
+     * 입력: 없음
+     * 출력: 단언 실패 시 AssertionError
+     * 리턴: 없음
+     */
+    @Test
+    fun openHangCountsAsStall() = runTest {
+        val h = harness("mlkit-basic-x1", SessionScript.OPEN_HANG, SessionScript.OPEN_HANG) // 두 번 open 멈춤
+        h.engine.prepare(1) // 준비(백엔드 1)
+        val t0 = currentTime // 시작 시각
+        try {
+            h.engine.transcribe(chunk(2.0), "ko") // 2 초 전사
+            fail("EngineStalledException 이 나야 함") // 여기 오면 실패
+        } catch (e: EngineStalledException) {
+            assertEquals(SystemEngineKind.MLKIT_BASIC, e.kind) // 종류
+            assertTrue(e.message!!.contains("세션 2")) // 재시도 세션 번호
+        }
+        val elapsed = currentTime - t0 // 경과(ms)
+        val expected = 2 * (2_000L + 15_000L) // 기대 경과
+        assertTrue("경과 $elapsed ms", elapsed in (expected - 1_000)..(expected + 1_000)) // ±1 초
+        assertEquals(2, h.backends.size) // prepare 1 + 재생성 1
+        assertEquals(1, h.backends[0].closeCount) // 첫 백엔드 닫힘
+        assertEquals(listOf("ko-KR"), h.backends[1].openedLangs) // 새 백엔드로 재시도
+        assertTrue(h.sessions.isEmpty()) // 세션은 하나도 열리지 않음
     }
 }

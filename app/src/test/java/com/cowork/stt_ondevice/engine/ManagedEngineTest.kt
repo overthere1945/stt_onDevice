@@ -3,6 +3,7 @@
 // 기능: - close: delegate.close → onClose 순서, onClose 정확히 1회, 두 번째 close 는 아무것도 하지 않음, delegate.close 가 던져도 onClose 실행 후 원래 예외 전파
 //       - 위임: spec/supports/prepare/transcribe/cancel 이 원본 엔진으로 그대로 전달됨
 //       - factory: 엔진 생성 실패·모델 미설치 시 사용 횟수가 0 으로 돌아옴(누수 없음), 성공 시 close 할 때까지 사용 중(삭제 거부)이고 close 후 0
+//       change(add)-hyungchul-2026-10-11-19:18 factory 에 세 번째 인자(systemCreate)가 생겨 끝 람다가 그쪽에 붙지 않도록 생성기를 이름 인자(create = ...)로 넘긴다(2차 작업 6).
 // change(add)-hyungchul-2026-10-11-02:40
 package com.cowork.stt_ondevice.engine // 엔진 테스트 패키지
 
@@ -231,7 +232,7 @@ class ManagedEngineTest {
         val store = ModelStore(AppDirs(tmp.root)) // 실제 저장소
         installReady(store) // READY 설치
         val boom = EngineException("MODEL_LOAD", "CONFIG_MISMATCH", "가짜 생성 실패") // 생성 예외
-        val factory = ManagedEngine.factory(store) { _, _ -> throw boom } // 항상 실패하는 생성기
+        val factory = ManagedEngine.factory(store, create = { _, _ -> throw boom }) // 항상 실패하는 생성기 // change(add)-hyungchul-2026-10-11-19:18
         try {
             factory(spec) // 생성(예외 기대)
             fail("생성 예외가 전파되지 않음") // 여기 오면 실패
@@ -252,7 +253,7 @@ class ManagedEngineTest {
     fun factoryRejectsModelNotReady() {
         val store = ModelStore(AppDirs(tmp.root)) // 실제 저장소(설치 없음)
         var created = false // create 호출 여부
-        val factory = ManagedEngine.factory(store) { s, _ -> created = true; RecordingEngine(s, mutableListOf()) } // 호출 기록 생성기
+        val factory = ManagedEngine.factory(store, create = { s, _ -> created = true; RecordingEngine(s, mutableListOf()) }) // 호출 기록 생성기 // change(add)-hyungchul-2026-10-11-19:18
         try {
             factory(spec) // 생성(예외 기대)
             fail("미설치 모델이 거부되지 않음") // 여기 오면 실패
@@ -276,7 +277,7 @@ class ManagedEngineTest {
         val store = ModelStore(AppDirs(tmp.root)) // 실제 저장소
         installReady(store) // READY 설치
         var gotDir: File? = null // 생성기에 전달된 폴더
-        val factory = ManagedEngine.factory(store) { s, dir -> gotDir = dir; RecordingEngine(s, mutableListOf()) } // 기록 생성기
+        val factory = ManagedEngine.factory(store, create = { s, dir -> gotDir = dir; RecordingEngine(s, mutableListOf()) }) // 기록 생성기 // change(add)-hyungchul-2026-10-11-19:18
         val e = factory(spec) // 생성
         assertEquals(store.modelDir(spec), gotDir) // 모델 폴더 전달
         assertEquals(1, store.useCountOf(spec)) // 사용 중

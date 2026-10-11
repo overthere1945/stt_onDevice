@@ -27,6 +27,8 @@ jna = "5.18.1"
 commonsCompress = "1.28.0"
 # change(add)-hyungchul-2026-10-10-15:43: LiteRT(구 TensorFlow Lite) — Google Maven 최신 안정판(2026-10-10 조회, 2.3.0) 고정. Yamnet VAD 실행용
 litert = "2.3.0"
+# change(add)-hyungchul-2026-10-11-19:18: ML Kit GenAI 음성 인식(Basic = SODA, com.google.android.tts) — 실기기 실험(spike)에서 확인한 버전 고정(2차 작업 6)
+mlkitGenaiSpeech = "1.0.0-alpha1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -60,6 +62,8 @@ jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 # change(add)-hyungchul-2026-10-10-15:43: Yamnet VAD 용 LiteRT 안드로이드 런타임(org.tensorflow.lite.Interpreter, arm64 libLiteRt.so·liblitert_jni.so 포함)
 litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
+# change(add)-hyungchul-2026-10-11-19:18: 시스템 엔진 ML Kit GenAI Basic 음성 인식(파이프 입력 AudioSource.fromPfd)
+mlkit-genai-speech = { group = "com.google.mlkit", name = "genai-speech-recognition", version.ref = "mlkitGenaiSpeech" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

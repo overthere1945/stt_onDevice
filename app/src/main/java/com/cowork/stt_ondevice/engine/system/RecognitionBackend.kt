@@ -4,6 +4,7 @@
 //       RecognitionBackend(언어 태그로 세션 열기, 닫기)를 정의한다. Android 의존 구현은 작업 6 이 이 계약을 구현해 붙인다.
 //       change(add)-hyungchul-2026-10-11-18:51 구현이 반드시 지켜야 할 스레드·막힘 규칙(audio.close 가 막힌 write 를 풀 것, abort 뒤 awaitOutcome 이 곧 돌아올 것,
 //       모든 메서드가 스레드 안전·반복·순서 무관하게 무해할 것)을 계약 주석에 명시(리뷰 라운드 1).
+//       change(add)-hyungchul-2026-10-11-19:18 RecognitionBackend.open 은 코루틴 취소에 반응해야 한다는 규칙 추가 — 세션 핵심이 open 을 감시 시간으로 묶는다(2차 작업 6).
 // change(add)-hyungchul-2026-10-11-18:37
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -87,8 +88,10 @@ interface RecognitionBackend : AutoCloseable {
     /**
      * 목적: 세션 열기
      * 기능: 지정 언어로 인식 세션을 시작한다.
+     *       change(add)-hyungchul-2026-10-11-19:18 코루틴 취소에 반응해야 한다 — 세션 핵심이 open 을 그 조각의 감시 시간(withTimeoutOrNull)으로 묶고, 넘으면 응답 없음으로 처리한다.
+     *       취소로 끝날 때 이미 시작한 엔진 세션이 있으면 스스로 중단·정리해야 한다(돌려주지 못한 세션이 남지 않게).
      * 입력: langTag(BCP-47 태그, 예 "ko-KR"/"en-US")
-     * 출력: 열기 실패 시 구현이 정한 예외
+     * 출력: 열기 실패 시 구현이 정한 예외, 코루틴 취소 시 CancellationException
      * 리턴: RecognitionSession
      */
     suspend fun open(langTag: String): RecognitionSession

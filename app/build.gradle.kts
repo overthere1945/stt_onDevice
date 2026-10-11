@@ -6,6 +6,7 @@
 //       change(add)-hyungchul-2026-10-10-20:18 commons-compress(tar.bz2·zip 해제) 의존성
 //       change(add)-hyungchul-2026-10-11-03:09 Compose material-icons-core(하단 탭 아이콘) 의존성 — Task 28
 //       change(add)-hyungchul-2026-10-10-21:41 Vosk(vosk-android 0.3.75 + JNA 5.18.1 AAR) 의존성 — Task 22
+//       change(add)-hyungchul-2026-10-11-19:18 ML Kit GenAI 음성 인식(genai-speech-recognition 1.0.0-alpha1) 의존성 — 2차 작업 6(시스템 엔진)
 //       change(add)-hyungchul-2026-10-10-20:57 sherpa-onnx v1.13.8 AAR 에서 arm64 JNI(libsherpa-onnx-jni.so)만 꺼내 APK 에 넣는 작업(ExtractSherpaJniTask)
 //         — Kotlin API 는 소스(app/src/main/java/com/k2fsa/sherpa/onnx/)로 복사해 쓰므로 AAR 의 classes.jar 는 쓰지 않는다
 //           (둘 다 넣으면 같은 클래스가 두 번 정의되어 R8 이 "Type ... is defined multiple times" 로 실패, 보고서 참조)
@@ -112,6 +113,8 @@ dependencies {
     // change(add)-hyungchul-2026-10-10-21:41: Vosk 엔진 — vosk-android(org.vosk.*, libvosk.so arm64) + JNA 안드로이드 AAR(libjnidispatch.so). JNA 는 AAR 형태 하나만 쓴다(jar 형태가 따라오면 중복 클래스)
     implementation(libs.vosk.android)
     implementation(libs.jna) { artifact { type = "aar" } }
+    // change(add)-hyungchul-2026-10-11-19:18: 시스템 엔진 ML Kit GenAI Basic(SODA) 음성 인식 — 2차 작업 6
+    implementation(libs.mlkit.genai.speech)
     testImplementation(libs.junit)
     // change(add)-hyungchul-2026-10-10-11:56: JVM 단위 테스트용 코루틴 테스트 / ONNX Runtime
     testImplementation(libs.kotlinx.coroutines.test)

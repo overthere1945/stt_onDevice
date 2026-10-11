@@ -10,6 +10,9 @@
 //       Android 에 의존하지 않으며, 실제 ML Kit/플랫폼 백엔드는 작업 6 이 RecognitionBackend 로 구현해 붙인다.
 //       change(add)-hyungchul-2026-10-11-18:51 공급 코루틴을 attempt 의 자식이 아니라 엔진 소유 범위(workScope)에서 돌리고 결코 join 하지 않는다 —
 //       파이프 write 가 막혀 audio.close() 로도 풀리지 않는 최악의 경우에도 감시·재시도·취소가 정해진 시간 안에 돌아온다(리뷰 라운드 1).
+//       change(add)-hyungchul-2026-10-11-19:18 (2차 작업 6) 세션 열기(backend.open)도 그 조각의 감시 시간으로 묶어, 넘으면 응답 없음과 같게 처리한다(재생성 1회 재시도 → 또 넘으면 멈춤 예외).
+//       엔진 소유 범위에 CoroutineExceptionHandler 를 달고 공급 코루틴이 Throwable 까지 잡아(abort 가 던져도) 공급 쪽 예외가 앱 프로세스를 죽이지 않게 한다.
+//       LANG_TAGS 를 같은 모듈에서 쓰도록 internal 로 연다(SystemEngines 의 실행 전 언어 확인).
 // change(add)-hyungchul-2026-10-11-18:37
 package com.cowork.stt_ondevice.engine.system // 시스템 엔진 패키지
 
@@ -23,6 +26,7 @@ import com.cowork.stt_ondevice.model.SystemEngineConfig // 시스템 엔진 설�
 import com.cowork.stt_ondevice.model.SystemEngineKind // 시스템 엔진 종류
 import com.cowork.stt_ondevice.segment.AudioChunk // 엔진 입력 chunk
 import kotlinx.coroutines.CompletableDeferred // 완료 신호
+import kotlinx.coroutines.CoroutineExceptionHandler // 분리 범위의 처리 안 된 예외 흡수 // change(add)-hyungchul-2026-10-11-19:18
 import kotlinx.coroutines.CoroutineDispatcher // 디스패처 타입
 import kotlinx.coroutines.CoroutineScope // 분리된 코루틴 범위
 import kotlinx.coroutines.Dispatchers // 기본 디스패처
@@ -66,7 +70,7 @@ class SystemAsrEngine(
     private val active = AtomicReference<ActiveSession?>(null) // 진행 중 세션(cancel 대상)
     private val cancelRequested = AtomicBoolean(false) // 이번 transcribe 의 중단 요청
     // change(add)-hyungchul-2026-10-11-18:51: 공급·백엔드 닫기를 돌리는 엔진 소유 범위(attempt 가 join 하지 않으므로 막힌 write 가 transcribe 를 붙잡지 못함)
-    private val workScope = CoroutineScope(SupervisorJob() + io) // 엔진 소유 작업 범위
+    private val workScope = CoroutineScope(SupervisorJob() + io + IGNORE_UNCAUGHT) // 엔진 소유 작업 범위 // change(add)-hyungchul-2026-10-11-19:18 처리 안 된 예외가 프로세스를 죽이지 않게
     /** 목적: 감시 여유 시간(ms) / 기능: 기본 15 초. 실제 스레드 테스트에서만 짧게 바꾼다 */
     internal var watchdogMarginMs: Long = WATCHDOG_MARGIN_MS // 감시 여유(테스트용 조정 가능) // change(add)-hyungchul-2026-10-11-18:51
 
@@ -132,6 +136,7 @@ class SystemAsrEngine(
     /**
      * 목적: 세션 1회 시도
      * 기능: 세션을 열고 엔진 소유 범위(workScope, io)에서 공급 코루틴을 시작한다(공급 완료 시 finishInput). 감시 시간 안에 결과를 기다리고,
+     *       change(add)-hyungchul-2026-10-11-19:18 세션 열기도 감시 시간(watchMs)으로 묶어, 넘으면 결과 없음(null)으로 돌아온다(응답 없음과 같은 처리 — 계약상 open 은 취소에 반응).
      *       결과·초과·취소·예외 어느 경로든 즉시 공급 코루틴 취소 + audio 닫기 후 **공급 코루틴을 기다리지 않고** 돌아온다.
      *       초과면 abort 후 null. 취소·예외로 빠져나가면 세션을 abort 한다.
      *       반환 시간 보장: awaitOutcome 은 withTimeoutOrNull 로 감시 시간에 묶이고(계약상 취소에 반응), 그 뒤에는 막히지 않는
@@ -139,13 +144,13 @@ class SystemAsrEngine(
      *       change(add)-hyungchul-2026-10-11-18:51
      * 입력: b(백엔드), pcm(PCM16 LE), tag(언어 태그), watchMs(감시 시간 ms), number(세션 번호)
      * 출력: EngineException(TRANSCRIBE, ABORTED/PIPE_NOT_CONSUMED/ENGINE_ERROR(공급 중 예외)/엔진 코드), 코루틴 취소 → CancellationException
-     * 리턴: Attempt, 감시 시간 초과면 null
+     * 리턴: Attempt, 감시 시간 초과(세션 열기 초과 포함)면 null
      */
     private suspend fun attempt(b: RecognitionBackend, pcm: ByteArray, tag: String, watchMs: Long, number: Int): Attempt? {
         val t0 = clock() // 세션 시작 시각
-        val session = b.open(tag) // 세션 열기
+        val session = withTimeoutOrNull(watchMs) { b.open(tag) } ?: return null // 세션 열기(감시 시간 초과 = 응답 없음) // change(add)-hyungchul-2026-10-11-19:18
         val fed = AtomicReference<FeedStats?>(null) // 공급 결과(공급 코루틴이 채움)
-        val feedError = AtomicReference<Exception?>(null) // 공급 코루틴의 예외(finishInput 실패 등) // change(add)-hyungchul-2026-10-11-18:51
+        val feedError = AtomicReference<Throwable?>(null) // 공급 코루틴의 예외(finishInput 실패 등) // change(add)-hyungchul-2026-10-11-18:51 // change(add)-hyungchul-2026-10-11-19:18 Throwable
         val feedJob = workScope.launch { // 공급 코루틴(엔진 소유 범위, join 하지 않음) // change(add)-hyungchul-2026-10-11-18:51
             try {
                 val stats = feeder.feed(session.audio, pcm, speed) // 배속 공급
@@ -153,9 +158,9 @@ class SystemAsrEngine(
                 if (stats.completed) session.finishInput() // 다 썼으면 공급 끝 알림
             } catch (e: CancellationException) {
                 throw e // 공급 중단은 정상 종료
-            } catch (e: Exception) { // 분리된 범위라 예외가 새지 않게 잡는다
+            } catch (e: Throwable) { // 분리된 범위라 예외가 새지 않게 모두 잡는다 // change(add)-hyungchul-2026-10-11-19:18 Exception → Throwable
                 feedError.set(e) // 기록(대기 쪽에서 오류로 보고)
-                session.abort() // 대기 중인 awaitOutcome 을 곧 끝나게 함(계약)
+                runCatching { session.abort() } // 대기 중인 awaitOutcome 을 곧 끝나게 함(계약) — abort 가 던져도 무시 // change(add)-hyungchul-2026-10-11-19:18
             }
         }
         val mine = ActiveSession(session, feedJob) // 진행 중 세션
@@ -298,8 +303,11 @@ class SystemAsrEngine(
     }
 
     companion object {
-        /** 목적: 앱 언어 → BCP-47 태그 / 기능: ko → ko-KR, en → en-US */
-        private val LANG_TAGS: Map<String, String> = mapOf("ko" to "ko-KR", "en" to "en-US") // 언어 태그
+        /** 목적: 앱 언어 → BCP-47 태그 / 기능: ko → ko-KR, en → en-US (change(add)-hyungchul-2026-10-11-19:18 internal — SystemEngines 의 언어 확인도 같은 표를 씀) */
+        internal val LANG_TAGS: Map<String, String> = mapOf("ko" to "ko-KR", "en" to "en-US") // 언어 태그
+
+        /** 목적: 엔진 소유 범위의 처리 안 된 예외 흡수 / 기능: 공급·닫기 코루틴에서 잡히지 않은 예외를 버린다(결과는 각 코루틴이 이미 기록) */ // change(add)-hyungchul-2026-10-11-19:18
+        private val IGNORE_UNCAUGHT = CoroutineExceptionHandler { _, _ -> } // 프로세스 종료 방지 // change(add)-hyungchul-2026-10-11-19:18
 
         /** 목적: 감시 여유 시간 / 기능: 공급 시간 뒤 결과를 기다리는 여유(ms) */
         private const val WATCHDOG_MARGIN_MS: Long = 15_000 // 15 초

@@ -5,12 +5,14 @@
 //       - ManagedEngine.factory: BatchRunner 의 engineFactory 로 쓰는 생성기. acquire → READY 확인 → EngineFactory.create → 래핑,
 //         중간에 실패하면 release 후 예외를 그대로 던져 사용 횟수가 새지 않게 한다.
 //       AsrEngine 계약 자체는 바꾸지 않는다.
+//       change(add)-hyungchul-2026-10-11-19:18 factory 에 systemCreate(시스템 엔진 생성기, 기본 = NOT_IMPLEMENTED 로 거부) 추가 — 시스템 spec(isSystem)은 모델 폴더 없이 systemCreate 로 만든다(2차 작업 6).
 // change(add)-hyungchul-2026-10-11-02:40
 package com.cowork.stt_ondevice.engine // 엔진 패키지
 
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
 import com.cowork.stt_ondevice.model.ModelStore // 모델 저장소(사용 횟수)
+import com.cowork.stt_ondevice.model.isSystem // 시스템 엔진 여부 // change(add)-hyungchul-2026-10-11-19:18
 import com.cowork.stt_ondevice.segment.AudioChunk // 엔진 입력 chunk
 import java.io.File // 파일
 import java.util.concurrent.atomic.AtomicBoolean // 1회 close 보장용 원자 플래그
@@ -98,21 +100,26 @@ class ManagedEngine(
          * 기능: 돌려준 함수는 모델마다 store.acquire → READY 확인(아니면 EngineException(MODEL_LOAD, MODEL_NOT_READY)) →
          *       create(spec, models/<id>) → ManagedEngine(onClose = store.release) 순으로 엔진을 만든다.
          *       acquire 를 먼저 해서 확인 이후 삭제·교체가 끼어들지 못하게 하고, 확인·생성이 실패하면 release 후 같은 예외를 던진다.
-         * 입력: store(모델 저장소), create(스펙·모델 폴더 → 엔진, 기본 EngineFactory::create — 테스트에서 가짜로 교체)
+         *       change(add)-hyungchul-2026-10-11-19:18 시스템 spec(spec.isSystem, 항상 READY)은 create 대신 systemCreate(spec) 로 만든다(모델 폴더 없음). systemCreate 를 주지 않으면
+         *       EngineException(MODEL_LOAD, NOT_IMPLEMENTED) 으로 거부한다(일반 생성기·다른 엔진으로 대체하지 않음).
+         * 입력: store(모델 저장소), create(스펙·모델 폴더 → 엔진, 기본 EngineFactory::create — 테스트에서 가짜로 교체),
+         *       systemCreate(시스템 spec → 엔진, 앱: SystemEngines.create, 기본은 NOT_IMPLEMENTED 로 거부) // change(add)-hyungchul-2026-10-11-19:18
          * 출력: 없음
          * 리턴: (ModelSpec) -> AsrEngine 생성 함수
          */
         fun factory(
             store: ModelStore, // 모델 저장소
             create: (ModelSpec, File) -> AsrEngine = EngineFactory::create, // 실제 엔진 생성기
+            systemCreate: (ModelSpec) -> AsrEngine = { throw EngineException("MODEL_LOAD", "NOT_IMPLEMENTED", "시스템 엔진 생성기가 없음: ${it.id}") }, // 시스템 엔진 생성기 // change(add)-hyungchul-2026-10-11-19:18
         ): (ModelSpec) -> AsrEngine = { spec -> // 모델마다 호출
             store.acquire(spec) // 사용 시작 표시(삭제·교체 차단)
             try {
-                val state = store.state(spec) // 설치 상태(표식·파일 크기)
+                val state = store.state(spec) // 설치 상태(표식·파일 크기, 시스템 spec 은 항상 READY)
                 if (state != InstallState.READY) { // 미설치·손상·설치 중
                     throw EngineException("MODEL_LOAD", "MODEL_NOT_READY", "모델이 사용 가능 상태가 아님(${state.name}): ${spec.id}") // 다른 모델로 대체하지 않음
                 }
-                ManagedEngine(create(spec, store.modelDir(spec))) { store.release(spec) } // 생성 후 래핑(close 때 release)
+                val engine = if (spec.isSystem) systemCreate(spec) else create(spec, store.modelDir(spec)) // 시스템 엔진은 전용 생성기 // change(add)-hyungchul-2026-10-11-19:18
+                ManagedEngine(engine) { store.release(spec) } // 생성 후 래핑(close 때 release)
             } catch (t: Throwable) {
                 store.release(spec) // 실패 시 사용 표시 해제(누수 방지)
                 throw t // 같은 예외 전파
