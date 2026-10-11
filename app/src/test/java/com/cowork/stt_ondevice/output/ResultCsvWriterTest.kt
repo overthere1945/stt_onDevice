@@ -52,7 +52,7 @@ class ResultCsvWriterTest {
         w.append(mapOf("run_id" to "r2", "text" to "평범")) // 둘째 행
         val bytes = f.readBytes() // 전체 바이트
         assertEquals(listOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()), bytes.take(3)) // BOM
-        val text = String(bytes, Charsets.UTF_8).removePrefix("﻿") // BOM 제거한 본문
+        val text = String(bytes, Charsets.UTF_8).removePrefix("\uFEFF") // BOM 제거한 본문 // change(add)-hyungchul-2026-10-11-04:46 BOM 문자를 \uFEFF 이스케이프로 표기(lint ByteOrderMark)
         assertEquals(1, text.split(STT_CSV_HEADER.joinToString(",")).size - 1) // 헤더 1회만
         assertTrue(text.contains("\"a,\"\"b\"\"\nc\"")) // 이스케이프된 text 필드
         assertTrue(text.contains("\r\nr2,")) // 둘째 행은 CRLF 뒤에 시작
@@ -69,7 +69,7 @@ class ResultCsvWriterTest {
     fun missingAndNullValuesBecomeEmptyCells() {
         val f = File(tmp.root, "result.csv") // 대상 파일
         ResultCsvWriter(f).append(mapOf("run_id" to "r1", "rtf" to null)) // null 포함 행
-        val lines = String(f.readBytes(), Charsets.UTF_8).removePrefix("﻿").split("\r\n").filter { it.isNotEmpty() } // 헤더+행
+        val lines = String(f.readBytes(), Charsets.UTF_8).removePrefix("\uFEFF").split("\r\n").filter { it.isNotEmpty() } // 헤더+행 // change(add)-hyungchul-2026-10-11-04:46 BOM 문자를 \uFEFF 이스케이프로 표기(lint ByteOrderMark)
         assertEquals(2, lines.size) // 헤더 + 1행
         assertEquals(STT_CSV_HEADER.size - 1, lines[1].count { it == ',' }) // 쉼표 수 = 열 수 - 1
         assertTrue(lines[1].startsWith("r1,,")) // 첫 칸 값, 둘째 칸 빈 칸
@@ -103,7 +103,7 @@ class ResultCsvWriterTest {
         val f = File(tmp.root, "all_result.csv") // 요약 CSV
         val header = STT_CSV_HEADER + "vad" // 열 하나 추가
         ResultCsvWriter(f, header).append(mapOf("run_id" to "r1", "vad" to "SILERO_SAFE")) // vad 키 행
-        val lines = String(f.readBytes(), Charsets.UTF_8).removePrefix("﻿").split("\r\n").filter { it.isNotEmpty() } // 헤더+행
+        val lines = String(f.readBytes(), Charsets.UTF_8).removePrefix("\uFEFF").split("\r\n").filter { it.isNotEmpty() } // 헤더+행 // change(add)-hyungchul-2026-10-11-04:46 BOM 문자를 \uFEFF 이스케이프로 표기(lint ByteOrderMark)
         assertTrue(lines[0].endsWith(",text,vad")) // 헤더 마지막이 vad
         assertEquals(header.size - 1, lines[1].count { it == ',' }) // 행 열 수 = 헤더 열 수
         assertTrue(lines[1].endsWith(",SILERO_SAFE")) // vad 값이 마지막 열

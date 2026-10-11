@@ -225,7 +225,7 @@ class BatchRunnerTest {
 
     /** 목적: CSV 읽기. 기능: BOM 제거 후 CRLF 로 줄을 나누고 쉼표로 열을 나눠 헤더→값 맵 목록을 만든다(테스트 값에는 쉼표가 없음). 입력: f. 출력: 없음. 리턴: 행 목록 */
     private fun rows(f: File): List<Map<String, String>> {
-        val lines = f.readText(Charsets.UTF_8).removePrefix("﻿").split("\r\n").filter { it.isNotEmpty() } // 줄 목록
+        val lines = f.readText(Charsets.UTF_8).removePrefix("\uFEFF").split("\r\n").filter { it.isNotEmpty() } // 줄 목록 // change(add)-hyungchul-2026-10-11-04:46 BOM 문자를 \uFEFF 이스케이프로 표기(lint ByteOrderMark)
         val header = lines.first().split(",") // 헤더
         return lines.drop(1).map { line -> // 데이터 줄마다
             val cols = line.split(",") // 열 분리

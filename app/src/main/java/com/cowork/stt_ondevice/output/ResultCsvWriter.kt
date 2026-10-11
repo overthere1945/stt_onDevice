@@ -43,7 +43,7 @@ class ResultCsvWriter(val file: File, val header: List<String> = STT_CSV_HEADER)
             file.parentFile?.mkdirs() // 부모 폴더 생성
             val sb = StringBuilder() // 쓸 내용
             if (!file.exists() || file.length() == 0L) { // 새 파일이면
-                sb.append('﻿') // BOM (UTF-8 로 EF BB BF)
+                sb.append('\uFEFF') // BOM (UTF-8 로 EF BB BF) // change(add)-hyungchul-2026-10-11-04:46 BOM 문자를 \uFEFF 이스케이프로 표기(lint ByteOrderMark)
                 sb.append(header.joinToString(",") { escape(it) }).append("\r\n") // 헤더 줄
             }
             sb.append(header.joinToString(",") { escape(row[it]) }).append("\r\n") // 데이터 줄(항상 header.size 열)

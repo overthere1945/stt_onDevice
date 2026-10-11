@@ -103,7 +103,7 @@ class RunnerHelpersTest {
         for (f in listOf(csv, outputs.summaryFile())) { // 두 CSV 마다
             val rows = CsvFiles.readRecords(f) // 행
             assertEquals(listOf("01.wav" to "NO_MATCH", "02.wav" to "ERROR"), rows.map { it["file"] to it["status"] }) // 행 교체·찢긴 줄 제거
-            assertEquals('﻿', f.readText(Charsets.UTF_8).first()) // BOM 유지
+            assertEquals('\uFEFF', f.readText(Charsets.UTF_8).first()) // BOM 유지 // change(add)-hyungchul-2026-10-11-04:46 BOM 문자를 \uFEFF 이스케이프로 표기(lint ByteOrderMark)
         }
         assertNotNull(OutputLayout.errorFile(runDir, b, combo.name).takeIf { it.isFile }) // ERROR.txt
         assertNull(OutputLayout.transcript(runDir, b, combo.name).takeIf { it.exists() }) // txt 제거
