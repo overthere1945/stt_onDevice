@@ -2,6 +2,7 @@
 // 목적: 모든 STT 엔진(whisper.cpp·sherpa-onnx·Vosk)이 따르는 공통 계약 정의 (spec §9.1)
 // 기능: PrepareInfo(모델 로드 결과), ChunkText(chunk 1개 전사 결과), EngineException(단계·코드가 붙은 엔진 오류),
 //       AsrEngine(언어 지원 여부·준비·전사·취소·해제) 인터페이스를 제공한다.
+//       change(add)-hyungchul-2026-10-11-18:37 SessionInfo(시스템 엔진 세션 기록) 추가, ChunkText 마지막 인자 session(기본 null) 추가(2차 작업 3).
 // change(add)-hyungchul-2026-10-10-20:35
 package com.cowork.stt_ondevice.engine // 엔진 패키지
 
@@ -25,11 +26,27 @@ data class PrepareInfo(
     val threads: Int, // 스레드 수
 )
 
+// change(add)-hyungchul-2026-10-11-18:37
+/**
+ * 목적: 시스템 엔진 세션 1회의 기록
+ * 기능: chunk 를 실제로 처리한 세션의 누적 순번(재시도 포함), 공급한 바이트, 블록 쓰기 최대 시간, 재시도 여부를 담는다.
+ * 입력: number(엔진 인스턴스의 누적 세션 순번, 1부터), fedBytes(공급한 PCM 바이트), maxBlockMs(블록 쓰기 최대 ms), retried(멈춤 후 재생성 재시도 세션이면 true)
+ * 출력: 해당 없음
+ * 리턴: 해당 없음
+ */
+data class SessionInfo(
+    val number: Int, // 누적 세션 순번
+    val fedBytes: Long, // 공급 바이트
+    val maxBlockMs: Long, // 블록 쓰기 최대(ms)
+    val retried: Boolean, // 재시도 세션 여부
+)
+
 // change(add)-hyungchul-2026-10-10-20:35
 /**
  * 목적: chunk 1개 전사 결과
  * 기능: 결과 txt 에 쓸 정리된 텍스트(text), 엔진 원문(rawText, 예: SenseVoice 태그 포함), 엔진이 감지한 언어, 추론 시간을 담는다.
- * 입력: text(정리된 텍스트), rawText(엔진 원문), detectedLang(엔진 감지 언어, 언어를 고정했거나 알 수 없으면 null), inferSec(추론 시간, 초)
+ * 입력: text(정리된 텍스트), rawText(엔진 원문), detectedLang(엔진 감지 언어, 언어를 고정했거나 알 수 없으면 null), inferSec(추론 시간, 초),
+ *       session(시스템 엔진 세션 기록, 그 밖의 엔진은 null) // change(add)-hyungchul-2026-10-11-18:37
  * 출력: 해당 없음
  * 리턴: 해당 없음
  */
@@ -38,6 +55,7 @@ data class ChunkText(
     val rawText: String, // 엔진 원문
     val detectedLang: String?, // 감지 언어(없으면 null)
     val inferSec: Double, // 추론 시간(초)
+    val session: SessionInfo? = null, // 시스템 엔진 세션 기록(그 밖의 엔진 null) // change(add)-hyungchul-2026-10-11-18:37
 )
 
 // change(add)-hyungchul-2026-10-10-20:35

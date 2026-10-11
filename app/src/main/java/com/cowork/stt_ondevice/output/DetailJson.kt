@@ -3,9 +3,11 @@
 // 기능: 파일 1건의 상태·오류·VAD 정보·시간·자원·환경·chunk 별 텍스트/매핑을 담는다.
 //       측정하지 못한 값은 0 이나 추정치가 아니라 null (AppJson 의 explicitNulls 로 JSON 에 null 이 명시된다).
 //       도메인 타입(EnvSnapshot/AudioChunk/SourceSpan)의 JSON 미러와 from() 변환기를 함께 둔다.
+//       change(add)-hyungchul-2026-10-11-18:37 SessionJson(시스템 엔진 세션 기록 미러) 추가, ChunkJson 마지막 필드 session(기본 null) 추가(2차 작업 3).
 package com.cowork.stt_ondevice.output // 출력 패키지
 
 import com.cowork.stt_ondevice.core.device.EnvSnapshot // 환경 스냅샷
+import com.cowork.stt_ondevice.engine.SessionInfo // 시스템 엔진 세션 기록 // change(add)-hyungchul-2026-10-11-18:37
 import com.cowork.stt_ondevice.segment.AudioChunk // 오디오 chunk
 import com.cowork.stt_ondevice.segment.SourceSpan // 원본 구간
 import kotlinx.serialization.Serializable // 직렬화 대상 표시
@@ -72,11 +74,37 @@ data class SpanJson(
     }
 }
 
+// change(add)-hyungchul-2026-10-11-18:37
+/**
+ * 목적: 시스템 엔진 세션 기록(JSON)
+ * 기능: SessionInfo 와 같은 필드를 담는다(그 밖의 엔진 chunk 에는 없음).
+ * 입력: number(누적 세션 순번), fedBytes(공급 바이트), maxBlockMs(블록 쓰기 최대 ms), retried(재시도 세션 여부)
+ */
+@Serializable
+data class SessionJson(
+    val number: Int, // 누적 세션 순번
+    val fedBytes: Long, // 공급 바이트
+    val maxBlockMs: Long, // 블록 쓰기 최대(ms)
+    val retried: Boolean, // 재시도 세션 여부
+) {
+    companion object {
+        /**
+         * 목적: SessionInfo → SessionJson 변환
+         * 기능: 필드를 1:1 로 복사한다.
+         * 입력: s(세션 기록)
+         * 출력: 없음
+         * 리턴: SessionJson
+         */
+        fun from(s: SessionInfo): SessionJson = SessionJson(s.number, s.fedBytes, s.maxBlockMs, s.retried) // 1:1 복사
+    }
+}
+
 // change(add)-hyungchul-2026-10-10-22:05
 /**
  * 목적: chunk 1개의 결과(JSON)
  * 기능: 입력 매핑(spans)·분할 방식·인식 텍스트(후처리 전 rawText 포함)·엔진 추론 시간을 담는다.
- * 입력: index(순번), spans(원본 매핑), split(SplitMethod 이름), text(최종 텍스트), rawText(엔진 원문), inferSec(추론 시간, 미측정 null)
+ * 입력: index(순번), spans(원본 매핑), split(SplitMethod 이름), text(최종 텍스트), rawText(엔진 원문), inferSec(추론 시간, 미측정 null),
+ *       session(시스템 엔진 세션 기록, 그 밖의 엔진 null) // change(add)-hyungchul-2026-10-11-18:37
  */
 @Serializable
 data class ChunkJson(
@@ -86,17 +114,19 @@ data class ChunkJson(
     val text: String, // 최종 텍스트
     val rawText: String, // 엔진 원문
     val inferSec: Double?, // 추론 시간(초), 미측정 null
+    val session: SessionJson? = null, // 시스템 엔진 세션 기록(그 밖의 엔진 null, 이전 파일 호환) // change(add)-hyungchul-2026-10-11-18:37
 ) {
     companion object {
         /**
          * 목적: AudioChunk + 인식 결과 → ChunkJson 변환
          * 기능: chunk 의 index/spans/split 에 텍스트와 시간을 붙인다.
-         * 입력: chunk(입력 chunk), text(최종 텍스트), rawText(엔진 원문), inferSec(추론 시간, 미측정 null)
+         * 입력: chunk(입력 chunk), text(최종 텍스트), rawText(엔진 원문), inferSec(추론 시간, 미측정 null),
+         *       session(시스템 엔진 세션 기록, 없으면 null) // change(add)-hyungchul-2026-10-11-18:37
          * 출력: 없음
          * 리턴: ChunkJson
          */
-        fun from(chunk: AudioChunk, text: String, rawText: String, inferSec: Double?): ChunkJson =
-            ChunkJson(chunk.index, chunk.spans.map(SpanJson::from), chunk.split.name, text, rawText, inferSec) // 변환
+        fun from(chunk: AudioChunk, text: String, rawText: String, inferSec: Double?, session: SessionJson? = null): ChunkJson = // change(add)-hyungchul-2026-10-11-18:37 session 인자
+            ChunkJson(chunk.index, chunk.spans.map(SpanJson::from), chunk.split.name, text, rawText, inferSec, session) // 변환
     }
 }
 

@@ -4,6 +4,7 @@
 //       → 상태(OK/NO_MATCH/ERROR) 결정. 파일 단위 예외는 stage/code 로 기록하고 다음 항목이 계속되게 한다(오류 격리).
 //       자원 측정(ResourceSampler)은 SupervisorJob 자식 범위에서 돌려 샘플러 실패가 실행을 취소하지 않게 하고, 항상 stop 한다.
 //       코루틴이 취소되면 감시 코루틴이 engine.cancel() 을 불러 네이티브 전사를 멈춘다(엔진은 Job 취소를 스스로 감지하지 않음).
+//       change(add)-hyungchul-2026-10-11-18:37 chunk 결과에 시스템 엔진 세션 기록(ChunkText.session → ChunkJson.session)을 함께 담는다(2차 작업 3).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.audio.PcmConverter // 16k mono 변환
@@ -20,6 +21,7 @@ import com.cowork.stt_ondevice.output.DetailJson // 상세 JSON
 import com.cowork.stt_ondevice.output.EngineMetaJson // 엔진 메타 JSON
 import com.cowork.stt_ondevice.output.EnvSnapshotJson // 환경 JSON
 import com.cowork.stt_ondevice.output.ErrorJson // 오류 JSON
+import com.cowork.stt_ondevice.output.SessionJson // 세션 기록 JSON // change(add)-hyungchul-2026-10-11-18:37
 import com.cowork.stt_ondevice.segment.AudioChunk // 엔진 입력 chunk
 import com.cowork.stt_ondevice.segment.ChunkPlanner // chunk 분할기
 import com.cowork.stt_ondevice.vad.VadCache // VAD 캐시
@@ -133,7 +135,7 @@ internal class ItemProcessor(
                 val tc = clock() // 호출 시간 측정 시작
                 val r = transcribeCancellable(model.engine, chunk, item.engineLang) // 취소 연동 전사
                 sum += secSince(tc) // 호출 시간 누적
-                chunks.add(ChunkJson.from(chunk, r.text, r.rawText, r.inferSec)) // chunk 결과
+                chunks.add(ChunkJson.from(chunk, r.text, r.rawText, r.inferSec, r.session?.let(SessionJson::from))) // chunk 결과(시스템 엔진은 세션 기록 포함) // change(add)-hyungchul-2026-10-11-18:37
                 if (detectedLang == null) detectedLang = r.detectedLang // 첫 감지 언어
             }
             transcribeSec = sum // 전사 시간 합(chunk 0개면 0)
