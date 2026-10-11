@@ -11,6 +11,13 @@
 //       - (change(add)-hyungchul-2026-10-11-02:14) 크래시 단계 표시: 모델 로드 직전 inFlight="<modelId>|MODEL_LOAD", VAD 계열 엔진 생성 직전 "<계열>|VAD_INIT"
 //         (형식은 RunManifest.inFlight 주석). 재개 시 남아 있으면 ResumeReconciler 가 그 모델/계열의 남은 항목을 CRASH_OR_KILLED 로 기록하고 건너뛴다.
 //       - 엔진·VAD close 실패, 취소 시 manifest 저장 실패는 실행을 멈추지 않되 로그(CLOSE_FAILED/CANCEL_SAVE_FAILED)에 남기고, 비정상 종료는 RUN_FAILED 로 남긴다.
+//       - (change(add)-hyungchul-2026-10-11-12:51, 최종 리뷰 수정)
+//         I-1 재개 때 남은 inFlight 표시는 처음이면 다시 시도(manifest.inFlightAttempts[키]=1), 두 번째면 CRASH_OR_KILLED(ResumeReconciler).
+//             그 단계가 프로세스가 죽지 않고 끝나면(모델 로드·VAD 생성·항목 쓰기 — 성공 또는 처리된 오류) 그 키의 횟수를 지운다.
+//             rerunCrashed 모드(RunConfig)는 같은 run·같은 설정으로 CRASH_OR_KILLED 항목의 결과·CSV 행을 지우고 그 항목만 다시 실행한다(완료된 run 도 이 모드에서만 다시 열 수 있음).
+//         I-4 실행 시작 때 modelHold(config) 로 선택한 ASR 모델 전부와 필요한 VAD 계열 모델 전부를 사용 중으로 표시하고, 끝(정상·실패·취소)에 해제한다
+//             (엔진별 acquire/release 는 그대로 — 실행 중 어떤 선택 모델도 삭제·교체되지 않게).
+//         I-3 재개 정리 전에 진행 이벤트("이전 실행 중단 정리 중")를 한 번 내보낸다.
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -35,6 +42,7 @@ import com.cowork.stt_ondevice.vad.VadFamily // VAD 계열
 import kotlinx.coroutines.currentCoroutineContext // 현재 코루틴 문맥
 import kotlinx.coroutines.ensureActive // 취소 확인
 import kotlinx.coroutines.flow.Flow // 이벤트 흐름
+import kotlinx.coroutines.flow.FlowCollector // 이벤트 수집기(본 실행 함수 수신자) // change(add)-hyungchul-2026-10-11-12:51
 import kotlinx.coroutines.flow.flow // 흐름 빌더
 import java.io.File // 파일
 import java.io.IOException // 입출력 오류
@@ -65,7 +73,8 @@ private class LoadResult(val engine: AsrEngine?, val model: PreparedModel?, val 
  * 목적: 배치 실행기
  * 기능: run(config) 이 돌려주는 Flow 를 수집하면 실행된다(수집 코루틴 취소 = 실행 취소). 같은 runDir 에 대해 동시에 두 번 실행하지 않는다는 전제.
  * 입력: dirs(앱 폴더), engineFactory(모델 → 엔진; ModelStore acquire/release 는 이 래퍼가 담당), vadFactory(계열 → VAD 엔진, 불가면 VadUnavailableException),
- *       samplerFactory(항목마다 새 ResourceSampler), env(환경 스냅샷), device(기기 정보), clock(단조 시계 ns), now(현재 시각 문자열)
+ *       samplerFactory(항목마다 새 ResourceSampler), env(환경 스냅샷), device(기기 정보), clock(단조 시계 ns), now(현재 시각 문자열),
+ *       modelHold(change(add)-hyungchul-2026-10-11-12:51 실행 설정 → 선택 모델 전체 사용 표시 핸들(close 로 해제). 앱: ModelStore.acquireAll(ASR 모델 + VAD 계열 모델). 기본은 아무것도 하지 않음)
  */
 class BatchRunner(
     private val dirs: AppDirs, // 앱 폴더
@@ -76,18 +85,37 @@ class BatchRunner(
     private val device: DeviceInfo, // 기기 정보
     private val clock: () -> Long = System::nanoTime, // 단조 시계(ns)
     private val now: () -> String = ::localIsoNow, // 현재 시각
+    private val modelHold: (RunConfig) -> AutoCloseable = { AutoCloseable { } }, // 실행 동안 모델 사용 표시 // change(add)-hyungchul-2026-10-11-12:51
 ) {
 
     /**
      * 목적: 배치 실행
      * 기능: 파일 머리말의 순서대로 실행하며 이벤트를 내보낸다.
      * 입력: config(실행 설정)
+     *       change(add)-hyungchul-2026-10-11-12:51 수집을 시작하면 먼저 modelHold(config) 로 선택 모델 전부를 사용 중으로 표시하고, 어떤 경로로 끝나든(정상·예외·취소) 해제한다.
      * 출력: 이어하기 manifest 를 읽을 수 없거나 설정이 다르면, 또는 새 실행인데 manifest 가 이미 있으면 IllegalStateException(결과를 건드리지 않음).
      *       결과 쓰기 실패가 이어지면 IOException. 수집 취소 시 CancellationException.
      * 리턴: RunEvent 흐름(Progress/ItemDone/Finished)
      */
     // change(add)-hyungchul-2026-10-11-02:14: 단계 표시(MODEL_LOAD/VAD_INIT) 정리·기록, 닫기·저장 실패 로그, RUN_FAILED 로그
     fun run(config: RunConfig): Flow<RunEvent> = flow {
+        val hold = modelHold(config) // 선택 ASR·VAD 모델 전부 사용 중 표시(삭제·교체 차단) // change(add)-hyungchul-2026-10-11-12:51
+        try {
+            runBody(config) // 본 실행 // change(add)-hyungchul-2026-10-11-12:51
+        } finally {
+            hold.close() // 사용 표시 해제(정상·실패·취소 모두) // change(add)-hyungchul-2026-10-11-12:51
+        }
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51: 기존 run 본문을 옮김(모델 사용 표시로 감싸기 위해)
+    /**
+     * 목적: 배치 실행 본문
+     * 기능: run() 의 파일 머리말 순서대로 실행하며 이벤트를 내보낸다(manifest 준비 → inFlight 정리 → (rerunCrashed) 크래시 항목 지우기 → 모델·프리셋·파일 순 실행).
+     * 입력: config(실행 설정)
+     * 출력: run() 과 같음
+     * 리턴: 없음
+     */
+    private suspend fun FlowCollector<RunEvent>.runBody(config: RunConfig) {
         val runDir = dirs.runDir(config.runId) // 실행 폴더
         val state = RunState(runDir, config.runId, openManifest(config, runDir), now) // manifest 준비(실패 시 여기서 예외)
         val combosByModel = config.models.map { spec -> spec to config.presets.map { Combo(spec, it, config.maxChunkFor(spec), config.chunkMode) } } // 모델별 조합
@@ -99,14 +127,18 @@ class BatchRunner(
         val vadPool = VadPool(vadFactory) { family, e -> state.log("CLOSE_FAILED", family.name, "-", "ERROR", "VAD 엔진 close 실패: ${e.javaClass.simpleName}: ${e.message}") } // 계열별 VAD 엔진(닫기 실패는 기록)
         val cache = VadCache(runDir) // VAD 캐시
         try {
-            state.log("RUN_START", "-", "-", "-", "resume=${config.resume} models=${config.models.size} presets=${config.presets.size} items=${config.items.size}") // 시작 로그
+            state.log("RUN_START", "-", "-", "-", "resume=${config.resume} rerunCrashed=${config.rerunCrashed} models=${config.models.size} presets=${config.presets.size} items=${config.items.size}") // 시작 로그 // change(add)-hyungchul-2026-10-11-12:51 rerunCrashed 표기
+            val total = work.sumOf { it.second.size } // 전체 항목 수 // change(add)-hyungchul-2026-10-11-12:51 정리 진행 표시에 쓰려고 위로 옮김
             val inFlight = state.manifest.inFlight // 이전 실행이 남긴 진행 단계 표시
             if (inFlight != null) { // 크래시 흔적이 있으면
-                val r = ResumeReconciler(runDir, outputs, processor).reconcile(inFlight, work.flatMap { it.second }) // 정리
+                emit(RunEvent.Progress(0, total, "이전 실행 중단 정리 중… ($inFlight)")) // 정리 시작 알림(큰 정리는 시간이 걸릴 수 있음) // change(add)-hyungchul-2026-10-11-12:51
+                val prior = state.manifest.inFlightAttempts[inFlight] ?: 0 // 이 표시를 이미 만난 횟수 // change(add)-hyungchul-2026-10-11-12:51
+                val r = ResumeReconciler(runDir, outputs, processor).reconcile(inFlight, work.flatMap { it.second }, prior) // 정리(처음이면 다시 시도) // change(add)-hyungchul-2026-10-11-12:51 prior 전달
                 val crashed = r.crashedModelId // 로드 중 죽은 모델
                 state.update { m -> // 표시 해제(+모델 로드 크래시 기록)
                     m.copy(
                         inFlight = null, // 표시 해제
+                        inFlightAttempts = if (r.retry) m.inFlightAttempts + (inFlight to prior + 1) else m.inFlightAttempts - inFlight, // 처음이면 횟수 +1, 정리 끝났으면 제거 // change(add)-hyungchul-2026-10-11-12:51
                         models = if (crashed == null) m.models else m.models.map { // 크래시 모델 항목 갱신
                             if (it.id == crashed) it.copy(loadSec = null, loadError = "MODEL_LOAD/CRASH_OR_KILLED: 이전 실행이 로드 중 비정상 종료") else it // 로드 오류 기록
                         },
@@ -118,8 +150,11 @@ class BatchRunner(
                     emit(RunEvent.ItemDone(c.name, it, st)) // 완료 이벤트
                 }
             }
+            if (config.rerunCrashed) { // CRASH_OR_KILLED 항목 다시 실행 모드 // change(add)-hyungchul-2026-10-11-12:51
+                val cleared = ResumeReconciler(runDir, outputs, processor).clearCrashed(work.flatMap { it.second }) // 크래시 항목 결과·행 지우기
+                state.log("RERUN_CRASHED", "-", "-", "-", "CRASH_OR_KILLED 항목 ${cleared.size}개의 ERROR.txt·detail·CSV 행을 지우고 다시 실행") // 기록
+            }
             recordUnsupported(config, combosByModel, state) // 미지원 조합 기록
-            val total = work.sumOf { it.second.size } // 전체 항목 수
             var done = 0 // 끝난 항목 수(건너뛴 항목 포함)
             for ((spec, pairs) in work) { // 모델 순서대로
                 val pending = pairs.filterNot { (c, it) -> outputs.isDone(c, it) } // 남은 항목(이어하기 건너뛰기)
@@ -134,7 +169,8 @@ class BatchRunner(
                         state.log("ITEM_START", combo.name, target(item), "-", "") // 시작 로그
                         val detail = processItem(combo, item, load, vadPool, cache, processor) // 처리
                         val written = writeOutputs(outputs, processor, combo, item, detail, load) // txt → detail → CSV
-                        state.update { it.copy(inFlight = null) } // 진행 중 해제
+                        val key = RunManifest.inFlightKey(combo.name, item) // 이 항목 키 // change(add)-hyungchul-2026-10-11-12:51
+                        state.update { it.copy(inFlight = null, inFlightAttempts = it.inFlightAttempts - key) } // 진행 중 해제(+중단 횟수 제거) // change(add)-hyungchul-2026-10-11-12:51 횟수 제거
                         state.count(written.status) // 집계
                         state.log("ITEM_END", combo.name, target(item), written.status, written.error?.let { "${it.stage}/${it.code}: ${it.message}" } ?: "elapsed_sec=${written.elapsedSec}") // 종료 로그
                         done++ // 진행 수
@@ -177,7 +213,7 @@ class BatchRunner(
         if (vadPool.has(family)) return // 이미 시도함
         state.update { it.copy(inFlight = RunManifest.vadInitKey(family)) } // 생성 직전 표시
         val r = vadPool.get(family) // 생성(실패는 결과로 보관)
-        state.update { it.copy(inFlight = null) } // 표시 해제
+        state.update { it.copy(inFlight = null, inFlightAttempts = it.inFlightAttempts - RunManifest.vadInitKey(family)) } // 표시 해제(+중단 횟수 제거 — 프로세스가 살아서 끝남) // change(add)-hyungchul-2026-10-11-12:51 횟수 제거
         state.log("VAD_INIT", family.name, "-", if (r.isSuccess) "OK" else "ERROR", r.exceptionOrNull()?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: "") // 생성 로그
     }
 
@@ -211,6 +247,7 @@ class BatchRunner(
      * 기능: 새 실행이면 manifest 가 없는지 확인하고 새로 쓴다. 이어하기면 읽어서(실패 시 예외) runId·앱 버전·모델(id 순서, 실효 maxChunk, runtimeVersion, precision,
      *       파일 hash)·프리셋(id, params)·chunk 모드·스레드가 같은지 확인하고 resume=true, finishedAt=null 로 다시 쓴다(inFlight 는 정리를 위해 유지).
      *       change(add)-hyungchul-2026-10-11-03:31 기존 manifest 에 입력 목록(inputs)이 있으면 그것도 같아야 한다(없던 이전 파일은 검사하지 않음).
+     *       change(add)-hyungchul-2026-10-11-12:51 이미 완료된(finishedAt 있음) run 은 rerunCrashed 모드일 때만 다시 연다(설정 일치 검사는 같음).
      * 입력: config(실행 설정), runDir(실행 폴더)
      * 출력: 조건 위반 시 IllegalStateException(기존 파일은 건드리지 않음)
      * 리턴: 저장된 manifest
@@ -232,6 +269,7 @@ class BatchRunner(
         val old = RunManifest.read(file) // 기존 manifest
             ?: throw IllegalStateException("이어하기 실패: run_manifest.json 을 읽을 수 없습니다(없음·손상·스키마 불일치). 기존 결과 위에 새 실행을 시작하지 않습니다: ${file.absolutePath}") // 조용히 새로 시작하지 않음
         check(old.runId == config.runId) { "이어하기 실패: run_manifest.json 의 runId(${old.runId})가 설정(${config.runId})과 다릅니다" } // 실행 ID
+        check(old.finishedAt == null || config.rerunCrashed) { "이어하기 실패: 이미 완료된 실행입니다(${old.finishedAt}) — 완료된 실행은 'CRASH_OR_KILLED 항목 다시 실행'으로만 다시 열 수 있습니다" } // 완료 run 은 다시 실행 모드만 // change(add)-hyungchul-2026-10-11-12:51
         check(old.appVersion == fresh.appVersion) { "이어하기 실패: 앱 버전(${old.appVersion} → ${fresh.appVersion})이 이전 실행과 다릅니다" } // 앱 버전 // change(add)-hyungchul-2026-10-11-02:14
         check(old.models.map { it.id to it.maxChunkSec } == fresh.models.map { it.id to it.maxChunkSec }) { "이어하기 실패: 모델 구성(순서·실효 maxChunkSec)이 이전 실행과 다릅니다" } // 모델
         for ((o, n) in old.models.zip(fresh.models)) { // 모델마다 실행 환경·파일 비교 // change(add)-hyungchul-2026-10-11-02:14
@@ -280,7 +318,7 @@ class BatchRunner(
             val e = engineFactory(spec) // 엔진 생성(ModelStore acquire 포함 가능)
             engine = e // 기록(실패 시 close 대상)
             val info = e.prepare(threads) // 모델 로드
-            state.update { m -> m.copy(inFlight = null, models = m.models.map { if (it.id == spec.id) it.copy(loadSec = info.loadSec, loadError = null) else it }) } // 로드 시간 기록·표시 해제
+            state.update { m -> m.copy(inFlight = null, inFlightAttempts = m.inFlightAttempts - RunManifest.modelLoadKey(spec.id), models = m.models.map { if (it.id == spec.id) it.copy(loadSec = info.loadSec, loadError = null) else it }) } // 로드 시간 기록·표시 해제(+중단 횟수 제거) // change(add)-hyungchul-2026-10-11-12:51 횟수 제거
             state.log("MODEL_LOAD", modelName, "-", "OK", "load_sec=${info.loadSec} backend=${info.backend} precision=${info.precision} threads=${info.threads}") // 로드 로그
             return LoadResult(e, PreparedModel(e, info), null) // 성공
         } catch (c: CancellationException) {
@@ -290,7 +328,7 @@ class BatchRunner(
             try { currentCoroutineContext().ensureActive() } catch (c: CancellationException) { closeAndLog(engine, modelName, state); throw c } // 취소 중이면 전파
             val err = RunErrors.toError(t, "MODEL_LOAD", "LOAD_FAILED")?.copy(stage = "MODEL_LOAD") // 오류 변환(stage 고정)
                 ?: run { closeAndLog(engine, modelName, state); throw t } // 격리 불가 Error 는 전파
-            state.update { m -> m.copy(inFlight = null, models = m.models.map { if (it.id == spec.id) it.copy(loadSec = null, loadError = "${err.stage}/${err.code}: ${err.message}") else it }) } // 실패 기록·표시 해제
+            state.update { m -> m.copy(inFlight = null, inFlightAttempts = m.inFlightAttempts - RunManifest.modelLoadKey(spec.id), models = m.models.map { if (it.id == spec.id) it.copy(loadSec = null, loadError = "${err.stage}/${err.code}: ${err.message}") else it }) } // 실패 기록·표시 해제(+중단 횟수 제거 — 처리된 오류) // change(add)-hyungchul-2026-10-11-12:51 횟수 제거
             state.log("MODEL_LOAD", modelName, "-", "ERROR", "${err.code}: ${err.message}") // 실패 로그
             return LoadResult(engine, null, err) // 실패
         }

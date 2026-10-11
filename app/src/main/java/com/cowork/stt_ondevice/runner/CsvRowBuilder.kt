@@ -93,6 +93,8 @@ internal object CsvRowBuilder {
      * 기능: DetailJson 의 측정값과 조합·항목·기기 정보를 STT_CSV_HEADER 열 이름으로 매핑한다. 맵에 없는 열은 빈 칸이 된다.
      *       ERROR 행은 텍스트·통계를 비우고 utterances=0. task 는 whisper.cpp 만 "transcribe". cloud_total_sec = transcribe_sec.
      *       engine_version/compute_type/workers 는 prepare 가 보고한 값을 쓰고, 모델 로드 전 실패면 각각 카탈로그 버전/빈 칸/설정 스레드 수.
+     *       change(add)-hyungchul-2026-10-11-12:51 device 는 prepare 가 보고한 backend 를 소문자로 쓴다(현재 엔진은 모두 "CPU" → "cpu" 로 이전 출력과 같음, 최종 리뷰 I-6).
+     *       모델 로드 전 실패(엔진 메타 없음)면 Phase 1 의 유일한 실행 장치인 "cpu"(설정값 — workers 가 설정 스레드 수를 쓰는 것과 같은 규칙).
      * 입력: runId(실행 ID), combo(조합), item(입력 항목), detail(상세 JSON), device(기기), threads(설정 스레드 수)
      * 출력: 없음
      * 리턴: 열 이름 → 값(null 은 빈 칸)
@@ -121,7 +123,7 @@ internal object CsvRowBuilder {
             "req_lang" to item.engineLang, // 요청 언어
             "detected_lang" to detail.detectedLang, // 엔진 감지 언어
             "task" to if (spec.runtime == Runtime.WHISPER_CPP) "transcribe" else null, // whisper 만
-            "device" to "cpu", // 실행 장치
+            "device" to deviceOf(detail), // 실행 장치(엔진 보고 backend) // change(add)-hyungchul-2026-10-11-12:51
             "device_name" to deviceName(device), // 기기 이름
             "compute_type" to detail.engine?.precision, // 실제 정밀도
             "workers" to (detail.engine?.threads ?: threads).toString(), // 스레드 수
@@ -151,4 +153,16 @@ internal object CsvRowBuilder {
      * 리턴: 열 이름 → 값
      */
     fun summaryRow(row: Map<String, String?>, combo: Combo): Map<String, String?> = row + ("vad" to combo.preset.id) // vad 열 추가
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: device 열 값
+     * 기능: 엔진 메타(prepare 결과)의 backend 를 Locale.ROOT 소문자로("CPU" → "cpu", PC 평가기 표기와 같음). 메타가 없으면(로드 전 실패) 설정 장치 "cpu".
+     * 입력: detail(상세 JSON)
+     * 출력: 없음
+     * 리턴: 장치 문자열
+     */
+    private fun deviceOf(detail: DetailJson): String = detail.engine?.backend?.lowercase(Locale.ROOT) ?: CONFIGURED_DEVICE // 보고값 우선
+
+    private const val CONFIGURED_DEVICE = "cpu" // Phase 1 실행 장치(설정값) // change(add)-hyungchul-2026-10-11-12:51
 }

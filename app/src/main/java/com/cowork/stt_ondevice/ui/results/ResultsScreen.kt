@@ -8,6 +8,8 @@
 //       (고른 폴더 아래 <runId> 새 폴더, 진행 중에는 "내보내는 중…"·취소 버튼). 실행 중인 run 은 "실행 중" 라벨이고 이어하기·내보내기를 숨긴다(R42-2).
 //       안내 스낵바는 화면 코루틴 범위에서 띄운다(이전: 메시지 소비로 LaunchedEffect 키가 바뀌어 스낵바가 즉시 취소되던 문제 수정).
 //       목록은 run 머리 카드·상세·조합 행·파일 행을 각각 LazyColumn 항목(안정 키)으로 펼치고, 각 항목에는 필요한 값만 넘긴다(R42-3, 큰 run 성능).
+//       change(add)-hyungchul-2026-10-11-12:51 완료된 run 에 CRASH_OR_KILLED 항목이 있으면 상세에 "CRASH_OR_KILLED 항목 다시 실행 (N개)" 버튼(알림 권한 확인 후 ViewModel.rerunCrashed — 시작되면 진행 탭)을 보이고,
+//       조합 행에 크래시 행 수를 함께 적는다(최종 리뷰 I-1).
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.results // 결과 화면 패키지
 
@@ -136,9 +138,11 @@ fun ResultsScreen(
                         RunDetail(
                             run = run, // run
                             canResume = s.resumable(run), // 이어하기 가능(실행 중이면 숨김)
+                            canRerunCrashed = s.rerunnable(run), // 크래시 항목 다시 실행 가능(완료·크래시 있음·실행 중 아님) // change(add)-hyungchul-2026-10-11-12:51
                             canExport = exportEnabled && !running, // 내보내기 가능(실행 중이면 숨김)
                             exporting = s.exportingRunId == run.runId, // 이 run 내보내는 중
                             onResume = { gate { viewModel.resume(run.runId) } }, // 이어하기(권한 확인 후)
+                            onRerunCrashed = { gate { viewModel.rerunCrashed(run.runId) } }, // 크래시 항목 다시 실행(권한 확인 후) // change(add)-hyungchul-2026-10-11-12:51
                             onExport = { exportTarget = run.runId; picker.launch(null) }, // 폴더 고르기 → 내보내기
                             onCancelExport = viewModel::cancelExport, // 내보내기 취소
                         )
@@ -211,7 +215,8 @@ private fun RunHeader(run: RunEntry, open: Boolean, running: Boolean, onToggle: 
 /**
  * 목적: 펼친 run 의 상세(미지원 조합·설정 요약·버튼)
  * 기능: 미지원 조합, 모델·프리셋·chunk·스레드 요약, 이어하기·내보내기 버튼(내보내는 중이면 "내보내는 중…" 과 취소)을 그린다.
- * 입력: run(목록 행), canResume(이어하기 표시), canExport(내보내기 표시), exporting(이 run 내보내는 중), onResume/onExport/onCancelExport(버튼 동작)
+ * 입력: run(목록 행), canResume(이어하기 표시), canExport(내보내기 표시), exporting(이 run 내보내는 중), onResume/onExport/onCancelExport(버튼 동작),
+ *       canRerunCrashed(change(add)-hyungchul-2026-10-11-12:51 "CRASH_OR_KILLED 항목 다시 실행" 표시), onRerunCrashed(change(add)-hyungchul-2026-10-11-12:51 그 버튼 동작)
  * 출력: 화면 표시
  * 리턴: Unit
  */
@@ -225,6 +230,8 @@ private fun RunDetail(
     onResume: () -> Unit,
     onExport: () -> Unit,
     onCancelExport: () -> Unit,
+    canRerunCrashed: Boolean = false, // change(add)-hyungchul-2026-10-11-12:51 크래시 항목 다시 실행 표시
+    onRerunCrashed: () -> Unit = {}, // change(add)-hyungchul-2026-10-11-12:51 크래시 항목 다시 실행 동작
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (run.unsupported.isNotEmpty()) { // 미지원 조합
@@ -235,6 +242,7 @@ private fun RunDetail(
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) { // 버튼
             if (canResume) TextButton(onClick = onResume) { Text("이어하기") } // 미완료·실행 중 아님
+            if (canRerunCrashed) TextButton(onClick = onRerunCrashed) { Text("CRASH_OR_KILLED 항목 다시 실행 (${run.crashed}개)") } // 완료·크래시 항목 있음 // change(add)-hyungchul-2026-10-11-12:51
             if (exporting) { // 내보내는 중
                 Text("내보내는 중…", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.align(Alignment.CenterVertically)) // 진행 표시
                 TextButton(onClick = onCancelExport) { Text("내보내기 취소") } // 취소
@@ -259,7 +267,7 @@ private fun RunDetail(
 private fun ComboRow(c: ComboResult, comboOpen: Boolean, onClick: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 4.dp)) {
         Text("${c.lang} · ${c.combo}", style = MaterialTheme.typography.bodyMedium, color = if (comboOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) // 조합명
-        val counts = "OK ${c.ok} · NO_MATCH ${c.noMatch} · ERROR ${c.error}" + if (c.other > 0) " · 기타 ${c.other}" else "" // 집계
+        val counts = "OK ${c.ok} · NO_MATCH ${c.noMatch} · ERROR ${c.error}" + (if (c.crashed > 0) " (이 중 CRASH_OR_KILLED ${c.crashed})" else "") + if (c.other > 0) " · 기타 ${c.other}" else "" // 집계 // change(add)-hyungchul-2026-10-11-12:51 크래시 수
         Text(c.readError ?: counts, style = MaterialTheme.typography.bodySmall, color = if (c.readError != null || c.error > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) // 집계 또는 오류
     }
 }

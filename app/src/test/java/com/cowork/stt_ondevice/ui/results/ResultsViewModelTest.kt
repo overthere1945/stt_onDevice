@@ -4,6 +4,7 @@
 //       실제 ResultCsvWriter 로 쓰고, 목록 순서(최신 먼저)·집계·드릴다운·미리보기·이어하기 RunConfig 복원과 복원 실패 사유를 확인한다.
 //       change(add)-hyungchul-2026-10-11-03:59 R42: refresh 중 result.csv 읽기 실패의 한국어 메시지(크래시 없음), 실행 중 run 의 "실행 중" 판정·이어하기 거부,
 //       실행 중 run 의 CRLF 로 끝나지 않은 마지막 CSV 레코드 제외 집계, 내보내기 작업의 완료·실패 메시지를 확인한다.
+//       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1) CRASH_OR_KILLED 행 집계와 완료 run 의 "CRASH_OR_KILLED 항목 다시 실행"(설정 복원·시작·미완료 거부)을 확인한다.
 package com.cowork.stt_ondevice.ui.results // 결과 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
@@ -366,5 +367,53 @@ class ResultsViewModelTest {
         assertTrue(vm.state.value.message!!.contains("내보내기 실패: 공간 부족")) // 사유
         assertTrue(vm.state.value.message!!.contains("PC 평가에 쓰지 마세요")) // change(add)-hyungchul-2026-10-11-04:39 부분 복사 경고
         assertNull(vm.state.value.exportingRunId) // 끝남
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: CRASH_OR_KILLED 항목 다시 실행(I-1)
+     * 기능: 완료 run 의 result.csv 에 CRASH_OR_KILLED 행 1개·일반 ERROR 행 1개·OK 행 1개가 있으면 crashed=1, 다시 실행 버튼 표시(이어하기는 숨김).
+     *       rerunCrashed 는 같은 설정의 RunConfig(resume=true, rerunCrashed=true)로 시작하고 진행 탭 이동 신호를 낸다. 미완료 run 은 다시 실행 복원이 거부되고,
+     *       크래시 행이 없는 완료 run 은 버튼이 없다. 실행 중이면 숨긴다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun rerunCrashedForFinishedRun() {
+        val items = listOf(input("kr", "customer", "01"), input("kr", "customer", "02"), input("kr", "customer", "03")) // 입력 3개
+        val runId = "20261011_125100" // 완료 run
+        writeManifest(runId, "2026-10-11T13:00:00", inputs = items) // 완료 manifest
+        val w = ResultCsvWriter(OutputLayout.resultCsv(dirs.runDir(runId), "kr", "test_m1_NONE")) // 조합 CSV
+        w.append(mapOf("rel_dir" to "customer", "file" to "01.wav", "status" to "OK", "note" to "vad=NONE")) // 정상
+        w.append(mapOf("rel_dir" to "customer", "file" to "02.wav", "status" to "ERROR", "note" to "vad=NONE;stage=TRANSCRIBE;code=CRASH_OR_KILLED")) // 크래시
+        w.append(mapOf("rel_dir" to "customer", "file" to "03.wav", "status" to "ERROR", "note" to "vad=NONE;stage=MODEL_LOAD;code=LOAD_FAILED")) // 일반 오류
+        val started = mutableListOf<RunConfig>() // 시작 기록
+        val running = MutableStateFlow<String?>(null) // 실행 중 runId
+        val vm = newVm(running) { started += it; null } // ViewModel
+        val run = vm.state.value.runs.single() // run
+        assertEquals(1, run.combos.single().crashed) // 크래시 행 1개
+        assertEquals(2, run.combos.single().error) // ERROR 는 2개
+        assertEquals(1, run.crashed) // run 합계
+        assertTrue(run.rerunnable) // 다시 실행 가능
+        assertTrue(vm.state.value.rerunnable(run)) // 화면에도 표시
+        assertFalse(vm.state.value.resumable(run)) // 이어하기는 숨김(완료)
+        val plan = vm.buildResumeConfig(runId, rerunCrashed = true) // 다시 실행 설정 복원
+        assertTrue(plan.toString(), plan is ResumePlan.Ready) // 성공
+        val cfg = (plan as ResumePlan.Ready).config // 설정
+        assertTrue(cfg.resume && cfg.rerunCrashed) // 이어하기 + 다시 실행
+        assertEquals(items, cfg.items) // 같은 입력
+        vm.rerunCrashed(runId) // 다시 실행
+        assertEquals(listOf(cfg), started) // 같은 설정으로 시작
+        assertEquals(runId, vm.state.value.resumeStarted) // 진행 탭 이동 신호
+        assertTrue(vm.state.value.message!!.contains("다시 실행을 시작했습니다")) // 안내
+        running.value = runId // 실행 중이 되면
+        assertFalse(vm.state.value.rerunnable(vm.state.value.runs.single())) // 버튼 숨김
+        running.value = null // 실행 끝
+        writeManifest("20261011_125101", null, inputs = items) // 미완료 run
+        val err = vm.buildResumeConfig("20261011_125101", rerunCrashed = true) // 미완료 run 다시 실행 복원
+        assertTrue(err.toString(), err is ResumePlan.Error && err.message.contains("끝나지 않은")) // 거부
+        writeManifest("20261011_125102", "2026-10-11T13:10:00", inputs = items) // 크래시 없는 완료 run
+        csvRow("20261011_125102", "kr", "test_m1_NONE", "customer", "01.wav", "OK", "x") // 정상 행만
+        vm.refresh() // 다시 읽기
+        assertFalse(vm.state.value.runs.first { it.runId == "20261011_125102" }.rerunnable) // 버튼 없음
     }
 }

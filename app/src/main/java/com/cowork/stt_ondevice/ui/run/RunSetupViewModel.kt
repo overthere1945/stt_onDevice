@@ -8,6 +8,7 @@
 //       - 다른 모델·프리셋으로 자동 대체하지 않는다(조용한 fallback 금지).
 //       change(add)-hyungchul-2026-10-11-03:59 - preselect(path): 마이크 화면 "실행 설정으로" 에서 넘어온 녹음 파일을 다시 스캔한 뒤 선택하고 그 언어를 켠다.
 //       - runImport(block): SAF 음원 가져오기 작업(복사 함수는 화면이 SafBridge 로 만든다)을 1개만 돌리고(취소 가능), 결과를 한국어 메시지로 보인 뒤 목록을 다시 읽는다.
+//       change(add)-hyungchul-2026-10-11-12:51 (T3 이월) 스캐너는 InputScanResult(항목 + 입력 오류)를 돌려주고, 입력 오류(같은 폴더에 대소문자만 다른 같은 이름 wav 등)는 state.inputErrors 로 화면에 보인다.
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
 
@@ -16,6 +17,7 @@ import androidx.lifecycle.ViewModelProvider // 뷰모델 팩토리 인터페이�
 import androidx.lifecycle.viewModelScope // 뷰모델 코루틴 범위
 import com.cowork.stt_ondevice.App // 앱 전역 객체
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
+import com.cowork.stt_ondevice.core.storage.InputScanResult // 입력 스캔 결과(항목 + 오류) // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.core.storage.InputScanner // 입력 스캐너
 import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
 import com.cowork.stt_ondevice.model.InstallState // 설치 상태
@@ -104,6 +106,7 @@ data class MaxChunkInput(val text: String, val error: String?)
  *       presets(프리셋 행), selectedPresets(선택한 프리셋 id), chunkMode(묶기 방식), maxChunk(모델 id → 입력 칸), maxChunkOverride(모델 id → 검증된 값),
  *       threads(스레드 1~8), comboCount(예상 조합 수)
  *       change(add)-hyungchul-2026-10-11-03:59 importing(SAF 음원 가져오기 중), message(일회성 안내 — 화면이 보인 뒤 consumeMessage)
+ *       change(add)-hyungchul-2026-10-11-12:51 inputErrors(입력 스캔 오류 문구 — 실행 목록에서 뺀 파일과 사유)
  */
 data class RunSetupState(
     val loaded: Boolean = false, // 첫 읽기 완료
@@ -121,18 +124,19 @@ data class RunSetupState(
     val comboCount: Int = 0, // 예상 조합 수
     val importing: Boolean = false, // change(add)-hyungchul-2026-10-11-03:59 가져오기 중
     val message: String? = null, // change(add)-hyungchul-2026-10-11-03:59 안내 문구
+    val inputErrors: List<String> = emptyList(), // 입력 스캔 오류 // change(add)-hyungchul-2026-10-11-12:51
 )
 
 // change(add)-hyungchul-2026-10-11-03:31
 /**
  * 목적: 실행 설정 화면 ViewModel
  * 기능: 위 파일 머리말 참조. store 는 반드시 App 의 같은 인스턴스를 넘긴다(설치 진행 상태가 인스턴스 단위).
- * 입력: scanner(입력 목록을 돌려주는 함수 — 앱에서는 InputScanner.scan(dirs.inputSound)), catalog(선택 대상 ASR 모델 목록), store(설치 상태 판정),
+ * 입력: scanner(입력 목록을 돌려주는 함수 — 앱에서는 InputScanner.scanWithErrors(dirs.inputSound); change(add)-hyungchul-2026-10-11-12:51 항목 + 입력 오류), catalog(선택 대상 ASR 모델 목록), store(설치 상태 판정),
  *       presets(VAD 프리셋 목록, 기본 VadPresets.all), vadModelOf(계열 → 카탈로그 VAD 모델, 기본 ModelCatalog::vadModel),
  *       io(파일 확인용 디스패처 — 테스트에서 교체)
  */
 class RunSetupViewModel(
-    private val scanner: () -> List<InputItem>, // 입력 스캐너
+    private val scanner: () -> InputScanResult, // 입력 스캐너(항목 + 오류) // change(add)-hyungchul-2026-10-11-12:51 타입 변경
     private val catalog: List<ModelSpec>, // ASR 모델 목록
     private val store: ModelStore, // 설치 상태
     private val presets: List<VadPreset> = VadPresets.all, // 프리셋 목록
@@ -163,7 +167,8 @@ class RunSetupViewModel(
      */
     fun refresh() {
         viewModelScope.launch(io) { // 파일 확인은 백그라운드에서
-            val items = scanner() // 입력 스캔
+            val scan = scanner() // 입력 스캔 // change(add)-hyungchul-2026-10-11-12:51 항목 + 오류
+            val items = scan.items // 실행 대상 항목 // change(add)-hyungchul-2026-10-11-12:51
             val folders = items.groupBy { it.lang to it.relDir }.map { (k, v) -> InputFolder(k.first, k.second, v) } // 언어·폴더별 묶기(스캔 정렬 유지)
             val modelRows = catalog.map { buildModelOption(it) } // 모델 행
             val presetRows = presets.map { buildPresetOption(it) } // 프리셋 행
@@ -184,6 +189,7 @@ class RunSetupViewModel(
                         selectedModels = s.selectedModels.filter { it in selectableModels }, // 선택 불가가 된 모델 제외(순서 유지)
                         presets = presetRows, // 프리셋 행
                         selectedPresets = s.selectedPresets.filter { it in selectablePresets }.toSet(), // 선택 불가가 된 프리셋 제외
+                        inputErrors = scan.errors, // 입력 오류 // change(add)-hyungchul-2026-10-11-12:51
                     ),
                 )
             }
@@ -562,7 +568,7 @@ class RunSetupViewModel(
 
         /**
          * 목적: 앱 전역 객체로 ViewModel 팩토리 만들기
-         * 기능: 입력 스캐너 = InputScanner.scan(dirs.inputSound), 카탈로그 = ModelCatalog.asr, store = App 싱글턴.
+         * 기능: 입력 스캐너 = InputScanner.scanWithErrors(dirs.inputSound)(change(add)-hyungchul-2026-10-11-12:51 오류 포함), 카탈로그 = ModelCatalog.asr, store = App 싱글턴.
          * 입력: app(App 인스턴스)
          * 출력: 없음
          * 리턴: ViewModelProvider.Factory
@@ -571,7 +577,7 @@ class RunSetupViewModel(
             @Suppress("UNCHECKED_CAST") // 요청 클래스는 RunSetupViewModel 뿐
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(RunSetupViewModel::class.java)) { "지원하지 않는 ViewModel: ${modelClass.name}" } // 다른 타입 거부
-                return RunSetupViewModel({ InputScanner.scan(app.dirs.inputSound) }, ModelCatalog.asr, app.modelStore) as T // 싱글턴 주입
+                return RunSetupViewModel({ InputScanner.scanWithErrors(app.dirs.inputSound) }, ModelCatalog.asr, app.modelStore) as T // 싱글턴 주입 // change(add)-hyungchul-2026-10-11-12:51 오류 포함 스캔
             }
         }
     }

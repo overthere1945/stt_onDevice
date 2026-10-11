@@ -12,6 +12,9 @@
 //         줄바꿈으로 끝나지 않은 마지막 레코드(쓰는 중)를 세지 않는다(R42-4). 실행 상태가 바뀌면 목록을 다시 읽는다.
 //       - refresh 중 열린 조합의 result.csv 읽기 실패는 한국어 메시지로 보이고 크래시하지 않는다(R42-1).
 //       - 내보내기(SAF): export(runId, copy) 가 run 폴더를 복사 함수에 넘기는 작업을 1개만 돌리고(취소 가능) 결과·실패를 한국어 메시지로 보인다.
+//       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1)
+//       - 조합 집계에 CRASH_OR_KILLED 행 수(note 의 code=CRASH_OR_KILLED)를 함께 센다. 완료된 run 에 그런 행이 있으면 "CRASH_OR_KILLED 항목 다시 실행"을 보이고,
+//         rerunCrashed(runId) 가 manifest 로 같은 설정의 RunConfig(resume=true, rerunCrashed=true)를 복원해 시작한다(BatchRunner 가 그 항목의 ERROR.txt·detail·CSV 행을 지우고 그 항목만 다시 실행).
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.results // 결과 화면 패키지
 
@@ -72,7 +75,8 @@ enum class ManifestStatus(val label: String) {
 /**
  * 목적: 조합 1개의 결과 집계
  * 기능: result.csv 의 status 열을 센 값. 읽기에 실패하면 readError 에 사유(건수는 0).
- * 입력: runId(실행 ID), lang(언어 폴더), combo(조합명 <algo>_<model>_<VAD>), ok/noMatch/error/other(상태별 건수), readError(읽기 실패 사유 또는 null)
+ * 입력: runId(실행 ID), lang(언어 폴더), combo(조합명 <algo>_<model>_<VAD>), ok/noMatch/error/other(상태별 건수), readError(읽기 실패 사유 또는 null),
+ *       crashed(change(add)-hyungchul-2026-10-11-12:51 ERROR 중 CRASH_OR_KILLED 로 기록된 행 수 — note 에 code=CRASH_OR_KILLED)
  */
 data class ComboResult(
     val runId: String, // 실행 ID
@@ -83,6 +87,7 @@ data class ComboResult(
     val error: Int, // ERROR 건수
     val other: Int, // 그 밖의 상태 건수
     val readError: String? = null, // CSV 읽기 실패 사유
+    val crashed: Int = 0, // CRASH_OR_KILLED 행 수 // change(add)-hyungchul-2026-10-11-12:51
 )
 
 // change(add)-hyungchul-2026-10-11-03:31
@@ -112,6 +117,14 @@ data class RunEntry(
 
     /** 미지원 조합 "combo|lang" 목록. */
     val unsupported: List<String> get() = manifest?.unsupported ?: emptyList() // 미지원
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /** CRASH_OR_KILLED 로 기록된 항목 수(모든 조합 합). */
+    val crashed: Int get() = combos.sumOf { it.crashed } // 크래시 항목 수
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /** "CRASH_OR_KILLED 항목 다시 실행" 버튼을 보일지(manifest 를 읽었고 완료됐고 크래시 항목이 있음). */
+    val rerunnable: Boolean get() = manifest != null && manifest.finishedAt != null && crashed > 0 // 다시 실행 가능
 }
 
 // change(add)-hyungchul-2026-10-11-03:31
@@ -168,6 +181,10 @@ data class ResultsState(
     // change(add)-hyungchul-2026-10-11-03:59
     /** 목적: 이어하기 버튼을 보일지 / 기능: manifest 상 미완료이고 지금 실행 중이 아닐 때 / 입력: run / 리턴: 보이면 true */
     fun resumable(run: RunEntry): Boolean = run.resumable && !isRunning(run.runId) // 실행 중이면 숨김
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /** 목적: "CRASH_OR_KILLED 항목 다시 실행" 버튼을 보일지 / 기능: 완료·크래시 항목 있음이고 지금 실행 중이 아닐 때 / 입력: run / 리턴: 보이면 true */
+    fun rerunnable(run: RunEntry): Boolean = run.rerunnable && !isRunning(run.runId) // 실행 중이면 숨김
 }
 
 // change(add)-hyungchul-2026-10-11-03:31
@@ -336,8 +353,8 @@ class ResultsViewModel(
      * 출력: 없음
      * 리턴: ResumePlan
      */
-    fun buildResumeConfig(runId: String): ResumePlan =
-        buildResumeConfig(File(outputRoot, runId), catalog, presets, store::state, vadModelOf) // 복원
+    fun buildResumeConfig(runId: String, rerunCrashed: Boolean = false): ResumePlan = // change(add)-hyungchul-2026-10-11-12:51 rerunCrashed
+        buildResumeConfig(File(outputRoot, runId), catalog, presets, store::state, vadModelOf, rerunCrashed) // 복원
 
     /**
      * 목적: 이어하기 실행
@@ -347,19 +364,41 @@ class ResultsViewModel(
      * 출력: state 갱신
      * 리턴: 없음
      */
-    fun resume(runId: String) {
+    fun resume(runId: String) = startResumed(runId, rerunCrashed = false, label = "이어하기") // change(add)-hyungchul-2026-10-11-12:51 공통 함수로 위임
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: CRASH_OR_KILLED 항목 다시 실행
+     * 기능: 완료된 run 을 같은 설정(manifest 복원)으로 rerunCrashed=true 로 시작한다. 실행기는 그 항목들의 ERROR.txt·detail·CSV 행을 지우고 그 항목만 다시 실행한다.
+     *       실패 사유·시작 결과는 resume 과 같은 방식으로 보인다(시작되면 resumeStarted → 진행 탭).
+     * 입력: runId(실행 ID)
+     * 출력: state 갱신
+     * 리턴: 없음
+     */
+    fun rerunCrashed(runId: String) = startResumed(runId, rerunCrashed = true, label = "CRASH_OR_KILLED 항목 다시 실행") // 다시 실행
+
+    // change(add)-hyungchul-2026-10-11-12:51: 기존 resume 본문을 옮기고 rerunCrashed·문구(label)를 받게 함
+    /**
+     * 목적: 같은 run 이어서 시작(이어하기 / 크래시 항목 다시 실행 공통)
+     * 기능: 실행 중이면 거부 메시지. 아니면 io 에서 설정을 복원하고, 실패면 사유를 메시지로 보인다. 성공이면 startRun 을 부르고, 시작 실패면 그 사유를,
+     *       성공이면 resumeStarted 에 runId 를 넣는다(화면이 진행 탭으로 이동).
+     * 입력: runId(실행 ID), rerunCrashed(크래시 항목 다시 실행 모드), label(메시지 앞머리 — "이어하기" 등)
+     * 출력: state 갱신
+     * 리턴: 없음
+     */
+    private fun startResumed(runId: String, rerunCrashed: Boolean, label: String) {
         if (_state.value.isRunning(runId)) { // change(add)-hyungchul-2026-10-11-03:59 실행 중인 run 은 이어하지 않음
-            _state.update { it.copy(message = "이어하기 불가: 이 실행($runId)은 지금 실행 중입니다") } // 사유
+            _state.update { it.copy(message = "$label 불가: 이 실행($runId)은 지금 실행 중입니다") } // 사유 // change(add)-hyungchul-2026-10-11-12:51 label
             return // 중단
         }
         viewModelScope.launch {
-            val plan = withContext(io) { buildResumeConfig(runId) } // 복원
+            val plan = withContext(io) { buildResumeConfig(runId, rerunCrashed) } // 복원 // change(add)-hyungchul-2026-10-11-12:51 rerunCrashed
             when (plan) {
-                is ResumePlan.Error -> _state.update { it.copy(message = "이어하기 불가: ${plan.message}") } // 복원 실패
+                is ResumePlan.Error -> _state.update { it.copy(message = "$label 불가: ${plan.message}") } // 복원 실패 // change(add)-hyungchul-2026-10-11-12:51 label
                 is ResumePlan.Ready -> {
                     val failure = startRun(plan.config) // 시작
-                    if (failure != null) _state.update { it.copy(message = "이어하기 시작 실패: $failure") } // 시작 실패
-                    else _state.update { it.copy(message = "이어하기를 시작했습니다($runId)", resumeStarted = runId) } // 시작함
+                    if (failure != null) _state.update { it.copy(message = "$label 시작 실패: $failure") } // 시작 실패 // change(add)-hyungchul-2026-10-11-12:51 label
+                    else _state.update { it.copy(message = "${label}${if (rerunCrashed) "을" else "를"} 시작했습니다($runId)", resumeStarted = runId) } // 시작함 // change(add)-hyungchul-2026-10-11-12:51 label("이어하기를"/"…다시 실행을")
                 }
             }
         }
@@ -411,6 +450,7 @@ class ResultsViewModel(
 
     companion object {
         private const val PREVIEW_LIMIT_BYTES = 64 * 1024 // 미리보기 최대 바이트
+        private const val CRASH_CODE = "CRASH_OR_KILLED" // 크래시·강제 종료 오류 코드(note 의 code=) // change(add)-hyungchul-2026-10-11-12:51
         const val PARTIAL_EXPORT_WARNING = "대상에 일부만 복사된 폴더가 남았을 수 있습니다(PC 평가에 쓰지 마세요)" // change(add)-hyungchul-2026-10-11-04:39 내보내기 실패·취소 경고
 
         /**
@@ -449,11 +489,13 @@ class ResultsViewModel(
                 combos.map { comboDir -> // 조합마다
                     val csv = OutputLayout.resultCsv(runDir, langDir.name, comboDir.name) // result.csv
                     try {
-                        val statuses = CsvFiles.readRecords(csv, completeOnly = inProgress).map { it["status"].orEmpty() } // status 열(change(add)-hyungchul-2026-10-11-03:59 실행 중이면 꼬리 제외)
+                        val records = CsvFiles.readRecords(csv, completeOnly = inProgress) // 행(change(add)-hyungchul-2026-10-11-03:59 실행 중이면 꼬리 제외) // change(add)-hyungchul-2026-10-11-12:51 note 도 보려고 행 보관
+                        val statuses = records.map { it["status"].orEmpty() } // status 열
                         ComboResult(
                             runId = runDir.name, lang = langDir.name, combo = comboDir.name, // 식별
                             ok = statuses.count { it == "OK" }, noMatch = statuses.count { it == "NO_MATCH" }, // OK·NO_MATCH
                             error = statuses.count { it == "ERROR" }, other = statuses.count { it != "OK" && it != "NO_MATCH" && it != "ERROR" }, // ERROR·그 밖
+                            crashed = records.count { it["status"] == "ERROR" && it["note"].orEmpty().endsWith(";code=$CRASH_CODE") }, // CRASH_OR_KILLED 행 수 // change(add)-hyungchul-2026-10-11-12:51
                         )
                     } catch (e: IOException) {
                         ComboResult(runDir.name, langDir.name, comboDir.name, 0, 0, 0, 0, "result.csv 읽기 실패: ${e.message}") // 읽기 실패
@@ -515,16 +557,20 @@ class ResultsViewModel(
          * 기능: manifest 를 읽어(실패 시 Error) 미완료인지, 입력 목록(inputs)이 기록됐는지 확인한 뒤
          *       모델(카탈로그 id, READY 필수) → 프리셋(id, 계열 VAD 모델 READY 필수 — NONE/WEBRTC/TEN 제외) → chunk 모드 → 입력 파일(inputRoot/<lang>/<relDir>/<file> 존재 필수)
          *       순으로 되찾아 RunConfig(같은 runId, threads·maxChunkOverride 그대로, resume=true)를 만든다. 하나라도 실패하면 한국어 사유의 Error(대체 없음).
-         * 입력: runDir(run 폴더), catalog(모델 목록), presets(프리셋 목록), installState(모델 설치 상태 판정), vadModelOf(계열 → VAD 모델)
+         *       change(add)-hyungchul-2026-10-11-12:51 rerunCrashed=true 면 반대로 완료된 run 만 받고(미완료면 Error — 먼저 이어하기), RunConfig.rerunCrashed=true 로 만든다(그 밖의 복원·검사는 같음).
+         * 입력: runDir(run 폴더), catalog(모델 목록), presets(프리셋 목록), installState(모델 설치 상태 판정), vadModelOf(계열 → VAD 모델),
+         *       rerunCrashed(change(add)-hyungchul-2026-10-11-12:51 CRASH_OR_KILLED 항목 다시 실행용 복원, 기본 false)
          * 출력: 없음
          * 리턴: ResumePlan
          */
         fun buildResumeConfig(
             runDir: File, catalog: List<ModelSpec>, presets: List<VadPreset>,
             installState: (ModelSpec) -> InstallState, vadModelOf: (VadFamily) -> ModelSpec?,
+            rerunCrashed: Boolean = false, // change(add)-hyungchul-2026-10-11-12:51
         ): ResumePlan {
             val m = RunManifest.read(OutputLayout.manifest(runDir)) ?: return ResumePlan.Error("run_manifest.json 을 읽을 수 없습니다(manifest 없음 또는 손상)") // manifest
-            if (m.finishedAt != null) return ResumePlan.Error("이미 완료된 실행입니다(${m.finishedAt}) — 이어할 항목이 없습니다") // 완료 run
+            if (!rerunCrashed && m.finishedAt != null) return ResumePlan.Error("이미 완료된 실행입니다(${m.finishedAt}) — 이어할 항목이 없습니다") // 완료 run // change(add)-hyungchul-2026-10-11-12:51 이어하기일 때만
+            if (rerunCrashed && m.finishedAt == null) return ResumePlan.Error("아직 끝나지 않은 실행입니다 — 먼저 '이어하기'로 끝낸 뒤 다시 실행하세요") // 미완료 run // change(add)-hyungchul-2026-10-11-12:51
             val inputs = m.inputs ?: return ResumePlan.Error("이 실행의 manifest 에 입력 파일 목록이 기록돼 있지 않아(이전 버전) 같은 입력을 되찾을 수 없습니다") // 입력 미기록
             val models = m.models.map { e -> // 모델마다
                 val spec = catalog.firstOrNull { it.id == e.id } ?: return ResumePlan.Error("카탈로그에 없는 모델입니다: ${e.id}") // 카탈로그 밖
@@ -550,7 +596,7 @@ class ResultsViewModel(
                 InputItem(e.lang, e.relDir, e.file.substringBeforeLast('.'), f) // 항목
             }
             return try {
-                ResumePlan.Ready(RunConfig(m.runId, items, models, chosen, mode, m.maxChunkOverride, m.threads, resume = true)) // 설정
+                ResumePlan.Ready(RunConfig(m.runId, items, models, chosen, mode, m.maxChunkOverride, m.threads, resume = true, rerunCrashed = rerunCrashed)) // 설정 // change(add)-hyungchul-2026-10-11-12:51 rerunCrashed
             } catch (e: IllegalArgumentException) {
                 ResumePlan.Error("실행 설정을 만들 수 없습니다: ${e.message}") // 검증 실패
             }

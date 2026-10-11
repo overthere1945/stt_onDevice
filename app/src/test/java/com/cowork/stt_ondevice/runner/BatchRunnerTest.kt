@@ -2,6 +2,8 @@
 // 목적: BatchRunner(엔진×VAD×파일 배치 실행기)의 순서·VAD 캐시·출력 트리·오류 격리·재개·취소·로그·공정성 검증
 // 기능: 네이티브 없이 가짜 엔진(FakeEngine)·가짜 VAD(FakeVad/ScoredVad)·가짜 sampler·고정 환경 값으로 임시 폴더에서 배치를 실행하고
 //       결과 파일(txt/ERROR.txt/result.csv/요약 CSV/detail JSON/run_manifest.json/로그)과 엔진 호출 기록을 확인한다.
+//       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1·I-4) 처음 중단된 단계는 다시 시도·두 번째는 CRASH_OR_KILLED, 완료 run 의 CRASH_OR_KILLED 항목 다시 실행(rerunCrashed),
+//       실행 동안 선택 모델 전부의 사용 표시(ModelStore 사용 횟수, 끝·실패·취소·거부 때 해제)를 확인한다.
 // change(add)-hyungchul-2026-10-11-01:47
 package com.cowork.stt_ondevice.runner // 배치 실행 테스트 패키지
 
@@ -19,6 +21,7 @@ import com.cowork.stt_ondevice.engine.PrepareInfo // 준비 결과
 import com.cowork.stt_ondevice.model.CommercialStatus // 상업 이용 판정
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
 import com.cowork.stt_ondevice.model.ModelSpec // 모델 메타
+import com.cowork.stt_ondevice.model.ModelStore // 모델 저장소(사용 횟수) // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.model.Runtime // 런타임
 import com.cowork.stt_ondevice.model.StreamingKind // 입력 방식
 import com.cowork.stt_ondevice.model.VoskConfig // 엔진 설정(가짜용)
@@ -182,6 +185,7 @@ class BatchRunnerTest {
     private val created: MutableList<FakeEngine> = Collections.synchronizedList(mutableListOf()) // 만들어진 엔진
     private var engineOf: (ModelSpec) -> FakeEngine = { FakeEngine(it, calls) } // 엔진 생성 규칙(테스트별 교체)
     private var vadOf: (VadFamily) -> VadEngine = { FakeVad(it, detects) } // VAD 생성 규칙(테스트별 교체)
+    private var holdOf: (RunConfig) -> AutoCloseable = { AutoCloseable { } } // 모델 사용 표시 규칙(테스트별 교체) // change(add)-hyungchul-2026-10-11-12:51
     private var device = DeviceInfo("samsung", "SM-S938N", "SM8750", "16", 36, "arm64-v8a", 11800L, "1.0 (1)") // 고정 기기
 
     /** 목적: 앱 폴더. 기능: 임시 폴더 루트의 AppDirs. 입력: 없음. 출력: 없음. 리턴: AppDirs */
@@ -198,6 +202,7 @@ class BatchRunnerTest {
         samplerFactory = { ResourceSampler(readPssKb = { 204_800L }, readCpuMs = { 0L }) }, // 고정 PSS 200 MB
         env = { EnvSnapshot(0, 0.5f, 80, true) }, // 고정 환경
         device = device, // 기기
+        modelHold = { cfg -> holdOf(cfg) }, // 모델 사용 표시 // change(add)-hyungchul-2026-10-11-12:51
     )
 
     /** 목적: 가짜 모델. 기능: algo "fake", model=id 인 ModelSpec. 입력: id, languages, maxChunkSec. 출력: 없음. 리턴: ModelSpec */
@@ -418,14 +423,15 @@ class BatchRunnerTest {
         assertEquals(RunEvent.Finished(2, 0, 0, 0), events.last()) // 이번 실행 집계
     }
 
-    /** 목적: 크래시 항목 처리(txt 없음 분기). 기능: inFlight 가 남은 상태로 resume → 그 항목 ERROR(CRASH_OR_KILLED), 엔진 재호출 없음, 나머지 진행. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    /** 목적: 크래시 항목 처리(txt 없음 분기). 기능: inFlight 가 남은 상태로 resume → 그 항목 ERROR(CRASH_OR_KILLED), 엔진 재호출 없음, 나머지 진행. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     *  change(add)-hyungchul-2026-10-11-12:51 이제 ERROR 는 같은 키를 두 번째로 만났을 때만 → manifest.inFlightAttempts[키]=1(이미 한 번 다시 시도함) 상태로 흉내낸다. 정리 뒤 횟수는 지워진다. */
     @Test
     fun resumeMarksInFlightItemAsCrashed() = runBlocking {
         val files = (1..3).map { item("kr", "customer", "0$it", 1.0 + it) } // 파일 3개
         val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
         runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // 01 만 완료
         val key = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]) // 02 의 키
-        manifest().copy(inFlight = key).write(OutputLayout.manifest(runDir)) // 02 처리 중 크래시 흉내
+        manifest().copy(inFlight = key, inFlightAttempts = mapOf(key to 1)).write(OutputLayout.manifest(runDir)) // 02 다시 시도 중에 또 크래시 흉내 // change(add)-hyungchul-2026-10-11-12:51 두 번째
         calls.clear() // 기록 초기화
         runner().run(cfg.copy(resume = true)).toList() // 이어하기
         val dir = File(runDir, "kr/fake_m1_SILERO/customer") // 조합 폴더
@@ -439,6 +445,64 @@ class BatchRunnerTest {
         assertEquals(listOf("01.wav" to "OK", "02.wav" to "ERROR", "03.wav" to "OK"), r.map { it["file"] to it["status"] }) // 행
         assertTrue(r[1]["note"]!!.endsWith(";stage=TRANSCRIBE;code=CRASH_OR_KILLED")) // note
         assertNull(manifest().inFlight) // 정리됨
+        assertTrue(manifest().inFlightAttempts.isEmpty()) // 횟수도 정리됨 // change(add)-hyungchul-2026-10-11-12:51
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 처음 중단된 항목은 다시 실행(I-1)
+     * 기능: 02 처리 중 프로세스가 한 번 죽은 흔적(inFlight=02, 부분 txt, detail 없음, 횟수 기록 없음)으로 resume 하면 ERROR 를 쓰지 않고
+     *       부분 결과를 지운 뒤 02 를 다시 전사한다. 다시 시도하는 동안 manifest.inFlightAttempts[02]=1 이 저장돼 있고(또 죽으면 다음 재개에서 ERROR), 성공하면 지워진다.
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun resumeRetriesItemInterruptedOnce() = runBlocking {
+        val files = (1..3).map { item("kr", "customer", "0$it", 1.0 + it) } // 파일 3개
+        val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // 01 만 완료
+        val key = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]) // 02 의 키
+        val dir = File(runDir, "kr/fake_m1_SILERO/customer") // 조합 폴더
+        File(dir, "02.txt").writeText("부분") // 부분 결과(detail 없음) 흉내
+        manifest().copy(inFlight = key).write(OutputLayout.manifest(runDir)) // 02 처리 중 한 번 죽음 흉내(OS 종료 등)
+        calls.clear() // 기록 초기화
+        val seen = Collections.synchronizedList(mutableListOf<Map<String, Int>>()) // 엔진 생성 시점의 횟수
+        engineOf = { s -> seen.add(manifest().inFlightAttempts); FakeEngine(s, calls) } // 생성 시 manifest 확인
+        val events = runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertEquals(listOf(mapOf(key to 1)), seen.toList()) // 다시 시도 동안 횟수 1 저장
+        assertEquals(listOf("m1|0.10-2.90", "m1|0.10-3.90"), calls.toList()) // 02 다시 전사 + 03
+        assertFalse(File(dir, "02.ERROR.txt").exists()) // ERROR 아님
+        assertTrue(File(dir, "02.txt").readText().startsWith("[전체 텍스트]")) // 새 결과로 교체
+        for (f in listOf(OutputLayout.resultCsv(runDir, "kr", "fake_m1_SILERO"), OutputLayout.summaryCsv(runDir, runId))) { // 두 CSV
+            assertEquals(listOf("01.wav" to "OK", "02.wav" to "OK", "03.wav" to "OK"), rows(f).map { it["file"] to it["status"] }) // 항목마다 1행
+        }
+        assertTrue(manifest().inFlightAttempts.isEmpty()) // 성공 후 횟수 제거
+        assertEquals(RunEvent.Finished(2, 0, 0, 0), events.last()) // 이번 실행 집계(02·03)
+        assertTrue(OutputLayout.log(runDir, runId).readLines().any { it.contains("\tRECONCILE\t") && it.contains("\tRETRY\t") }) // 다시 시도 로그
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 처음 중단된 모델 로드는 다시 로드(I-1)
+     * 기능: inFlight="m2|MODEL_LOAD"(횟수 기록 없음)로 resume 하면 m2 를 ERROR 로 만들지 않고 다시 로드해 모든 항목을 전사하고, 로드 성공 뒤 횟수를 지운다.
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun modelLoadInterruptedOnceIsRetried() = runBlocking {
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1"), spec("m2")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/01 만 완료
+        manifest().copy(inFlight = RunManifest.modelLoadKey("m2")).write(OutputLayout.manifest(runDir)) // m2 로드 중 한 번 죽음 흉내
+        calls.clear() // 기록 초기화
+        created.clear() // 생성 기록 초기화
+        val events = runner().run(cfg.copy(resume = true)).toList() // 이어하기
+        assertTrue(created.any { it.spec.id == "m2" }) // m2 다시 로드
+        assertEquals(listOf("m1|0.10-2.90", "m2|0.10-1.90", "m2|0.10-2.90"), calls.toList()) // 남은 항목 전부 전사
+        assertFalse(File(runDir, "kr/${combo("m2", "SILERO")}/customer/01.ERROR.txt").exists()) // ERROR 아님
+        val m = manifest() // manifest
+        assertTrue(m.inFlightAttempts.isEmpty()) // 로드 성공 후 횟수 제거
+        assertEquals(0.5, m.models[1].loadSec!!, 1e-9) // 로드 시간 기록
+        assertNull(m.models[1].loadError) // 로드 오류 없음
+        assertEquals(RunEvent.Finished(3, 0, 0, 0), events.last()) // 집계
     }
 
     /** 목적: 크래시 항목 처리(txt 있음 분기). 기능: txt·detail 은 썼지만 CSV 행 전에 죽은 경우 → 엔진 재호출 없이 detail 로 CSV 행 복구(원래 행과 동일), 행이 이미 있으면 중복 없음, 반쯤 쓴 줄 제거. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
@@ -630,7 +694,8 @@ class BatchRunnerTest {
         val cfg = config(listOf(spec("m1"), spec("m2")), listOf("SILERO"), files) // 설정
         runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/01 만 완료
         assertEquals(listOf<String?>("m1|MODEL_LOAD"), seen.toList()) // 로드 직전 표시 저장 확인
-        manifest().copy(inFlight = RunManifest.modelLoadKey("m2")).write(OutputLayout.manifest(runDir)) // m2 로드 중 크래시 흉내
+        val loadKey = RunManifest.modelLoadKey("m2") // m2 로드 표시 // change(add)-hyungchul-2026-10-11-12:51
+        manifest().copy(inFlight = loadKey, inFlightAttempts = mapOf(loadKey to 1)).write(OutputLayout.manifest(runDir)) // m2 다시 로드하다 또 크래시 흉내 // change(add)-hyungchul-2026-10-11-12:51 두 번째
         calls.clear() // 기록 초기화
         created.clear() // 생성 기록 초기화
         val events = runner().run(cfg.copy(resume = true)).toList() // 이어하기
@@ -646,8 +711,14 @@ class BatchRunnerTest {
         assertNull(m.models[1].loadSec) // m2 로드 시간 없음
         assertTrue(m.models[1].loadError!!.contains("CRASH_OR_KILLED")) // m2 로드 오류 기록
         assertEquals(RunEvent.Finished(1, 0, 2, 0), events.last()) // 이번 실행 집계(m1/02 OK, m2 오류 2)
+        assertTrue(m.inFlightAttempts.isEmpty()) // 횟수 정리 // change(add)-hyungchul-2026-10-11-12:51
         calls.clear() // 기록 초기화
-        runner().run(cfg.copy(resume = true)).toList() // 한 번 더 이어하기
+        try { // change(add)-hyungchul-2026-10-11-12:51 완료된 run 은 일반 이어하기로 다시 열지 않음(반복 크래시 없음)
+            runner().run(cfg.copy(resume = true)).toList() // 한 번 더 이어하기
+            fail("완료된 run 의 이어하기는 거부되어야 함") // 예외가 없으면 실패
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message, e.message!!.contains("이미 완료된 실행")) // 사유
+        }
         assertTrue(calls.isEmpty()) // 더 할 일 없음(반복 크래시 없음)
     }
 
@@ -666,7 +737,8 @@ class BatchRunnerTest {
         val cfg = config(listOf(spec("m1"), spec("m2")), listOf("SILERO", "WEBRTC_ANDROIDVAD"), files) // 설정
         runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/SILERO/01 만 완료
         assertEquals(listOf("SILERO=SILERO|VAD_INIT"), seen.toList()) // 생성 직전 표시 저장 확인
-        manifest().copy(inFlight = RunManifest.vadInitKey(VadFamily.SILERO)).write(OutputLayout.manifest(runDir)) // SILERO 생성 중 크래시 흉내
+        val vadKey = RunManifest.vadInitKey(VadFamily.SILERO) // SILERO 생성 표시 // change(add)-hyungchul-2026-10-11-12:51
+        manifest().copy(inFlight = vadKey, inFlightAttempts = mapOf(vadKey to 1)).write(OutputLayout.manifest(runDir)) // SILERO 다시 만들다 또 크래시 흉내 // change(add)-hyungchul-2026-10-11-12:51 두 번째
         siloAttempts.set(0) // 초기화
         runner().run(cfg.copy(resume = true)).toList() // 이어하기
         assertEquals(0, siloAttempts.get()) // SILERO 엔진을 다시 만들지 않음
@@ -688,7 +760,8 @@ class BatchRunnerTest {
         val cfg = config(listOf(spec("m1")), listOf("SILERO"), files) // 설정
         runner().run(cfg).toList() // 정상 완료
         OutputLayout.detail(runDir, files[1], combo("m1", "SILERO")).writeText("{ 깨짐") // 02 detail 손상
-        manifest().copy(inFlight = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]), finishedAt = null).write(OutputLayout.manifest(runDir)) // 02 진행 중 표시
+        val key = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]) // 02 키 // change(add)-hyungchul-2026-10-11-12:51
+        manifest().copy(inFlight = key, inFlightAttempts = mapOf(key to 1), finishedAt = null).write(OutputLayout.manifest(runDir)) // 02 진행 중 표시(두 번째) // change(add)-hyungchul-2026-10-11-12:51 두 번째
         runner().run(cfg.copy(resume = true)).toList() // 이어하기
         assertTrue(File(runDir, "kr/fake_m1_SILERO/customer/02.ERROR.txt").isFile) // 오류로 정리
         assertFalse(File(runDir, "kr/fake_m1_SILERO/customer/02.txt").exists()) // txt 제거
@@ -751,5 +824,117 @@ class BatchRunnerTest {
         expectReject(listOf(base.copy(files = listOf(com.cowork.stt_ondevice.model.ModelFile("a.bin", 1L, "00".repeat(32), "model")))), "SHA-256") // 파일 hash 변경 거부
         runner().run(config(listOf(base), listOf("SILERO"), files, resume = true)).toList() // 같은 설정은 허용
         assertNotNull(manifest().finishedAt) // 완료
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 완료 run 의 CRASH_OR_KILLED 항목 다시 실행(I-1)
+     * 기능: m1/02 가 두 번 중단돼 ERROR(CRASH_OR_KILLED), m3 는 일반 로드 실패(LOAD_FAILED)로 끝난 완료 run 에서
+     *       - 일반 이어하기는 "이미 완료" 로 거부, 설정(스레드)을 바꾼 다시 실행도 거부(결과 그대로)
+     *       - rerunCrashed 는 m1/02 의 ERROR.txt·detail·CSV 행만 지우고 그 항목만 다시 전사(m3 는 로드하지 않음)
+     *       - 두 CSV 모두 항목마다 정확히 1행, CRASH_OR_KILLED 행 없음, LOAD_FAILED 행 유지, Finished 는 다시 실행한 1건, 다시 완료 표시.
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun rerunCrashedCleansAndRerunsOnlyCrashedItems() = runBlocking {
+        engineOf = { s -> if (s.id == "m3") FakeEngine(s, calls, prepareError = EngineException("MODEL_LOAD", "LOAD_FAILED", "가짜 로드 실패")) else FakeEngine(s, calls) } // m3 는 로드 실패
+        val files = listOf(item("kr", "customer", "01", 2.0), item("kr", "customer", "02", 3.0)) // 파일 2개
+        val cfg = config(listOf(spec("m1"), spec("m3")), listOf("SILERO"), files) // 설정
+        runner().run(cfg).filterIsInstance<RunEvent.ItemDone>().take(1).toList() // m1/01 만 완료
+        val key = RunManifest.inFlightKey(combo("m1", "SILERO"), files[1]) // m1/02 키
+        manifest().copy(inFlight = key, inFlightAttempts = mapOf(key to 1)).write(OutputLayout.manifest(runDir)) // 두 번째 중단 흉내
+        runner().run(cfg.copy(resume = true)).toList() // 이어하기 → m1/02 CRASH, m3 LOAD_FAILED
+        val dir = File(runDir, "kr/${combo("m1", "SILERO")}/customer") // m1 조합 폴더
+        assertTrue(File(dir, "02.ERROR.txt").readText().contains("code: CRASH_OR_KILLED")) // 크래시 기록
+        assertNotNull(manifest().finishedAt) // 완료 run
+        val comboCsv = OutputLayout.resultCsv(runDir, "kr", combo("m1", "SILERO")) // m1 조합 CSV
+        val summary = OutputLayout.summaryCsv(runDir, runId) // 요약 CSV
+        val summaryBefore = summary.readText(Charsets.UTF_8) // 거부 전 요약
+        suspend fun expectReject(c: RunConfig, expect: String) { // 거부 확인
+            try {
+                runner().run(c).toList() // 시도
+                fail("거부되어야 함: $expect") // 예외가 없으면 실패
+            } catch (e: IllegalStateException) {
+                assertTrue(e.message, e.message!!.contains(expect)) // 사유
+            }
+        }
+        expectReject(cfg.copy(resume = true), "이미 완료된 실행") // 일반 이어하기 거부
+        expectReject(cfg.copy(resume = true, rerunCrashed = true, threads = 2), "스레드") // 설정 변경 거부
+        assertTrue(File(dir, "02.ERROR.txt").isFile) // 거부 때는 결과 그대로
+        assertEquals(summaryBefore, summary.readText(Charsets.UTF_8)) // 요약 그대로
+        calls.clear() // 기록 초기화
+        created.clear() // 생성 기록 초기화
+        val events = runner().run(cfg.copy(resume = true, rerunCrashed = true)).toList() // 크래시 항목 다시 실행
+        assertEquals(listOf("m1|0.10-2.90"), calls.toList()) // 크래시 항목만 전사
+        assertTrue(created.none { it.spec.id == "m3" }) // 일반 오류 모델은 다시 로드하지 않음
+        assertFalse(File(dir, "02.ERROR.txt").exists()) // 크래시 기록 제거
+        assertTrue(File(dir, "02.txt").isFile) // 새 결과
+        val d = AppJson.decodeFromString(DetailJson.serializer(), OutputLayout.detail(runDir, files[1], combo("m1", "SILERO")).readText()) // 새 detail
+        assertEquals("OK", d.status) // 정상
+        assertEquals(listOf("01.wav" to "OK", "02.wav" to "OK"), rows(comboCsv).map { it["file"] to it["status"] }) // 조합 CSV 항목마다 1행
+        val sm = rows(summary) // 요약 행
+        assertEquals(4, sm.size) // 2 모델 × 2 파일
+        assertEquals(4, sm.map { it["model"] to it["file"] }.toSet().size) // 중복 없음
+        assertTrue(sm.none { it["note"]!!.contains("CRASH_OR_KILLED") }) // 크래시 행 없음
+        assertEquals(2, sm.count { it["model"] == "m3" && it["note"]!!.endsWith(";code=LOAD_FAILED") }) // 일반 오류 행 유지
+        assertEquals(RunEvent.Finished(1, 0, 0, 0), events.last()) // 이번 실행 = 다시 실행한 1건
+        assertNotNull(manifest().finishedAt) // 다시 완료
+        assertTrue(OutputLayout.log(runDir, runId).readLines().any { it.contains("\tRERUN_CRASHED\t") && it.contains("1개") }) // 다시 실행 로그
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 실행 동안 선택 모델 전부 사용 표시(I-4)
+     * 기능: modelHold 를 실제 ModelStore.acquireAll(선택 ASR 모델 + VAD 모델)로 주면, m1 을 만들 때(m2 는 아직 로드 전) m1·m2·VAD 모델이 모두 사용 중이고
+     *       m2 삭제가 거부된다. 정상 종료·수집 쪽 예외·취소·이어하기 거부(manifest 불일치) 모든 경로에서 끝나면 사용 횟수가 0 으로 돌아온다.
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun modelHoldCoversAllSelectedModelsOnEveryPath() = runBlocking {
+        val store = ModelStore(dirs) // 실제 저장소(사용 횟수)
+        val m1 = spec("m1") // 첫 모델
+        val m2 = spec("m2") // 아직 로드 전인 모델
+        val vadModel = spec("vad-silero") // VAD 계열 모델(흉내)
+        holdOf = { cfg -> store.acquireAll(cfg.models + vadModel) } // 앱과 같은 방식(ASR + VAD 모델)
+        val seen = Collections.synchronizedList(mutableListOf<String>()) // 엔진 생성 시점 관찰
+        engineOf = { s -> seen.add("${s.id}:${store.useCountOf(m1)},${store.useCountOf(m2)},${store.useCountOf(vadModel)},del=${store.delete(m2)}"); FakeEngine(s, calls) } // 관찰
+        /** 목적: 사용 횟수 0 확인. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+        fun assertReleased() { for (s in listOf(m1, m2, vadModel)) assertEquals(s.id, 0, store.useCountOf(s)) } // 모두 해제
+        val files = listOf(item("kr", "customer", "01", 2.0)) // 파일 1개
+        val cfg = config(listOf(m1, m2), listOf("SILERO"), files) // 설정
+        runner().run(cfg).toList() // 정상 종료
+        assertEquals("m1:1,1,1,del=false", seen.first()) // m1 로드 때 m2·VAD 도 사용 중, m2 삭제 거부
+        assertReleased() // 끝나면 해제
+        try { // 수집 쪽 예외로 끝남
+            runner().run(cfg.copy(runId = "20261011_014702")).collect { if (it is RunEvent.ItemDone) throw IllegalStateException("수집기 오류") } // 실패
+            fail("예외가 전파되어야 함") // 예외가 없으면 실패
+        } catch (e: IllegalStateException) {
+            assertEquals("수집기 오류", e.message) // 원래 예외
+        }
+        assertReleased() // 실패에도 해제
+        try { // 이어하기 거부(이미 완료된 run)
+            runner().run(cfg.copy(resume = true)).toList() // 거부
+            fail("거부되어야 함") // 예외가 없으면 실패
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message, e.message!!.contains("이미 완료된 실행")) // 사유
+        }
+        assertReleased() // 거부에도 해제
+        val h = store.acquireAll(listOf(m1, m1, m2)) // 중복 포함
+        assertEquals(1, store.useCountOf(m1)) // 모델마다 한 번
+        h.close() // 해제
+        h.close() // 두 번째 close 는 무시
+        assertReleased() // 정확히 0
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /** 목적: 취소 때도 모델 사용 표시 해제(I-4). 기능: 전사 중 취소한 뒤 선택 모델 사용 횟수가 0. 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit */
+    @Test
+    fun modelHoldReleasedOnCancel() = runBlocking {
+        val store = ModelStore(dirs) // 실제 저장소
+        holdOf = { cfg -> store.acquireAll(cfg.models) } // 선택 모델 사용 표시
+        var during = -1 // 취소 직전 사용 횟수
+        cancelDuringTranscribe { during = store.useCountOf(spec("m1")) } // 전사 중 취소
+        assertEquals(1, during) // 실행 중에는 사용 중
+        assertEquals(0, store.useCountOf(spec("m1"))) // 취소 후 해제
     }
 }

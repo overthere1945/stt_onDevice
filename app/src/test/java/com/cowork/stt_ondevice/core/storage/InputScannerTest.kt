@@ -1,9 +1,11 @@
 // 파일명: InputScannerTest.kt
 // 목적: InputScanner 의 입력 음원 스캔 동작 검증
 // 기능: 알려진 언어 폴더의 wav 수집·정렬, 언어 매핑, 없는 폴더 처리를 확인한다.
+//       change(add)-hyungchul-2026-10-11-12:51 (T3 이월) '.' 으로 시작하는 파일 제외, 같은 폴더의 대소문자만 다른 같은 stem wav 를 오류로 알리고 목록에서 빼는지 확인한다.
 package com.cowork.stt_ondevice.core.storage // 저장소 테스트 패키지
 
 import org.junit.Assert.assertEquals // 값 일치 검증
+import org.junit.Assert.assertTrue // 참 검증 // change(add)-hyungchul-2026-10-11-12:51
 import org.junit.Rule // JUnit 규칙 표시
 import org.junit.Test // JUnit4 테스트 표시
 import org.junit.rules.TemporaryFolder // 임시 폴더 규칙
@@ -83,5 +85,50 @@ class InputScannerTest {
     fun missingRootGivesEmpty() {
         val missing = File(tmp.root, "nope") // 없는 폴더
         assertEquals(emptyList<InputItem>(), InputScanner.scan(missing)) // 빈 리스트
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 숨김 파일 제외 확인
+     * 기능: `._01.wav`(macOS 메타), `.trashed-1700000000-02.wav`(휴지통) 은 빼고 01.wav 만 남는지, 오류는 없는지 본다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test // 테스트 메서드
+    fun dotFilesAreSkipped() {
+        val root = tmp.newFolder("input_sound") // 입력 루트
+        touch(root, "kr/customer/01.wav") // 정상 파일
+        touch(root, "kr/customer/._01.wav") // macOS 메타 파일
+        touch(root, "kr/customer/.trashed-1700000000-02.wav") // 휴지통 파일
+        val r = InputScanner.scanWithErrors(root) // 스캔
+        assertEquals(listOf("01"), r.items.map { it.stem }) // 정상 파일만
+        assertTrue(r.errors.isEmpty()) // 오류 없음
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 대소문자만 다른 같은 이름 wav 를 오류로 처리하는지 확인
+     * 기능: 같은 폴더의 01.wav·01.WAV(그리고 A.wav·a.wav)는 어느 것도 고르지 않고 목록에서 빼고 위치·파일 이름이 든 오류 문구를 남긴다.
+     *       다른 폴더의 01.wav 와 같은 폴더의 02.wav 는 그대로 남는다. scan() 은 같은 항목 목록을 돌려준다.
+     * 입력: 없음
+     * 출력: 실패 시 AssertionError
+     * 리턴: Unit
+     */
+    @Test // 테스트 메서드
+    fun caseInsensitiveStemClashIsReported() {
+        val root = tmp.newFolder("input_sound") // 입력 루트
+        touch(root, "kr/customer/01.wav") // 충돌 1
+        touch(root, "kr/customer/01.WAV") // 충돌 2(확장자 대소문자만 다름)
+        touch(root, "kr/customer/02.wav") // 정상
+        touch(root, "kr/other/01.wav") // 다른 폴더(충돌 아님)
+        touch(root, "en/A.wav") // 충돌 3(최상위)
+        touch(root, "en/a.wav") // 충돌 4(이름 대소문자만 다름)
+        val r = InputScanner.scanWithErrors(root) // 스캔
+        assertEquals(listOf("kr/customer/02", "kr/other/01"), r.items.map { "${it.lang}/${it.relDir}/${it.stem}" }) // 충돌 파일은 모두 빠짐
+        assertEquals(2, r.errors.size) // 위치마다 1건
+        assertTrue(r.errors[0], r.errors[0].startsWith("en: A.wav, a.wav")) // 최상위 위치·이름
+        assertTrue(r.errors[1], r.errors[1].startsWith("kr/customer: 01.WAV, 01.wav")) // 폴더 위치·이름
+        assertEquals(r.items, InputScanner.scan(root)) // scan() 도 같은 항목
     }
 }

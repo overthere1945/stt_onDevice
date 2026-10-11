@@ -18,6 +18,7 @@ import org.junit.Assert.assertEquals // 같음 검증
 import org.junit.Assert.assertFalse // 거짓 검증
 import org.junit.Assert.assertNotNull // null 아님 검증
 import org.junit.Assert.assertNull // null 검증
+import org.junit.Assert.assertThrows // 예외 검증 // change(add)-hyungchul-2026-10-11-12:51
 import org.junit.Assert.assertTrue // 참 검증
 import org.junit.Assert.fail // 실패 처리
 import org.junit.Rule // 규칙
@@ -194,5 +195,29 @@ class RunManifestTest {
         val item = InputItem("kr", "s1/a", "01", File("x.wav")) // 입력
         assertEquals("c|kr|s1/a|01", RunManifest.inFlightKey("c", item)) // 형식
         assertEquals("c|en||02", RunManifest.inFlightKey("c", InputItem("en", "", "02", File("y.wav")))) // relDir 빈 값
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 중단 횟수 필드 호환·왕복과 fsync 저장 경로 확인(I-1·I-2)
+     * 기능: inFlightAttempts 가 없는 이전 버전 JSON 은 빈 맵으로 읽히고, 값이 있으면 저장 후 그대로 읽힌다.
+     *       저장(AtomicFile.write)은 이전처럼 임시 파일을 남기지 않고 원래 파일을 교체한다(manifest 경로가 비어 있지 않은 폴더면 예외 — 기존 파일 손상 없음).
+     * 입력: 없음. 출력: 실패 시 AssertionError. 리턴: Unit
+     */
+    @Test
+    fun inFlightAttemptsCompatAndAtomicWrite() {
+        val f = File(tmp.root, "run2/run_manifest.json") // 대상
+        val old = AppJson.encodeToString(RunManifest.serializer(), manifest(inFlight = "k1")) // 현재 형식 JSON
+        f.parentFile!!.mkdirs() // 폴더
+        f.writeText(old.replace(Regex(",?\\s*\"inFlightAttempts\"\\s*:\\s*\\{\\s*}"), "")) // 이전 버전(필드 없음) 흉내
+        assertTrue(!f.readText().contains("inFlightAttempts")) // 필드 제거 확인
+        assertEquals(emptyMap<String, Int>(), RunManifest.read(f)!!.inFlightAttempts) // 빈 맵으로 읽힘
+        manifest(inFlight = "k1").copy(inFlightAttempts = mapOf("k1" to 1)).write(f) // 값 저장
+        assertEquals(mapOf("k1" to 1), RunManifest.read(f)!!.inFlightAttempts) // 왕복
+        assertEquals(listOf("run_manifest.json"), f.parentFile!!.list()!!.toList()) // 임시 파일 없음
+        val blocked = File(tmp.root, "run3/run_manifest.json") // 폴더로 막힌 경로
+        File(blocked, "x").apply { parentFile!!.mkdirs(); writeText("x") } // 비어 있지 않은 폴더
+        assertThrows(java.io.IOException::class.java) { manifest().write(blocked) } // 교체 실패는 예외
+        assertEquals(listOf("run_manifest.json"), blocked.parentFile!!.list()!!.toList()) // 임시 파일 정리
     }
 }

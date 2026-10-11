@@ -5,6 +5,7 @@
 //         change(add)-hyungchul-2026-10-11-03:59 completeOnly=true 면 줄바꿈으로 끝나지 않은 마지막 레코드(쓰는 중인 행)를 뺀다(결과 화면이 실행 중 run 을 셀 때).
 //       - containsRow: 지정한 열 값이 모두 같은 행이 있는지 본다(행 중복 추가 방지).
 //       - removeRows: 지정한 열 값이 모두 같은 행을 지우고 원자적으로 다시 쓴다(재시도·크래시 정리 시 중복/상충 행 방지).
+//       - change(add)-hyungchul-2026-10-11-12:51 removeRowsWhere: 조건에 맞는 행을 한 번 읽고 한 번 써서 지운다(여러 항목의 행을 한꺼번에 지울 때 — CRASH_OR_KILLED 다시 실행).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.output.AtomicFile // 원자적 쓰기
@@ -124,7 +125,19 @@ internal object CsvFiles {
      * 출력: 파일 재작성, 실패 시 IOException
      * 리턴: 지운 행 수
      */
-    fun removeRows(file: File, match: Map<String, String>): Int {
+    fun removeRows(file: File, match: Map<String, String>): Int =
+        removeRowsWhere(file) { row -> match.all { (k, v) -> row[k] == v } } // 모든 열 일치 조건으로 제거 // change(add)-hyungchul-2026-10-11-12:51 공통 구현으로 위임
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 조건에 맞는 행 한꺼번에 제거
+     * 기능: 파일을 한 번 읽어 drop(행 맵)이 참인 데이터 행을 빼고 BOM+나머지 레코드(CRLF)로 한 번 원자적으로 다시 쓴다. 지울 행이 없으면 파일을 건드리지 않는다.
+     *       여러 항목의 행을 지울 때 항목마다 removeRows 를 부르면 파일 전체를 항목 수만큼 다시 읽게 되므로 이것을 쓴다.
+     * 입력: file(CSV 파일), drop(헤더 → 값 맵을 받아 지울지 판단)
+     * 출력: 파일 재작성, 실패 시 IOException
+     * 리턴: 지운 행 수
+     */
+    fun removeRowsWhere(file: File, drop: (Map<String, String>) -> Boolean): Int {
         if (!file.isFile) return 0 // 파일 없음
         val raws = splitRawRecords(file.readText(Charsets.UTF_8).removePrefix("\uFEFF")) // 레코드 원문
         if (raws.size < 2) return 0 // 데이터 행 없음
@@ -135,7 +148,7 @@ internal object CsvFiles {
         for (raw in raws.drop(1)) { // 데이터 레코드마다
             val f = parseFields(raw) // 필드
             val row = header.indices.associate { header[it] to f.getOrElse(it) { "" } } // 맵
-            if (match.all { (k, v) -> row[k] == v }) removed++ else keep.add(raw) // 일치하면 제거
+            if (drop(row)) removed++ else keep.add(raw) // 조건에 맞으면 제거
         }
         if (removed == 0) return 0 // 변경 없음
         AtomicFile.write(file, ("\uFEFF" + keep.joinToString("") { it + "\r\n" }).toByteArray(Charsets.UTF_8)) // BOM + CRLF 레코드로 원자적 재작성

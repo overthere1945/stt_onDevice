@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- change(add)-hyungchul-2026-10-11-03:59: 마이크 녹음(AudioRecord) — 런타임 권한, 마이크 화면에서 요청(거부되면 한국어 안내, 녹음만 불가) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- change(add)-hyungchul-2026-10-11-12:51: 모델 다운로드(Downloader, HTTPS) — 일반 권한(설치 시 자동 허용). 지금까지는 라이브러리 병합에 기대고 있어 앱이 직접 명시(최종 리뷰 M-4) -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- change(add)-hyungchul-2026-10-10-11:56: android:name=".App" 로 커스텀 Application 등록 -->
     <application

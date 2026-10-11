@@ -7,6 +7,7 @@
 //       change(add)-hyungchul-2026-10-11-03:59 "음원 가져오기(SAF)": OpenDocumentTree 로 폴더를 고르면 SafBridge.inspectTree 로 구조를 보고(최상위 kr/en → 그 폴더들,
 //       트리 자체가 kr/en → 그 언어 폴더, 그 밖 → 언어를 묻는 대화상자 → input_sound/<lang>/<트리 이름>/) RunSetupViewModel.runImport 로 복사한 뒤 목록을 다시 읽는다.
 //       마이크 화면에서 넘어온 preselectPath 는 다시 스캔 후 그 파일을 선택한다. 입력이 없을 때 안내에 adb 스크립트(tools/adb/push_inputs.sh — push 후 권한 정리)와 SAF 를 권장한다(R41).
+//       change(add)-hyungchul-2026-10-11-12:51 입력 스캔 오류(같은 폴더에 대소문자만 다른 같은 이름 wav — 실행 목록에서 뺌)를 입력 파일 섹션에 빨간 글씨로 보인다(T3 이월).
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
 
@@ -254,6 +255,14 @@ fun RunSetupScreen(
                         }
                     } else {
                         TextButton(onClick = { treePicker.launch(null) }) { Text("음원 가져오기(SAF)") } // 폴더 고르기
+                    }
+                }
+            }
+            if (s.inputErrors.isNotEmpty()) { // 입력 스캔 오류가 있으면 // change(add)-hyungchul-2026-10-11-12:51 (T3 이월)
+                item(key = "files-errors") {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { // 오류 목록
+                        Text("입력 오류 ${s.inputErrors.size}건 — 아래 파일은 실행 목록에서 뺐습니다", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) // 머리말
+                        s.inputErrors.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) } // 오류마다 한 줄
                     }
                 }
             }

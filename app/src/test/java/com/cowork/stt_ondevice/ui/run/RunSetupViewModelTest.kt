@@ -7,6 +7,7 @@ package com.cowork.stt_ondevice.ui.run // 실행 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
 import com.cowork.stt_ondevice.core.storage.InputItem // 입력 항목
+import com.cowork.stt_ondevice.core.storage.InputScanResult // 입력 스캔 결과 // change(add)-hyungchul-2026-10-11-12:51
 import com.cowork.stt_ondevice.core.storage.SafCopyResult // change(add)-hyungchul-2026-10-11-03:59 SAF 복사 결과
 import com.cowork.stt_ondevice.model.ModelFile // 모델 파일 정보
 import com.cowork.stt_ondevice.model.ModelKind // 모델 종류
@@ -83,7 +84,7 @@ class RunSetupViewModelTest {
 
     /** 목적: ViewModel 만들기 / 기능: 고정 입력 목록·합성 카탈로그·실제 프리셋 목록·합성 VAD 모델 조회로 주입한다 / 입력: 없음 / 리턴: RunSetupViewModel */
     private fun newVm(): RunSetupViewModel = RunSetupViewModel(
-        scanner = { kr + en }, // 고정 입력
+        scanner = { InputScanResult(kr + en, emptyList()) }, // 고정 입력(오류 없음) // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
         catalog = listOf(koOnly, both, third, missing), // 합성 카탈로그
         store = store, // 저장소
         presets = VadPresets.all, // 실제 프리셋 26종
@@ -249,7 +250,7 @@ class RunSetupViewModelTest {
     fun preselectAndImportRefresh() {
         var items = kr + en // 스캐너가 돌려줄 목록(바뀔 수 있음)
         var scans = 0 // 스캔 횟수
-        val vm = RunSetupViewModel({ scans++; items }, listOf(koOnly, both), store, VadPresets.all, { null }, dispatcher) // ViewModel
+        val vm = RunSetupViewModel({ scans++; InputScanResult(items, emptyList()) }, listOf(koOnly, both), store, VadPresets.all, { null }, dispatcher) // ViewModel // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
         vm.toggleLang("kr") // kr 끄기
         val mic = item("kr", "mic", "20261011_120000") // 새 녹음 파일
         items = items + mic // 목록에 생김
@@ -270,5 +271,21 @@ class RunSetupViewModelTest {
         vm.runImport { throw java.io.IOException("읽기 거부") } // 실패
         assertTrue(vm.state.value.message!!.contains("음원 가져오기 실패: 읽기 거부")) // 사유
         assertFalse(vm.state.value.importing) // 끝남
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 입력 스캔 오류 표시(T3 이월)
+     * 기능: 스캐너가 오류 문구를 돌려주면 state.inputErrors 에 그대로 들어가고, 다시 읽어 오류가 없어지면 비워진다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun inputErrorsShown() {
+        var errors = listOf("kr/customer: 01.WAV, 01.wav — 겹침") // 스캐너 오류
+        val vm = RunSetupViewModel({ InputScanResult(kr, errors) }, listOf(koOnly), store, VadPresets.all, { null }, dispatcher) // ViewModel
+        assertEquals(errors, vm.state.value.inputErrors) // 오류 표시
+        errors = emptyList() // 사용자가 파일을 정리함
+        vm.refresh() // 다시 읽기
+        assertTrue(vm.state.value.inputErrors.isEmpty()) // 비워짐
     }
 }

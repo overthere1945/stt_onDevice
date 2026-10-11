@@ -2,6 +2,7 @@
 // 목적: 설치된 모델 폴더(models/<id>)의 상태 조회·사용 중 표시·삭제·원자적 교체
 // 기능: state() 는 `.ready.json` 존재와 선언 파일들의 존재·크기만 보고 판정한다(해시는 계산하지 않음 — 해시 검증은 ModelInstaller.verify()).
 //       acquire/release 는 모델별 사용 횟수(스레드 안전)이고, 사용 중이면 delete 와 교체(commit)를 거부한다.
+//       change(add)-hyungchul-2026-10-11-12:51 acquireAll: 여러 모델을 한꺼번에 사용 중으로 표시하고 close 한 번으로 해제하는 핸들(배치 실행 전체 동안 선택 모델 보호, 최종 리뷰 I-4).
 package com.cowork.stt_ondevice.model // 모델 패키지
 
 import com.cowork.stt_ondevice.core.json.AppJson // 공용 JSON
@@ -113,6 +114,22 @@ class ModelStore(private val dirs: AppDirs) {
      * 리턴: 횟수(0 이상)
      */
     fun useCountOf(spec: ModelSpec): Int = synchronized(lock) { useCount[spec.id] ?: 0 } // 횟수
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 여러 모델 한꺼번에 사용 시작 표시
+     * 기능: specs 의 서로 다른 모델(id 기준 중복 제거)마다 acquire 를 한 번씩 하고, close 를 처음 부를 때 같은 모델들을 한 번씩 release 하는 핸들을 돌려준다
+     *       (두 번째 이후 close 는 아무것도 하지 않음). 배치 실행 동안 아직 로드하지 않은 선택 모델도 삭제·교체되지 않게 할 때 쓴다.
+     * 입력: specs(사용할 모델 목록, 중복 가능)
+     * 출력: 없음
+     * 리턴: AutoCloseable(close = 해제)
+     */
+    fun acquireAll(specs: List<ModelSpec>): AutoCloseable {
+        val held = specs.distinctBy { it.id } // 모델마다 한 번
+        held.forEach { acquire(it) } // 사용 시작 표시
+        val closed = java.util.concurrent.atomic.AtomicBoolean(false) // 해제 여부(한 번만)
+        return AutoCloseable { if (closed.compareAndSet(false, true)) held.forEach { release(it) } } // 처음 close 때만 해제
+    }
 
     /**
      * 목적: 모델 삭제

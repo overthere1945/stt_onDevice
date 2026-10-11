@@ -2,6 +2,8 @@
 // 목적: 파일 1건의 결과(txt 또는 ERROR.txt, detail JSON, result.csv 행, 요약 CSV 행)를 정해진 순서로 쓴다
 // 기능: 순서 = txt/ERROR.txt(원자적) → detail JSON(원자적) → 조합 result.csv 행 → 요약 CSV 행 (R10).
 //       txt 가 있으면 "완료"로 보므로 txt 는 항상 원자적으로 쓰고, CSV 행은 detail JSON 만으로 다시 만들 수 있게 한다(재개 복구).
+//       change(add)-hyungchul-2026-10-11-12:51 재개 정리용 도우미 추가: discard(항목 1건의 결과·행 지우기 — 처음 중단된 항목 다시 시도), isCrashed(CRASH_OR_KILLED 기록 여부),
+//       truncateTornTails(여러 항목이 쓰는 CSV 들의 찢긴 마지막 줄을 한 번씩만 정리), removeResults(여러 항목의 결과 파일·행을 CSV 마다 한 번에 지우기).
 package com.cowork.stt_ondevice.runner // 배치 실행 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -90,6 +92,85 @@ internal class ItemOutputs(
         appendCsvRows(combo, item, detail, comboRow = true, summaryRow = true) // CSV 행
     }
 
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 항목 1건의 결과 지우기(다시 시도 준비)
+     * 기능: txt·ERROR.txt·detail JSON 을 지우고, 두 CSV 의 찢긴 마지막 줄을 잘라낸 뒤 이 항목의 기존 행을 지운다. 이후 isDone 은 false 가 된다.
+     * 입력: combo(조합), item(입력 항목)
+     * 출력: 파일 삭제·CSV 재작성, 실패 시 IOException
+     * 리턴: 없음
+     */
+    fun discard(combo: Combo, item: InputItem) {
+        OutputLayout.transcript(runDir, item, combo.name).delete() // txt 제거
+        OutputLayout.errorFile(runDir, item, combo.name).delete() // ERROR.txt 제거
+        OutputLayout.detail(runDir, item, combo.name).delete() // detail 제거
+        val comboFile = OutputLayout.resultCsv(runDir, item.lang, combo.name) // 조합 CSV
+        CsvFiles.truncatePartialLastLine(comboFile) // 찢긴 줄 제거
+        CsvFiles.truncatePartialLastLine(summary.file) // 찢긴 줄 제거
+        CsvFiles.removeRows(comboFile, comboMatch(item)) // 이 항목 행 제거
+        CsvFiles.removeRows(summary.file, summaryMatch(combo, item)) // 요약의 이 항목 행 제거
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: CRASH_OR_KILLED 로 기록된 항목인지
+     * 기능: ERROR.txt 가 있고 그 안에 "code: CRASH_OR_KILLED" 줄이 있으면 true(ERROR.txt 는 완료 표시이므로 detail 보다 우선해서 본다).
+     * 입력: combo(조합), item(입력 항목)
+     * 출력: 읽기 실패 시 IOException
+     * 리턴: 크래시 기록이면 true
+     */
+    fun isCrashed(combo: Combo, item: InputItem): Boolean {
+        val err = OutputLayout.errorFile(runDir, item, combo.name) // ERROR.txt
+        if (!err.isFile) return false // 오류 기록 없음
+        return err.readLines(Charsets.UTF_8).any { it.trim() == "code: $CRASH_CODE" } // 코드 줄 확인
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 여러 항목이 쓸 CSV 들의 찢긴 마지막 줄 정리(한 번씩만)
+     * 기능: targets 의 조합 CSV(중복 제거)와 요약 CSV 에 truncatePartialLastLine 을 한 번씩 부른다. 이후 행을 replaceRows=false 로 붙여도 줄이 합쳐지지 않는다.
+     * 입력: targets(이제 쓸 (조합, 항목) 목록)
+     * 출력: 파일 길이 변경
+     * 리턴: 없음
+     */
+    fun truncateTornTails(targets: List<Pair<Combo, InputItem>>) {
+        if (targets.isEmpty()) return // 쓸 것 없음
+        targets.map { (c, it) -> OutputLayout.resultCsv(runDir, it.lang, c.name) }.distinct().forEach { CsvFiles.truncatePartialLastLine(it) } // 조합 CSV 마다 1번
+        CsvFiles.truncatePartialLastLine(summary.file) // 요약 CSV 1번
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /**
+     * 목적: 여러 항목의 결과 파일·CSV 행 한꺼번에 지우기
+     * 기능: 항목마다 txt·ERROR.txt·detail 을 지우고, 찢긴 줄을 정리한 뒤 조합 CSV 는 파일마다, 요약 CSV 는 한 번만 읽고 써서 그 항목들의 행을 지운다.
+     * 입력: targets(지울 (조합, 항목) 목록)
+     * 출력: 파일 삭제·CSV 재작성, 실패 시 IOException
+     * 리턴: 없음
+     */
+    fun removeResults(targets: List<Pair<Combo, InputItem>>) {
+        if (targets.isEmpty()) return // 지울 것 없음
+        for ((c, it) in targets) { // 항목마다
+            OutputLayout.transcript(runDir, it, c.name).delete() // txt 제거
+            OutputLayout.errorFile(runDir, it, c.name).delete() // ERROR.txt 제거
+            OutputLayout.detail(runDir, it, c.name).delete() // detail 제거
+        }
+        truncateTornTails(targets) // 찢긴 줄 정리
+        targets.groupBy { (c, it) -> OutputLayout.resultCsv(runDir, it.lang, c.name) }.forEach { (file, group) -> // 조합 CSV 마다
+            val keys = group.map { (_, it) -> comboMatch(it) }.toSet() // 지울 행의 열 값 묶음
+            CsvFiles.removeRowsWhere(file) { row -> comboMatch(row) in keys } // 한 번에 제거
+        }
+        val summaryKeys = targets.map { (c, it) -> summaryMatch(c, it) }.toSet() // 요약에서 지울 행의 열 값 묶음
+        CsvFiles.removeRowsWhere(summary.file) { row -> summaryMatch(row) in summaryKeys } // 한 번에 제거
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /** 목적: CSV 행에서 조합 CSV 일치 열만 뽑기. 기능: rel_dir·file. 입력: row(헤더 → 값). 출력: 없음. 리턴: 열 → 값 */
+    private fun comboMatch(row: Map<String, String>): Map<String, String> = COMBO_KEYS.associateWith { row[it].orEmpty() } // 같은 열 이름으로 비교
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    /** 목적: CSV 행에서 요약 CSV 일치 열만 뽑기. 기능: algo·model·vad·req_lang·rel_dir·file. 입력: row(헤더 → 값). 출력: 없음. 리턴: 열 → 값 */
+    private fun summaryMatch(row: Map<String, String>): Map<String, String> = SUMMARY_KEYS.associateWith { row[it].orEmpty() } // 같은 열 이름으로 비교
+
     // change(add)-hyungchul-2026-10-11-02:14
     /** 목적: 조합 CSV 에서 이 항목 행을 찾는 열 조건. 기능: rel_dir·file. 입력: item. 출력: 없음. 리턴: 열 → 값 */
     private fun comboMatch(item: InputItem): Map<String, String> = mapOf("rel_dir" to item.relDir, "file" to item.file.name) // 조합·언어별 파일이라 이 둘로 충분
@@ -152,5 +233,13 @@ internal class ItemOutputs(
         } catch (e: IOException) {
             null // 읽기 실패
         }
+    }
+
+    // change(add)-hyungchul-2026-10-11-12:51
+    companion object {
+        /** 크래시·강제 종료로 끝나지 않은 단계를 정리할 때 쓰는 오류 코드. */
+        const val CRASH_CODE = "CRASH_OR_KILLED" // 오류 코드
+        private val COMBO_KEYS = listOf("rel_dir", "file") // 조합 CSV 항목 식별 열(comboMatch(item) 과 같은 열)
+        private val SUMMARY_KEYS = listOf("algo", "model", "vad", "req_lang", "rel_dir", "file") // 요약 CSV 항목 식별 열(summaryMatch(combo, item) 과 같은 열)
     }
 }

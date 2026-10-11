@@ -4,6 +4,7 @@
 //       도메인 타입(DeviceInfo/ModelSpec/VadPreset)은 @Serializable 이 아니므로 미러 타입(DeviceInfoJson/ModelEntry/PresetEntry)과 from() 변환기를 둔다.
 //       측정·확인하지 못한 값은 null (AppJson 의 explicitNulls 로 JSON 에 null 이 명시된다).
 //       change(add)-hyungchul-2026-10-11-03:31 입력 파일 목록(inputs, InputEntry)도 남겨 결과 화면의 이어하기가 같은 입력을 복원할 수 있게 한다.
+//       change(add)-hyungchul-2026-10-11-12:51 진행 단계 표시별 중단 발견 횟수(inFlightAttempts)를 남기고, 저장은 AtomicFile.write(fsync 포함)로 한다.
 package com.cowork.stt_ondevice.output // 출력 패키지
 
 import com.cowork.stt_ondevice.core.device.DeviceInfo // 기기 정보
@@ -27,8 +28,6 @@ import kotlinx.serialization.SerializationException // 직렬화 오류
 import java.io.File // 파일
 import java.io.IOException // 입출력 오류
 import java.nio.charset.StandardCharsets // 문자셋
-import java.nio.file.Files // 파일 유틸
-import java.nio.file.StandardCopyOption // 이동 옵션
 
 // change(add)-hyungchul-2026-10-10-22:05
 /**
@@ -259,24 +258,22 @@ data class RunManifest(
     // change(add)-hyungchul-2026-10-11-03:31: 실행에 넣은 입력 파일 목록(설정 순서) — 결과 화면의 "이어하기"가 같은 입력으로 RunConfig 를 복원하는 데 쓴다.
     //   이 필드가 없던 이전 파일은 null(입력 목록을 알 수 없어 화면 이어하기 불가 — 다른 입력으로 대체하지 않음).
     val inputs: List<InputEntry>? = null, // 입력 항목 목록, 기록 안 된 이전 파일이면 null
+    // change(add)-hyungchul-2026-10-11-12:51: 진행 단계 표시가 재개 때 "남아 있던" 횟수(키 → 횟수, 최종 리뷰 I-1).
+    //   재개 때 같은 inFlight 키를 처음 만나면(0회) 횟수를 1로 올리고 그 단계를 정상적으로 다시 시도한다(한 번의 OS 종료·강제 종료·배터리 방전은 ERROR 로 만들지 않음).
+    //   이미 1회 이상인 키를 또 만나면(= 다시 시도한 그 단계에서 또 죽음) 그때 CRASH_OR_KILLED 로 기록한다(R33 크래시 반복 방지 유지).
+    //   그 단계가 프로세스가 죽지 않고 끝나면(성공 또는 처리된 오류) 키를 지운다. 이 필드가 없던 이전 파일은 빈 맵.
+    val inFlightAttempts: Map<String, Int> = emptyMap(), // 키별 중단 발견 횟수
 ) {
     /**
      * 목적: manifest 원자적 저장
      * 기능: 같은 폴더의 임시 파일에 쓴 뒤 ATOMIC_MOVE 로 교체한다(쓰는 도중 크래시해도 기존 파일이 손상되지 않음). 상위 폴더가 없으면 만든다.
+     *       change(add)-hyungchul-2026-10-11-12:51 결과 파일과 같은 AtomicFile.write 를 써서 이동 전에 fsync 한다(최종 리뷰 I-2: 정전·강제 종료 뒤 빈 manifest 방지).
      * 입력: file(저장할 run_manifest.json)
      * 출력: file 생성/교체, 임시 파일은 남기지 않는다. 쓰기 실패 시 예외
      * 리턴: Unit
      */
     fun write(file: File) {
-        val dir = file.absoluteFile.parentFile!! // 저장 폴더
-        dir.mkdirs() // 폴더 보장
-        val tmp = File(dir, file.name + ".tmp") // 같은 폴더의 임시 파일(원자적 이동 조건)
-        try {
-            Files.write(tmp.toPath(), AppJson.encodeToString(serializer(), this).toByteArray(StandardCharsets.UTF_8)) // 임시 파일에 기록
-            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE) // 원자적 교체
-        } finally {
-            tmp.delete() // 실패 시 남은 임시 파일 정리(성공 시엔 이미 없음)
-        }
+        AtomicFile.write(file, AppJson.encodeToString(serializer(), this).toByteArray(StandardCharsets.UTF_8)) // 임시 파일 기록 → fsync → 원자적 교체 // change(add)-hyungchul-2026-10-11-12:51
     }
 
     companion object {
