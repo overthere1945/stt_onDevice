@@ -7,6 +7,7 @@
 //       change(add)-hyungchul-2026-10-11-03:09 Compose material-icons-core(하단 탭 아이콘) 의존성 — Task 28
 //       change(add)-hyungchul-2026-10-10-21:41 Vosk(vosk-android 0.3.75 + JNA 5.18.1 AAR) 의존성 — Task 22
 //       change(add)-hyungchul-2026-10-11-19:18 ML Kit GenAI 음성 인식(genai-speech-recognition 1.0.0-alpha1) 의존성 — 2차 작업 6(시스템 엔진)
+//       change(add)-hyungchul-2026-10-11-20:32 Compose 화면 계측 테스트(ui-test-junit4, debug 에 ui-test-manifest) 의존성 — 2차 작업 10(일시정지 화면 테스트)
 //       change(add)-hyungchul-2026-10-10-20:57 sherpa-onnx v1.13.8 AAR 에서 arm64 JNI(libsherpa-onnx-jni.so)만 꺼내 APK 에 넣는 작업(ExtractSherpaJniTask)
 //         — Kotlin API 는 소스(app/src/main/java/com/k2fsa/sherpa/onnx/)로 복사해 쓰므로 AAR 의 classes.jar 는 쓰지 않는다
 //           (둘 다 넣으면 같은 클래스가 두 번 정의되어 R8 이 "Type ... is defined multiple times" 로 실패, 보고서 참조)
@@ -121,6 +122,10 @@ dependencies {
     testImplementation(libs.onnxruntime.jvm)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    // change(add)-hyungchul-2026-10-11-20:32: Compose 화면 계측 테스트(createComposeRule) — BOM 이 버전 관리, 테스트용 빈 Activity 는 debug 의 ui-test-manifest 가 제공(2차 작업 10)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
 // change(add)-hyungchul-2026-10-10-13:56

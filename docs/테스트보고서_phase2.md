@@ -1,6 +1,7 @@
-# STT_OnDevice Phase 2 테스트 보고서 (초안)
+# STT_OnDevice Phase 2 테스트 보고서
 
 <!-- change(add)-hyungchul-2026-10-11-19:18 (2차 작업 6) 신규 — 머리말과 "작업 6" 절만 작성, 이후 작업이 절을 덧붙인다 -->
+<!-- change(add)-hyungchul-2026-10-11-20:32 (2차 작업 10) 맨 앞에 요약, 맨 뒤에 "작업 10 — 실기기 검증" 절 추가 -->
 
 - 작성: 2026-10-11 (Asia/Seoul), 브랜치 `phase2`
 - 사용한 기기: **Galaxy S22 Ultra (SM-S908N, Android 16)**, 시리얼 R5CT43TFS9A.
@@ -8,6 +9,21 @@
 - 근거 표기: "작업 <n>" 은 작업 보고서 `.superpowers/sdd/2026-10-11-stt-ondevice-phase2/task-<n>-report.md`(로컬 기록)입니다.
 - 원칙: 실행하지 않은 검증·측정은 "미수행" 으로 적습니다. 측정 불가 값은 빈 칸입니다.
   사용자 음성 전사문은 공개 저장소에 넣지 않도록 **앞 30자 정도와 글자 수만** 적습니다.
+
+## 요약 (작업 10 기준, 2026-10-11 21:25)
+
+<!-- change(add)-hyungchul-2026-10-11-20:32 -->
+| 항목 | 결과 |
+|---|---|
+| PC 단위 테스트·빌드·16 KB | **410개 통과**(60 클래스, 실패·건너뜀 0), debug·release·androidTest 빌드 성공, debug·release 모두 **11/11** 정렬 |
+| 영어(en-US) 시스템 엔진 | **미수행(사용자 다운로드 미완료)** — 20:43·20:45·21:03 세 번 확인 모두 두 엔진 en-US 미설치. 실행에서는 사유와 함께 `unsupported` 로 기록됨(확인) |
+| 한국어 시스템 엔진 매트릭스(10-3) | **일부 수행.** ML Kit 1× · 플랫폼 1× × SILERO_DEFAULT × KR 01·05 = **OK 4**. 그다음 `NONE` × KR 01 에서 **실제 멈춤이 두 엔진 모두 재현**되어 배치가 일시정지. 4× 와 나머지 NONE 은 **미수행(서비스 멈춤 — 강제 중지 필요)** |
+| 실제 멈춤 → 일시정지 경로 | **실기기에서 실제로 동작 확인**(감시 → 1회 재시도 → 일시정지, 항목 미기록, 진행 화면·알림 안내, [설정 열기] 가 그 서비스 앱 정보 화면을 엶) |
+| 화면 끔 실행(10-4) | **미수행(서비스 멈춤 — 강제 중지 필요)** |
+| USER 프리셋·취소·이어하기(10-5) | 화면 흐름 **수행**(이름은 `quiet-room` — 한글 입력 불가). 실행·취소·이어하기는 **whisper tiny 로 대신 수행해 통과**(OK 2, CSV 2행). ML Kit 4× 로는 **미수행(서비스 멈춤)** |
+| 일시정지 화면 테스트(10-6) | `PausedUiDeviceTest` **OK (3 tests)** + 실제 일시정지 화면도 확인 |
+| PC 채점(10-7) | kr 3개 run 채점(rc 0) — **간이(smoke)**: ML Kit 1× SILERO_DEFAULT·플랫폼 1× SILERO_DEFAULT 모두 WER 5.00 % / CER 2.58 %(2 발화) |
+| S25 Ultra | 미수행(모든 기기 수치는 S22 Ultra) |
 
 ## 작업 6 — 시스템 엔진 Android 연결부(ML Kit Basic·플랫폼 온디바이스)와 실기기 계측
 
@@ -111,3 +127,166 @@
 - 플랫폼 영어는 `supportedOnDeviceLanguages` 에 있으나 `installedOnDeviceLanguages` 에 없어 "다운로드 필요"로 표시됨(작업 6 의 "언어 미설치" 와 일치).
 - **[다운로드]·[새로고침] 은 누르지 않음**(영어 모델 동의는 작업 10 에서 사용자가 직접). 다른 앱 창은 뜨지 않았고 앱 삭제·데이터 삭제 없음.
 - 미수행: 실제 다운로드 흐름(동의 창·진행·완료 후 재조회)의 기기 확인 — 사용자 승인이 필요해 작업 10 으로 남김. Android 13 이하 기기 경로, 상태 확인 15 초 초과의 기기 재현은 미수행(PC 단위 테스트만).
+
+## 작업 10 — 실기기 검증(Galaxy S22 Ultra)·문서
+
+<!-- change(add)-hyungchul-2026-10-11-20:32 -->
+- 기기: SM-S908N, Android 16(API 36). Speech Services by Google `googletts.google-speech-apk_20260914.02_p2.986315744`,
+  Android System Intelligence `B.29.playstore.oemfull.988117775`. RECORD_AUDIO·POST_NOTIFICATIONS 는 이미 허용 상태.
+- 설치는 `adb install -r`(debug·androidTest), 계측은 `adb shell am instrument -w …` 만 사용. 앱 삭제·`connectedAndroidTest`·시스템 설정 변경 없음.
+  다른 앱 화면(Google 다운로드·동의 창, 설정의 강제 중지)은 누르지 않았습니다.
+- 기기 조작은 앱 화면만 `uiautomator dump` + `adb shell input tap/text/swipe` 로 했고, 조작 직전마다 앞 화면이 이 앱(또는 런처)인지 확인했습니다
+  (검증 중 사용자가 폰을 쓰는 상황은 없었음).
+- 가져온 결과·스크린샷·logcat 은 PC 임시 폴더에만 두고 커밋하지 않았습니다. 전사문 원문은 이 문서에 넣지 않습니다(글자 수·해시 비교만).
+
+### 10.1 빌드·정적 확인 (20:33~20:43)
+
+| 항목 | 명령 | 결과 |
+|---|---|---|
+| 단위 테스트 + 빌드 | `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease` | BUILD SUCCESSFUL, **60 클래스 410 테스트, 실패·오류·건너뜀 0** |
+| 화면 테스트 의존성 추가 뒤 다시 빌드 | `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease` | BUILD SUCCESSFUL |
+| 16 KB 정렬 | `tools/check_16kb.sh` debug / release APK | **11/11 · 11/11** |
+
+- 이번 작업에서 더한 의존성: androidTest 에 BOM 관리 `androidx.compose.ui:ui-test-junit4`, debug 에 `ui-test-manifest`(`libs.versions.toml` 에 선언). release APK 에는 들어가지 않습니다.
+
+### 10.2 영어(en-US) 모델 — 미수행(사용자 다운로드 미완료)
+
+사용자가 폰에서 직접 [다운로드]·Google 동의 창을 누르기로 했으므로, 앱은 다운로드를 요청하지 않고 상태만 다시 확인했습니다.
+
+| 시각 | 확인 방법 | ML Kit en-US | 플랫폼 en-US |
+|---|---|---|---|
+| 20:43:24 | `SystemEngineDeviceTest#englishUnavailableIsReported`(작업 6 과 같은 상태 조회, `download()` 안 부름) → OK (1 test) | 언어 미설치(상태 DOWNLOADABLE), 실제 전사는 156 ms 만에 `LANGUAGE_UNAVAILABLE` | 언어 미설치(설치됨: ko-KR), 107 ms 만에 `LANGUAGE_UNAVAILABLE` |
+| 20:45:58 | 매트릭스 run 시작 시 앱의 실행 전 확인(같은 조회) | 같음 → 4개 조합 × en 을 `unsupported` 로 기록 | 같음 |
+| 21:03:19 | 두 번째 run 시작 시 실행 전 확인 | — | 같음(asi-x1 은 보조 조회 실패로 "설치됨: 확인 불가") |
+
+- 따라서 **영어 시스템 엔진 전사는 미수행**입니다. 영어 행이 빠지는 동작(사유 기록·조용한 대체 없음)은 확인했습니다:
+  `run_manifest.json` `unsupported` 에 `<조합>|en` 8개, 실행 로그 `LANG_UNAVAILABLE … 언어 미설치(en-US) — …`, 결과 탭 "미지원 조합(언어 미지원으로 실행 안 함)".
+- 21:14 이후에는 두 서비스가 멈춰(10.4) 상태 조회 자체가 15 초 시간 초과라 en-US 설치 여부를 알 수 없습니다.
+
+### 10.3 시스템 엔진 매트릭스 — 일부 수행
+
+계획: KR `Customer_Service/01·05`, EN `Customer_Service/01` × {`mlkit-basic-x1`, `mlkit-basic-x4`, `android-ondevice-asi-x1`, `android-ondevice-asi-x4`} × {`NONE`, `SILERO_DEFAULT`}.
+앱 실행 탭에서 그대로 골라 시작(예상 조합 24건 → en 8건 제외, 실제 16항목). 결과는 `tools/adb/pull_results.sh` 로 가져왔습니다.
+
+**run `20261011_204558`**(4개 모델, 20:45:58 시작) — 프리셋 실행 순서 SILERO_DEFAULT → NONE
+
+| 조합 | 파일 | 상태 | audio_sec | transcribe_sec | 조각(세션 번호) | 공급 바이트 | 최대 막힘 | rtf | device | note 끝 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| mlkit_basic-x1_SILERO_DEFAULT | kr/01 | OK | 84.135 | 75.688 | 3 (1·2·3) | 2,411,776 | 1 ms | 빈 값 | system(soda) | `feed=x1` |
+| mlkit_basic-x1_SILERO_DEFAULT | kr/05 | OK | 84.323 | 75.960 | 3 (4·5·6) | 2,419,584 | 1 ms | 빈 값 | system(soda) | `feed=x1` |
+| mlkit_basic-x1_NONE | kr/01 | **일시정지**(결과 미기록) | | | 3번째 조각(세션 9)·재시도(세션 10) 멈춤 | | | | | |
+| 나머지(x1 NONE 05, x4 전부, asi 전부) | | **미수행** — 일시정지로 멈춤 | | | | | | | | |
+
+**run `20261011_210319`**(플랫폼 x1·x4 만, 21:03:19 시작 — ML Kit 서비스가 멈춘 뒤 플랫폼만 따로 확인)
+
+| 조합 | 파일 | 상태 | audio_sec | transcribe_sec | 조각(세션 번호) | 공급 바이트 | 최대 막힘 | rtf | device | note 끝 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| android-ondevice_asi-x1_SILERO_DEFAULT | kr/01 | OK | 84.135 | 75.520 | 3 (1·2·3) | 2,411,776 | 1 ms | 빈 값 | system(asi) | `feed=x1` |
+| android-ondevice_asi-x1_SILERO_DEFAULT | kr/05 | OK | 84.323 | 75.821 | 3 (4·5·6) | 2,419,584 | 6 ms | 빈 값 | system(asi) | `feed=x1` |
+| android-ondevice_asi-x1_NONE | kr/01 | **일시정지**(결과 미기록) | | | 3번째 조각(세션 9)·재시도(세션 10) 멈춤 | | | | | |
+| 나머지(x1 NONE 05, x4 전부) | | **미수행** — 일시정지로 멈춤 | | | | | | | | |
+
+- 1× 는 transcribe_sec ≈ 공급한 음성 길이(2,411,776 B ÷ 32,000 B/s = 75.37 초) + 조각당 약 0.1 초. `rtf`·`compute_type`·`workers` 는 빈 값,
+  `engine_version` 은 서비스 버전(위), `note` 끝에 `;feed=x1` — 설계서 §4.4 와 같습니다.
+- **ML Kit 1× 와 플랫폼 1× 의 전사문이 두 파일 모두 글자 하나까지 같았습니다**(KR 01 592자, KR 05 589자, `text_sha1` 동일). 작업 6 의 25 초 비교와 같은 결과입니다.
+- **x1 · x4 전사 일치 여부는 이번 작업에서 미확인**(x4 실행 전에 멈춤). 참고: 작업 6 계측에서 KR 01 첫 25 초는 x1·x4 가 같았습니다(6.3절).
+- 영어 행: 10.2 대로 미수행.
+
+### 10.4 실제 멈춤(hang) 발생과 일시정지 경로 — 실기기 확인
+
+두 엔진 모두 **같은 위치에서** 멈췄습니다: `kr/Customer_Service/01.wav` × `NONE`(30 초 고정 분할 → 0~30·30~60·60~84.1 초)의 **세 번째 조각(24.1 초)**.
+
+| 시각 | ML Kit(run 204558) | 플랫폼(run 210319) |
+|---|---|---|
+| 조각 3 시작 | 20:49:33 세션 시작(서비스 로그) | 21:06:52 |
+| 서비스 내부 오류 | 20:49:56 `No final state active` / `Result lattice is not set` — 그 뒤 음성 끝(20:49:57)까지 받았지만 **최종 결과·종료 신호를 보내지 않음** | 21:07:16 같은 오류 |
+| 앱 감시 시간 초과 → 세션 취소·클라이언트 다시 만들기 | 20:50:12 (24.1 + 15 초) | 21:07:31 |
+| 재시도 세션 | 서비스가 "Initialize Soda…" 에서 더 진행하지 않음 | 같음 |
+| 재시도도 시간 초과 → **일시정지** | 20:50:51 "Speech Services by Google 가 응답하지 않습니다(세션 10)" | 21:08:11 "Android System Intelligence 가 응답하지 않습니다(세션 10)" |
+
+- 일시정지 때 확인한 것: 그 항목은 `result.csv`·txt 에 **쓰이지 않았고**(결과 탭 "OK 2 · ERROR 0"), `run_manifest.json` `pausedReason` 에 사유, `inFlight` 없음·`inFlightAttempts` `{}`(크래시로 세지 않음),
+  실행 로그 `RUN_PAUSED`, 진행 화면에 제목·핵심 문구·상세 사유·①②③ 안내·[설정 열기]·[이어하기], 알림 "실행 일시정지 / … 설정에서 강제 중지한 뒤 이어하기를 누르세요."
+- 진행 화면 [설정 열기] → **설정 앱 `InstalledAppDetails` 가 "Google 음성 인식 및 합성"(= com.google.android.tts) 앱 정보 화면으로 열림** 확인. [강제 중지] 는 누르지 않고 뒤로 가기로 돌아왔습니다.
+- 진행 화면 [이어하기] → 결과 탭에서 그 run 이 열림 → **강제 중지 없이** [이어하기](21:00:57): 같은 항목부터 다시 시작했지만 첫 조각부터 서비스가 응답하지 않아
+  21:02:27 다시 일시정지("세션 2"). → **서비스는 강제 중지 전까지 회복되지 않습니다.**
+- 앱 프로세스를 다시 시작해도(계측 테스트 실행) 두 서비스 모두 한국어 상태 조회가 "상태 확인 시간 초과(ko-KR, 15 초) — … 응답 없음" 으로 실패(21:13·21:14),
+  모델 화면도 네 언어 모두 "사용 불가(상태 확인 시간 초과)".
+- 해석(추정): 이 조각에서 서비스 내부 인식기가 오류 후 끝 신호를 보내지 않고, 그 상태가 서비스 프로세스에 남습니다. 세션 수 한도인지 이 음성 조각 때문인지는
+  확정하지 못했습니다(두 엔진 모두 10번째 세션·같은 조각이었고, 작업 6·실험에서는 세션 396개까지 정상).
+- **사용자 조치 필요**: 설정 → 애플리케이션 → "Google 음성 인식 및 합성" 과 "Android System Intelligence" 를 각각 강제 중지 → 결과 탭에서 run `20261011_204558`·`20261011_210319` 이어하기.
+  같은 KR 01 × NONE 조각에서 다시 멈출 수 있으니, 매트릭스를 다시 돌릴 때는 이 조합을 맨 뒤에 두거나 따로 확인하는 것을 권합니다.
+
+### 10.5 화면 끔 실행 — 미수행
+
+KR 05 × `mlkit-basic-x1` × `SILERO_DEFAULT` 를 화면을 끈 채 실행할 계획이었으나, 그 시점에 Speech Services by Google 이 멈춰(10.4) 있어 실행하지 못했습니다(강제 중지는 사용자 조치).
+(1차 보고서 3.8 에서 whisper tiny 로 화면 끔 실행은 확인됨. 시스템 엔진의 화면 끔은 실험 보고서의 포그라운드 서비스 결과만 있음.)
+
+### 10.6 USER 프리셋 화면 흐름과 취소·이어하기
+
+**화면 흐름(실행 탭)** — 수행
+
+1. [복사해서 만들기] → "복사할 기본 프리셋 선택" 목록 → `SILERO — SILERO` → "SILERO 복사해서 만들기" 폼(threshold·minSpeechMs·minSilenceMs·speechPadMs·maxSpeechSec, 칸마다 범위 안내).
+2. threshold `0.5` → `0.35`. (조작 중 실수로 `0.35ㅛ` 가 들어갔을 때 칸이 빨갛게 "threshold: 숫자여야 합니다" 로 바뀌는 것도 봄 → 지워서 `0.35`.)
+3. 프리셋 이름: **한글 `조용한방` 은 `adb shell input text` 가 한글을 넣지 못해(NullPointerException) 영문 `quiet-room` 으로 바꿨습니다.**
+4. [저장] → 스낵바 "사용자 프리셋 'USER_quiet-room' 을(를) 저장했습니다", "사용자 프리셋 (1개, 선택 1개)" 아래 `USER_quiet-room (SILERO)`·"출처: USER(기준 SILERO)"·
+   `threshold=0.35,minSpeechMs=250,minSilenceMs=400,speechPadMs=150,maxSpeechSec=inf`, **체크된 상태**. 앱 내부 `files/user_presets.json` 에 같은 값 저장 확인.
+5. [삭제] → 확인 창 "USER_quiet-room 삭제 / USER 프리셋 USER_quiet-room 를 지울까요? 지우면 되돌릴 수 없습니다." [취소]/[지우기] → **[취소]**, 프리셋 그대로.
+
+**실행 → 취소 → 이어하기** — 시스템 엔진이 멈춰 있어 **whisper tiny 로 대신 수행**(ML Kit 4× 로는 미수행)
+
+| 단계 | 결과 |
+|---|---|
+| KR 01·05 × `whispercpp-tiny` × `USER_quiet-room` 실행(run `20261011_211836`, 21:18:36) | 예상 조합 2건 |
+| 01 처리 중 진행 탭 [취소] → [취소하기](21:18:45) | "실행 취소됨", 로그 `RUN_CANCELLED`, 결과 탭 "미완료 · 조합 0개" |
+| 결과 탭 [이어하기](21:19:06) | 로그 `RUN_START resume=true`, 01 을 처음부터 다시 → 01·05 OK, `RUN_END ok=2` |
+| 결과 | txt 2개(`kr/whispercpp_tiny_USER_quiet-room/Customer_Service/01·05.txt`), `result.csv` **2행**, 요약 CSV **2행**(`vad=USER_quiet-room`), manifest 프리셋 params 가 저장 값과 같음 |
+
+### 10.7 일시정지 화면 계측 테스트 — `PausedUiDeviceTest`
+
+- `adb shell am instrument -w -e class com.cowork.stt_ondevice.ui.run.PausedUiDeviceTest com.cowork.stt_ondevice.test/androidx.test.runner.AndroidJUnitRunner`
+  → **OK (3 tests)**, 2.68 초(20:43:35).
+- 그린 상태: `RunUiState.Paused("20261011_210000", "Speech Services by Google 가 응답하지 않습니다(세션 3)", "com.google.android.tts", "Speech Services by Google")`.
+- 확인: 제목·핵심 문구·상세 사유·①②③ 안내·[설정 열기]·[이어하기] 표시 / [설정 열기] → `onOpenSettings("com.google.android.tts")` 1회 / [이어하기] → `onOpenResults(runId)` 1회.
+  취소 버튼은 `RunService.cancel` 을 직접 부르므로 누르지 않았습니다(일시정지 화면에는 취소 버튼이 없음).
+- 이번 검증 중 **실제 멈춤이 발생**해 같은 화면을 실기기에서도 확인했습니다(10.4).
+
+### 10.8 PC 채점 — 간이(smoke) 결과
+
+`~/workspace/python/asr_stt/stt_all_gui_2nd/run_eval.py` 를 `venv_eval` 로 실행만 함(수정 없음), `--ref ~/workspace/stt/answer_sheet/kr --no-noformat`. 세 run 모두 rc 0.
+**발화 2개짜리 smoke 수치이며 엔진 우열 결론이 아닙니다.** (ML Kit·플랫폼은 전사문이 같아 수치도 같음)
+
+| run | model(by_model.csv) | n_utt | WER(%) | CER(%) |
+|---|---|---|---|---|
+| 20261011_204558 | mlkit_basic-x1_SILERO_DEFAULT | 2 | 5.00 | 2.58 |
+| 20261011_210319 | android-ondevice_asi-x1_SILERO_DEFAULT | 2 | 5.00 | 2.58 |
+| 20261011_211836 | whispercpp_tiny_USER_quiet-room | 2 | 33.33 | 14.75 |
+
+- 평가기가 `<algo>_<model>_<VAD>` 이름(USER 프리셋 포함)으로 페어링했습니다. 두 run 은 미완료(일시정지) 상태라 끝난 항목만 채점됐습니다.
+
+### 10.9 문서
+
+- 사용설명서: 12절 시스템 엔진(언어 상태·다운로드 동의·[취소] 는 앱 추적만 끝냄·공급 배속·RECORD_AUDIO 가 필요한 이유와 마이크 탭 권한 요청·
+  일시정지 때 강제 중지 방법·앱을 다시 켜면 진행 탭 안내는 사라지지만 결과 탭에서 이어하기 가능·실측한 멈춤), 13절 USER 프리셋(만들기·이름 규칙·삭제 확인·NONE 불가),
+  14절 결과 CSV 차이(rtf 빈 값, device `system(...)`, note `feed=xN`), 4·6·7·10·11절 안내 줄. README 기능 목록·문서 링크. 1차 설계서 §7.3·§12 의 "Phase 2 로 연기" 를 2차 설계서 §5 참조로.
+
+### 10.10 기기에 남긴 상태
+
+| 항목 | 상태 |
+|---|---|
+| 앱 | 이번 debug APK(`adb install -r`) + androidTest APK 설치 |
+| 사용자 음원 / 모델 | `input_sound` wav **54개**, `models/` **8개** 그대로(21:22 확인) |
+| 새 run | `20261011_204558`(일시정지, OK 2), `20261011_210319`(일시정지, OK 2), `20261011_211836`(완료, OK 2) — 지우지 않음 |
+| USER 프리셋 | `USER_quiet-room`(SILERO, threshold 0.35) 남김 |
+| 서비스 | **Speech Services by Google·Android System Intelligence 모두 멈춘 상태** — 사용자가 강제 중지해야 함(10.4) |
+
+### 10.11 미수행 항목 정리
+
+| 항목 | 이유 |
+|---|---|
+| 영어 시스템 엔진 전사(두 엔진) | 사용자 다운로드 미완료(en-US 미설치) |
+| 매트릭스의 4× 전체, x1 NONE, x1·x4 일치 비교 | 실행 중 두 서비스가 실제로 멈춤 → 강제 중지(사용자 조치) 전까지 회복 안 됨 |
+| 화면 끔 시스템 엔진 실행(10-4) | 같은 이유 |
+| USER 프리셋 × ML Kit 4× 실행·취소·이어하기 | 같은 이유(whisper tiny 로 같은 흐름은 통과) |
+| 한글 이름 `조용한방` 입력 | `adb shell input text` 가 한글 미지원 → `quiet-room` 사용 |
+| 다운로드 동의 흐름의 기기 확인 | 사용자가 직접 하는 단계(앱이 대신 누르지 않음) |
+| S25 Ultra | 기기 없음 |
