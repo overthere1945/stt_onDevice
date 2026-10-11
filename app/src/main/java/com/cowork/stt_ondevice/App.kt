@@ -5,6 +5,8 @@
 //       지연 생성 싱글턴으로 보유하고, 배치 실행기(BatchRunner)를 실제 의존성으로 조립하는 newBatchRunner() 를 제공한다.
 //       change(add)-hyungchul-2026-10-11-12:51 newBatchRunner 는 실행 시작 때 선택한 ASR 모델 전부와 선택 프리셋에 필요한 VAD 계열 모델 전부를 ModelStore.acquireAll 로 잡고 실행 끝에 놓는다(최종 리뷰 I-4).
 //       change(add)-hyungchul-2026-10-11-19:18 (2차 작업 6) newBatchRunner 에 시스템 엔진 생성기(SystemEngines.create)와 실행 전 언어 확인(SystemEngines.unavailableReason)을 연결한다.
+//       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) USER VAD 프리셋 저장소(userPresetStore — filesDir/user_presets.json)와 기본+USER 합본 조회(presetRegistry)를 싱글턴으로 보유한다.
+//       저장소는 락·임시 파일명이 인스턴스 단위라 반드시 이 인스턴스 하나만 쓴다.
 //       ModelStore 의 사용 횟수와 ModelInstaller 의 동시 설치 방지는 인스턴스 단위이므로(Task 19 리뷰) 서비스·화면 ViewModel 모두
 //       반드시 여기 있는 같은 인스턴스를 써야 한다(App.from(context).modelStore 등). 새로 만들면 보호가 깨진다.
 package com.cowork.stt_ondevice // 앱 루트 패키지
@@ -25,9 +27,12 @@ import com.cowork.stt_ondevice.model.ModelInstaller // change(add)-hyungchul-202
 import com.cowork.stt_ondevice.model.ModelStore // change(add)-hyungchul-2026-10-11-02:40 모델 저장소
 import com.cowork.stt_ondevice.model.isSystem // change(add)-hyungchul-2026-10-11-19:18 시스템 엔진 여부
 import com.cowork.stt_ondevice.runner.BatchRunner // change(add)-hyungchul-2026-10-11-02:40 배치 실행기
+import com.cowork.stt_ondevice.vad.PresetRegistry // change(add)-hyungchul-2026-10-11-20:15 기본+USER 프리셋 합본 조회
+import com.cowork.stt_ondevice.vad.UserPresetStore // change(add)-hyungchul-2026-10-11-20:15 USER 프리셋 저장소
 import com.cowork.stt_ondevice.vad.VadEngineFactory // change(add)-hyungchul-2026-10-11-02:40 VAD 엔진 생성기
 import com.cowork.stt_ondevice.vad.VadFamily // change(add)-hyungchul-2026-10-11-02:40 VAD 계열
 import java.io.File // change(add)-hyungchul-2026-10-11-02:40 파일
+import java.time.OffsetDateTime // change(add)-hyungchul-2026-10-11-20:15 USER 프리셋 생성 시각
 
 // change(add)-hyungchul-2026-10-10-11:56
 /**
@@ -52,6 +57,12 @@ class App : Application() { // change(add)-hyungchul-2026-10-11-02:40 본문 추
 
     /** VAD 엔진 생성기 — 계열의 카탈로그 VAD 모델이 READY 일 때만 그 폴더를 넘긴다(NONE/WEBRTC/TEN 은 모델 불필요). */
     val vadEngineFactory: VadEngineFactory by lazy { VadEngineFactory(::vadModelDir) } // change(add)-hyungchul-2026-10-11-02:40 VAD 생성기 싱글턴
+
+    /** USER VAD 프리셋 저장소 — 앱 내부 files 폴더의 user_presets.json. 인스턴스 단위 락이라 하나만 둔다. */
+    val userPresetStore: UserPresetStore by lazy { UserPresetStore(File(filesDir, "user_presets.json"), now = { OffsetDateTime.now().toString() }) } // change(add)-hyungchul-2026-10-11-20:15 USER 프리셋 저장소 싱글턴
+
+    /** 기본 프리셋 + USER 프리셋 합본 조회 — 실행 설정·이어하기가 같은 창구를 쓴다. */
+    val presetRegistry: PresetRegistry by lazy { PresetRegistry(userPresetStore) } // change(add)-hyungchul-2026-10-11-20:15 프리셋 합본 싱글턴
 
     // change(add)-hyungchul-2026-10-11-02:40
     /**

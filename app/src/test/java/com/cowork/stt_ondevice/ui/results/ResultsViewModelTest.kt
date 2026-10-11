@@ -5,6 +5,7 @@
 //       change(add)-hyungchul-2026-10-11-03:59 R42: refresh 중 result.csv 읽기 실패의 한국어 메시지(크래시 없음), 실행 중 run 의 "실행 중" 판정·이어하기 거부,
 //       실행 중 run 의 CRLF 로 끝나지 않은 마지막 CSV 레코드 제외 집계, 내보내기 작업의 완료·실패 메시지를 확인한다.
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1) CRASH_OR_KILLED 행 집계와 완료 run 의 "CRASH_OR_KILLED 항목 다시 실행"(설정 복원·시작·미완료 거부)을 확인한다.
+//       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) USER 프리셋 이어하기: 지워진 USER 프리셋이면 "삭제된 USER 프리셋입니다" 사유로 거부하고 시작하지 않으며, 레지스트리에 있으면 그 프리셋으로 시작한다.
 package com.cowork.stt_ondevice.ui.results // 결과 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
@@ -24,6 +25,7 @@ import com.cowork.stt_ondevice.output.ResultCsvWriter // 결과 CSV 쓰기
 import com.cowork.stt_ondevice.output.RunManifest // 실행 manifest
 import com.cowork.stt_ondevice.runner.RunConfig // 실행 설정
 import com.cowork.stt_ondevice.segment.ChunkMode // 묶기 방식
+import com.cowork.stt_ondevice.vad.VadPreset // change(add)-hyungchul-2026-10-11-20:15 USER 프리셋 흉내 타입
 import com.cowork.stt_ondevice.vad.VadPresets // 프리셋 목록
 import kotlinx.coroutines.Dispatchers // 디스패처
 import kotlinx.coroutines.ExperimentalCoroutinesApi // 테스트 API 표시
@@ -90,12 +92,13 @@ class ResultsViewModelTest {
     private fun writeManifest(
         runId: String, finishedAt: String?, models: List<ModelSpec> = listOf(m1), presetIds: List<String> = listOf("NONE", "WEBRTC_ANDROIDVAD"),
         inputs: List<InputItem>? = emptyList(), override: Map<String, Double> = emptyMap(), unsupported: List<String> = emptyList(),
+        presetList: List<VadPreset>? = null, // 프리셋 객체로 직접 지정(USER 프리셋용, 없으면 presetIds) // change(add)-hyungchul-2026-10-11-20:15
     ) {
         RunManifest(
             runId = runId, appVersion = "1.0 (1)", startedAt = "2026-10-09T13:15:00", // 식별
             device = DeviceInfoJson("samsung", "SM-S908N", null, "16", 36, "arm64-v8a", 11000L, "1.0 (1)"), // 기기
             models = models.map { ModelEntry.from(it, override[it.id] ?: it.maxChunkSec) }, // 모델
-            presets = presetIds.map { PresetEntry.from(VadPresets.byId(it)) }, // 프리셋
+            presets = (presetList ?: presetIds.map { VadPresets.byId(it) }).map { PresetEntry.from(it) }, // 프리셋 // change(add)-hyungchul-2026-10-11-20:15
             chunkMode = ChunkMode.INDIVIDUAL.name, maxChunkOverride = override, threads = 3, resume = false, // 옵션
             inputRoot = dirs.inputSound.absolutePath, unsupported = unsupported, // 입력 루트·미지원
             finishedAt = finishedAt, inputs = inputs?.map { InputEntry.from(it) }, // 종료·입력
@@ -106,9 +109,9 @@ class ResultsViewModelTest {
     private fun csvRow(runId: String, lang: String, combo: String, rel: String, file: String, status: String, text: String) =
         ResultCsvWriter(OutputLayout.resultCsv(dirs.runDir(runId), lang, combo)).append(mapOf("run_id" to runId, "rel_dir" to rel, "file" to file, "status" to status, "text" to text)) // 행 추가
 
-    /** 목적: ViewModel 만들기 / 기능: 임시 output 루트·합성 카탈로그·실제 프리셋·기록용 시작 함수 / 입력: running(change(add)-hyungchul-2026-10-11-03:59 실행 중 runId 흐름), start(시작 함수 — 뒤따르는 람다) / 리턴: ResultsViewModel */
-    private fun newVm(running: MutableStateFlow<String?> = MutableStateFlow(null), start: (RunConfig) -> String? = { null }): ResultsViewModel =
-        ResultsViewModel(dirs.output, store, listOf(m1, m2), VadPresets.all, start, dispatcher, runningRunId = running) // 주입 — change(add)-hyungchul-2026-10-11-03:59 실행 중 runId
+    /** 목적: ViewModel 만들기 / 기능: 임시 output 루트·합성 카탈로그·실제 프리셋·기록용 시작 함수 / 입력: running(change(add)-hyungchul-2026-10-11-03:59 실행 중 runId 흐름), presets(change(add)-hyungchul-2026-10-11-20:15 프리셋 공급 함수), start(시작 함수 — 뒤따르는 람다) / 리턴: ResultsViewModel */
+    private fun newVm(running: MutableStateFlow<String?> = MutableStateFlow(null), presets: () -> List<VadPreset> = { VadPresets.all }, start: (RunConfig) -> String? = { null }): ResultsViewModel =
+        ResultsViewModel(dirs.output, store, listOf(m1, m2), presets, start, dispatcher, runningRunId = running) // 주입 — change(add)-hyungchul-2026-10-11-03:59 실행 중 runId
 
     /** 목적: 공통 트리 만들기 / 기능: 완료 run A, 미완료 run B, 손상 run C 와 A 의 결과 CSV·txt·ERROR.txt / 입력: 없음 / 리턴: 없음 */
     private fun buildTree() {
@@ -415,5 +418,60 @@ class ResultsViewModelTest {
         csvRow("20261011_125102", "kr", "test_m1_NONE", "customer", "01.wav", "OK", "x") // 정상 행만
         vm.refresh() // 다시 읽기
         assertFalse(vm.state.value.runs.first { it.runId == "20261011_125102" }.rerunnable) // 버튼 없음
+    }
+    // change(add)-hyungchul-2026-10-11-20:15
+    /** 목적: WEBRTC_ANDROIDVAD 를 복사한 USER 프리셋 흉내(모델 불필요 계열이라 VAD 모델 설치 없이 이어하기 검사 가능) / 입력: 없음 / 리턴: VadPreset */
+    private fun userPreset(): VadPreset {
+        val base = VadPresets.byId("WEBRTC_ANDROIDVAD") // 기준
+        return VadPreset("USER_x", base.family, base.params, "USER(기준 ${base.id})", "") // 같은 파라미터의 USER 프리셋
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:15
+    /**
+     * 목적: 이어하기 중 지워진 USER 프리셋 (brief 작업 9 / 검토 중점 5)
+     * 기능: manifest 가 USER_x 를 쓰는데 레지스트리(공급 함수)에 없으면 기본 프리셋으로 대체하지 않고 정해진 문구로 거부하며 시작 함수를 부르지 않는다.
+     *       기본 프리셋 id 를 못 찾는 경우는 기존 문구("알 수 없는 VAD 프리셋입니다")를 그대로 쓴다.
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun resumeWithDeletedUserPresetIsRejected() {
+        val item = input("kr", "customer", "01") // 입력
+        writeManifest("20261011_120000", null, inputs = listOf(item), presetList = listOf(userPreset())) // USER_x 를 쓰는 미완료 run
+        val started = mutableListOf<RunConfig>() // 시작 기록
+        val vm = newVm(start = { started += it; null }) // 레지스트리(기본 26종)에 USER_x 없음
+        val plan = vm.buildResumeConfig("20261011_120000") // 복원
+        assertEquals("삭제된 USER 프리셋입니다: USER_x — 이 실행은 이어할 수 없습니다", (plan as ResumePlan.Error).message) // 정해진 문구
+        vm.resume("20261011_120000") // 이어하기 실행
+        assertTrue(started.isEmpty()) // 시작하지 않음
+        assertEquals("이어하기 불가: 삭제된 USER 프리셋입니다: USER_x — 이 실행은 이어할 수 없습니다", vm.state.value.message) // 사유를 메시지로 표시
+        writeManifest("20261011_120001", null, inputs = listOf(item), presetIds = listOf("NONE", "WEBRTC_ANDROIDVAD")) // 기본 프리셋만
+        val raw = File(dirs.runDir("20261011_120001"), "run_manifest.json") // manifest 파일
+        raw.writeText(raw.readText().replace("\"WEBRTC_ANDROIDVAD\"", "\"NO_SUCH_PRESET\"")) // 기본 프리셋 id 를 없는 값으로
+        assertTrue((vm.buildResumeConfig("20261011_120001") as ResumePlan.Error).message.startsWith("알 수 없는 VAD 프리셋입니다: NO_SUCH_PRESET")) // 기존 문구 유지
+    }
+
+    // change(add)-hyungchul-2026-10-11-20:15
+    /**
+     * 목적: 레지스트리에 있는 USER 프리셋으로 이어하기
+     * 기능: 공급 함수가 USER_x 를 포함하면 복원된 설정의 프리셋에 그 USER 프리셋이 들어가고 시작 함수가 그 설정으로 불린다.
+     *       공급 함수는 이어하기 시점마다 다시 불린다(처음엔 없다가 나중에 생긴 프리셋도 찾는다).
+     * 입력: 없음 / 출력: 실패 시 AssertionError / 리턴: 없음
+     */
+    @Test
+    fun resumeWithUserPresetStarts() {
+        val item = input("kr", "customer", "01") // 입력
+        val user = userPreset() // USER 프리셋
+        writeManifest("20261011_120000", null, inputs = listOf(item), presetList = listOf(VadPresets.byId("NONE"), user)) // NONE + USER_x
+        var registry: List<VadPreset> = VadPresets.all // 지금 시점 목록(처음엔 USER 없음)
+        val started = mutableListOf<RunConfig>() // 시작 기록
+        val vm = newVm(presets = { registry }, start = { started += it; null }) // 공급 함수로 주입
+        assertTrue(vm.buildResumeConfig("20261011_120000") is ResumePlan.Error) // 아직 없음 → 거부
+        registry = VadPresets.all + user // 나중에 생김
+        vm.resume("20261011_120000") // 이어하기
+        assertEquals(1, started.size) // 시작함
+        assertEquals(listOf("NONE", "USER_x"), started[0].presets.map { it.id }) // 설정 프리셋에 USER 프리셋
+        assertEquals(user, started[0].presets[1]) // 같은 객체 값(파라미터 동일)
+        assertTrue(started[0].resume) // 이어하기
+        assertEquals("20261011_120000", vm.state.value.resumeStarted) // 진행 탭 이동 신호
     }
 }

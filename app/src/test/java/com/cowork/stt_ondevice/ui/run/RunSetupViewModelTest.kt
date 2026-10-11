@@ -4,6 +4,7 @@
 //       선택 동작과 comboCount/buildConfig 결과를 확인한다. 작업 디스패처는 즉시 실행 테스트 디스패처로 바꿔 refresh 가 바로 끝나게 한다.
 //       change(add)-hyungchul-2026-10-11-19:10 (2차 작업 5) 시스템 엔진 모델의 maxChunk 입력이 RunConfig 와 같은 범위(0 초 초과 60 초 이하)·문구로 검증되는지 확인한다.
 //       change(add)-hyungchul-2026-10-11-03:59 마이크 녹음 파일 미리 선택(preselect)과 SAF 음원 가져오기 작업(runImport)의 메시지·목록 갱신도 확인한다.
+//       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) ViewModel 의 presets 인자가 공급 함수가 되어 호출부를 { VadPresets.all } 로 고쳤다(동작 변화 없음).
 package com.cowork.stt_ondevice.ui.run // 실행 화면 테스트 패키지
 
 import com.cowork.stt_ondevice.core.storage.AppDirs // 앱 폴더
@@ -71,7 +72,7 @@ class RunSetupViewModelTest {
     fun systemMaxChunkRangeIsValidatedLikeRunConfig() {
         val sys = SystemCatalog.all.first { it.id == "mlkit-basic-x4" } // 시스템 엔진(파일 없음 → 항상 READY)
         val vm = RunSetupViewModel(
-            scanner = { InputScanResult(kr + en, emptyList()) }, catalog = listOf(both, sys), store = store, presets = VadPresets.all,
+            scanner = { InputScanResult(kr + en, emptyList()) }, catalog = listOf(both, sys), store = store, presets = { VadPresets.all },
             vadModelOf = { null }, io = dispatcher, // 고정 입력·합성 카탈로그
         )
         selectAllItems(vm) // 입력
@@ -119,7 +120,7 @@ class RunSetupViewModelTest {
         scanner = { InputScanResult(kr + en, emptyList()) }, // 고정 입력(오류 없음) // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
         catalog = listOf(koOnly, both, third, missing), // 합성 카탈로그
         store = store, // 저장소
-        presets = VadPresets.all, // 실제 프리셋 26종
+        presets = { VadPresets.all }, // 실제 프리셋 26종 // change(add)-hyungchul-2026-10-11-20:15 공급 함수
         vadModelOf = { family -> if (family == VadFamily.SILERO) sileroModel else null }, // Silero 만 모델 있음(미설치)
         io = dispatcher, // 즉시 실행
     )
@@ -282,7 +283,7 @@ class RunSetupViewModelTest {
     fun preselectAndImportRefresh() {
         var items = kr + en // 스캐너가 돌려줄 목록(바뀔 수 있음)
         var scans = 0 // 스캔 횟수
-        val vm = RunSetupViewModel({ scans++; InputScanResult(items, emptyList()) }, listOf(koOnly, both), store, VadPresets.all, { null }, dispatcher) // ViewModel // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
+        val vm = RunSetupViewModel({ scans++; InputScanResult(items, emptyList()) }, listOf(koOnly, both), store, { VadPresets.all }, { null }, dispatcher) // ViewModel // change(add)-hyungchul-2026-10-11-12:51 스캔 결과 타입
         vm.toggleLang("kr") // kr 끄기
         val mic = item("kr", "mic", "20261011_120000") // 새 녹음 파일
         items = items + mic // 목록에 생김
@@ -314,7 +315,7 @@ class RunSetupViewModelTest {
     @Test
     fun inputErrorsShown() {
         var errors = listOf("kr/customer: 01.WAV, 01.wav — 겹침") // 스캐너 오류
-        val vm = RunSetupViewModel({ InputScanResult(kr, errors) }, listOf(koOnly), store, VadPresets.all, { null }, dispatcher) // ViewModel
+        val vm = RunSetupViewModel({ InputScanResult(kr, errors) }, listOf(koOnly), store, { VadPresets.all }, { null }, dispatcher) // ViewModel
         assertEquals(errors, vm.state.value.inputErrors) // 오류 표시
         errors = emptyList() // 사용자가 파일을 정리함
         vm.refresh() // 다시 읽기

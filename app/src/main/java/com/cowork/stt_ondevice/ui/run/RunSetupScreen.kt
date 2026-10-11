@@ -8,6 +8,8 @@
 //       트리 자체가 kr/en → 그 언어 폴더, 그 밖 → 언어를 묻는 대화상자 → input_sound/<lang>/<트리 이름>/) RunSetupViewModel.runImport 로 복사한 뒤 목록을 다시 읽는다.
 //       마이크 화면에서 넘어온 preselectPath 는 다시 스캔 후 그 파일을 선택한다. 입력이 없을 때 안내에 adb 스크립트(tools/adb/push_inputs.sh — push 후 권한 정리)와 SAF 를 권장한다(R41).
 //       change(add)-hyungchul-2026-10-11-12:51 입력 스캔 오류(같은 폴더에 대소문자만 다른 같은 이름 wav — 실행 목록에서 뺌)를 입력 파일 섹션에 빨간 글씨로 보인다(T3 이월).
+//       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) VAD 프리셋 목록의 기본 계열 뒤에 "사용자 프리셋" 소제목을 두고 [복사해서 만들기](기준 고르기 → 값 폼 → 이름 → 저장)와 USER 행별 [삭제]를 붙인다.
+//       삭제가 미완료 실행을 건드리면 경고 대화상자를 보이고, USER 프리셋 저장소 읽기 오류(손상 파일 등)는 소제목 아래에 빨간 글씨로 보인다.
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.run // 실행 화면 패키지
 
@@ -77,6 +79,7 @@ import com.cowork.stt_ondevice.core.storage.SafBridge // change(add)-hyungchul-2
 import com.cowork.stt_ondevice.runner.RunService // 배치 실행 서비스
 import com.cowork.stt_ondevice.runner.RunUiState // 실행 상태
 import com.cowork.stt_ondevice.segment.ChunkMode // 묶기 방식
+import com.cowork.stt_ondevice.vad.VadFamily // change(add)-hyungchul-2026-10-11-20:15 기본 프리셋 후보에서 VAD 없음 제외
 import kotlinx.coroutines.launch // 코루틴 시작
 import java.io.File // change(add)-hyungchul-2026-10-11-03:59 파일
 import java.io.IOException // change(add)-hyungchul-2026-10-11-03:59 입출력 오류
@@ -164,6 +167,7 @@ fun RunSetupScreen(
     val bridge = remember { SafBridge(context.applicationContext) } // change(add)-hyungchul-2026-10-11-03:59 SAF 다리
     var askLangFor by rememberSaveable { mutableStateOf<String?>(null) } // change(add)-hyungchul-2026-10-11-03:59 언어를 물을 트리 Uri 문자열
     var askLangName by rememberSaveable { mutableStateOf("") } // change(add)-hyungchul-2026-10-11-03:59 그 트리 이름
+    var pickingBase by rememberSaveable { mutableStateOf(false) } // 복사할 기본 프리셋 고르는 중 // change(add)-hyungchul-2026-10-11-20:15
 
     // change(add)-hyungchul-2026-10-11-03:59
     /** 목적: 정해진 대상으로 가져오기 시작 / 입력: uri(트리), layout(구조), lang(고른 언어 또는 null), name(트리 이름) / 리턴: 없음 */
@@ -330,7 +334,7 @@ fun RunSetupScreen(
 
             // ---- VAD 프리셋 ----
             item(key = "presets-h") { SectionTitle("VAD 프리셋 (선택 ${s.selectedPresets.size}개)") } // 머리글
-            s.presets.groupBy { it.family }.forEach { (family, rows) -> // 계열마다
+            s.presets.filter { !it.user }.groupBy { it.family }.forEach { (family, rows) -> // 계열마다(기본 프리셋만 — USER 는 아래 별도 소제목) // change(add)-hyungchul-2026-10-11-20:15
                 val open = expandedFamilies[family.name] == true // 펼침 여부
                 val picked = rows.count { it.id in s.selectedPresets } // 선택 수
                 item(key = "family-${family.name}") {
@@ -359,6 +363,33 @@ fun RunSetupScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // ---- 사용자 프리셋 ---- // change(add)-hyungchul-2026-10-11-20:15
+            val userRows = s.presets.filter { it.user } // USER 프리셋 행
+            item(key = "user-presets-h") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("사용자 프리셋 (${userRows.size}개, 선택 ${userRows.count { it.id in s.selectedPresets }}개)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).padding(top = 8.dp)) // 소제목
+                    TextButton(onClick = { pickingBase = true }) { Text("복사해서 만들기") } // 기준 고르기 시작
+                }
+            }
+            s.userPresetError?.let { err -> // 저장소 읽기 오류는 숨기지 않음
+                item(key = "user-presets-err") { Text("사용자 프리셋 저장소 오류: $err", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) } // 오류 문구
+            }
+            if (userRows.isEmpty()) {
+                item(key = "user-presets-empty") { Text("만든 사용자 프리셋이 없습니다. [복사해서 만들기]로 기본 프리셋의 값을 바꿔 새 프리셋을 만드세요.", style = MaterialTheme.typography.bodySmall) } // 빈 안내
+            }
+            items(userRows, key = { "preset-${it.id}" }) { p -> // USER 프리셋마다
+                Row(modifier = Modifier.padding(start = 8.dp)) {
+                    Checkbox(checked = p.id in s.selectedPresets, onCheckedChange = { viewModel.togglePreset(p.id) }, enabled = p.selectable || p.id in s.selectedPresets) // 선택
+                    Column(modifier = Modifier.weight(1f).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("${p.id}  (${p.family.name})", style = MaterialTheme.typography.bodyMedium) // id·계열
+                        Text("출처: ${p.source}", style = MaterialTheme.typography.bodySmall) // 출처
+                        if (p.params.isNotEmpty()) Text(p.params, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) // 파라미터
+                        p.disabledReason?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) } // 사유
+                    }
+                    TextButton(onClick = { viewModel.requestDeleteUserPreset(p.id) }) { Text("삭제") } // 삭제(미완료 실행이 쓰면 경고)
                 }
             }
 
@@ -401,6 +432,22 @@ fun RunSetupScreen(
             },
             dismissButton = { TextButton(onClick = { askLangFor = null }) { Text("취소") } }, // 취소
         )
+    }
+
+    if (pickingBase) { // 복사할 기본 프리셋 고르기 // change(add)-hyungchul-2026-10-11-20:15
+        BasePresetPickerDialog(
+            bases = s.presets.filter { !it.user && it.family != VadFamily.NONE }, // 기본 프리셋(VAD 없음 제외)
+            onPick = { pickingBase = false; viewModel.startUserPreset(it) }, // 폼 열기
+            onDismiss = { pickingBase = false }, // 취소
+        )
+    }
+    s.userDraft?.let { draft -> // USER 프리셋 값 폼 // change(add)-hyungchul-2026-10-11-20:15
+        UserPresetFormDialog(draft, onField = viewModel::setUserField, onName = viewModel::setUserName, onSave = viewModel::saveUserPreset, onCancel = viewModel::cancelUserDraft)
+    }
+    val warning = s.deleteWarning // 삭제 경고 // change(add)-hyungchul-2026-10-11-20:15
+    val target = s.deleteTarget // 경고 중인 프리셋
+    if (warning != null && target != null) {
+        DeleteWarningDialog(target, warning, onConfirm = { viewModel.confirmDeleteUserPreset(target) }, onCancel = viewModel::cancelDeleteUserPreset)
     }
 }
 

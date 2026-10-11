@@ -15,6 +15,7 @@
 //       change(add)-hyungchul-2026-10-11-12:51 (최종 리뷰 I-1)
 //       - 조합 집계에 CRASH_OR_KILLED 행 수(note 의 code=CRASH_OR_KILLED)를 함께 센다. 완료된 run 에 그런 행이 있으면 "CRASH_OR_KILLED 항목 다시 실행"을 보이고,
 //         rerunCrashed(runId) 가 manifest 로 같은 설정의 RunConfig(resume=true, rerunCrashed=true)를 복원해 시작한다(BatchRunner 가 그 항목의 ERROR.txt·detail·CSV 행을 지우고 그 항목만 다시 실행).
+//       change(add)-hyungchul-2026-10-11-20:15 (2차 작업 9) 이어하기 프리셋은 공급 함수(앱: 기본+USER 합본)로 이어하기 시점마다 새로 읽는다. 지워진 USER 프리셋이면 "삭제된 USER 프리셋입니다" 사유로 거부한다(기본 프리셋으로 대체하지 않음).
 // change(add)-hyungchul-2026-10-11-03:31
 package com.cowork.stt_ondevice.ui.results // 결과 화면 패키지
 
@@ -192,7 +193,7 @@ data class ResultsState(
  * 목적: 결과 화면 ViewModel
  * 기능: 파일 머리말 참조.
  * 입력: outputRoot(output_stt 폴더), store(설치 상태 판정 — App 싱글턴), catalog(이어하기 모델 조회 대상, 기본 ModelCatalog.asr),
- *       presets(이어하기 프리셋 조회 대상, 기본 VadPresets.all), startRun(설정으로 실행 시작 — 성공 null, 실패 시 한국어 사유),
+ *       presets(이어하기 프리셋 조회 대상을 돌려주는 공급 함수 — 이어하기 시점마다 호출, 기본 { VadPresets.all }; change(add)-hyungchul-2026-10-11-20:15 값 → 함수), startRun(설정으로 실행 시작 — 성공 null, 실패 시 한국어 사유),
  *       io(파일 읽기 디스패처 — 테스트에서 교체), vadModelOf(계열 → 카탈로그 VAD 모델),
  *       runningRunId(change(add)-hyungchul-2026-10-11-03:59 실행 중인 runId 흐름 — 앱: RunService.events 의 Running.runId, 기본은 항상 null)
  */
@@ -200,7 +201,7 @@ class ResultsViewModel(
     private val outputRoot: File, // output_stt
     private val store: ModelStore, // 설치 상태
     private val catalog: List<ModelSpec> = ModelCatalog.asr, // 모델 목록
-    private val presets: List<VadPreset> = VadPresets.all, // 프리셋 목록
+    private val presets: () -> List<VadPreset> = { VadPresets.all }, // 프리셋 목록 공급 함수(이어하기 시점의 최신 목록) // change(add)-hyungchul-2026-10-11-20:15
     private val startRun: (RunConfig) -> String?, // 실행 시작
     private val io: CoroutineDispatcher = Dispatchers.IO, // 작업 디스패처
     private val vadModelOf: (VadFamily) -> ModelSpec? = ModelCatalog::vadModel, // 계열 → VAD 모델
@@ -354,7 +355,7 @@ class ResultsViewModel(
      * 리턴: ResumePlan
      */
     fun buildResumeConfig(runId: String, rerunCrashed: Boolean = false): ResumePlan = // change(add)-hyungchul-2026-10-11-12:51 rerunCrashed
-        buildResumeConfig(File(outputRoot, runId), catalog, presets, store::state, vadModelOf, rerunCrashed) // 복원
+        buildResumeConfig(File(outputRoot, runId), catalog, presets(), store::state, vadModelOf, rerunCrashed) // 복원(프리셋은 지금 시점 목록) // change(add)-hyungchul-2026-10-11-20:15
 
     /**
      * 목적: 이어하기 실행
@@ -579,7 +580,9 @@ class ResultsViewModel(
                 spec // 모델
             }
             val chosen = m.presets.map { e -> // 프리셋마다
-                val p = presets.firstOrNull { it.id == e.id } ?: return ResumePlan.Error("알 수 없는 VAD 프리셋입니다: ${e.id}") // 레지스트리 밖
+                val p = presets.firstOrNull { it.id == e.id } ?: return ResumePlan.Error( // 레지스트리 밖
+                    if (e.id.startsWith("USER_")) "삭제된 USER 프리셋입니다: ${e.id} — 이 실행은 이어할 수 없습니다" else "알 수 없는 VAD 프리셋입니다: ${e.id}", // USER 는 삭제 안내 // change(add)-hyungchul-2026-10-11-20:15
+                )
                 if (p.family != VadFamily.NONE && p.family != VadFamily.WEBRTC && p.family != VadFamily.TEN) { // 모델이 필요한 계열
                     val vm = vadModelOf(p.family) // 계열 모델
                     if (vm == null || installState(vm) != InstallState.READY) return ResumePlan.Error("VAD 프리셋 ${p.id} 의 VAD 모델이 설치돼 있지 않습니다") // 미설치
@@ -618,7 +621,7 @@ class ResultsViewModel(
                     if (RunService.start(app, cfg)) null else RunSetupViewModel.startFailureReason(RunService.events.value) // 성공 null, 실패 사유
                 }
                 val running = RunService.events.map { (it as? RunUiState.Running)?.runId } // change(add)-hyungchul-2026-10-11-03:59 실행 중 runId 흐름(ViewModel 이 viewModelScope 에서 구독)
-                return ResultsViewModel(app.dirs.output, app.modelStore, startRun = start, runningRunId = running) as T // 싱글턴 주입(change(add)-hyungchul-2026-10-11-03:59 실행 중 runId 포함)
+                return ResultsViewModel(app.dirs.output, app.modelStore, presets = app.presetRegistry::all, startRun = start, runningRunId = running) as T // 싱글턴 주입(change(add)-hyungchul-2026-10-11-03:59 실행 중 runId 포함) // change(add)-hyungchul-2026-10-11-20:15 프리셋 = 기본+USER 합본
             }
         }
     }
